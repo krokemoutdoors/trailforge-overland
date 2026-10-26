@@ -28,6 +28,8 @@ final class LiveTelemetryService: ObservableObject {
     @Published var discoveredTrails: [OverlandTrail] = []
     @Published var isScanningTrails: Bool = false
     @Published var scanStatus: String = ""
+    private var trailScanGeneration = 0
+    private var trailScanAnchor: CLLocationCoordinate2D?
 
     /// Fetches real-time river crossing flow (00060 = Discharge CFS, 00065 = Gage Height ft) from USGS NWIS
     func fetchUSGSStreamflow(siteCodes: [String] = ["09010500", "09180500", "10261500"]) async {
@@ -383,19 +385,49 @@ enum USStateLocator {
 
 extension LiveTelemetryService {
     func fetchTrailsInMapRegion(center: CLLocationCoordinate2D, radiusMeters: Int = 25000) async {
+        if isScanningTrails, let anchor = trailScanAnchor {
+            let moved = CLLocation(latitude: anchor.latitude, longitude: anchor.longitude)
+                .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
+            if moved < 2_500 { return }
+        }
+        trailScanGeneration += 1
+        let generation = trailScanGeneration
+        trailScanAnchor = center
         isScanningTrails = true
         scanStatus = "Scanning USA 4x4 trails…"
-        defer { isScanningTrails = false }
+        defer {
+            if generation == trailScanGeneration {
+                isScanningTrails = false
+            }
+        }
 
         async let overpass = Self.fetchOverpassTrails(center: center, radiusMeters: radiusMeters)
         async let usfs = Self.fetchUSFSRoads(center: center, radiusMeters: radiusMeters)
         let loaded = await overpass + usfs
-        var seen = Set<String>()
-        discoveredTrails = loaded.filter { seen.insert($0.id).inserted }
-        if discoveredTrails.isEmpty {
+        guard generation == trailScanGeneration else { return }
+
+        var byID: [String: OverlandTrail] = [:]
+        for trail in discoveredTrails {
+            byID[trail.id] = trail
+        }
+        for trail in loaded {
+            byID[trail.id] = trail
+        }
+        var merged = Array(byID.values)
+        if merged.count > 200 {
+            let origin = CLLocation(latitude: center.latitude, longitude: center.longitude)
+            merged.sort { lhs, rhs in
+                let left = CLLocation(latitude: lhs.centerLat, longitude: lhs.centerLon)
+                let right = CLLocation(latitude: rhs.centerLat, longitude: rhs.centerLon)
+                return left.distance(from: origin) < right.distance(from: origin)
+            }
+            merged = Array(merged.prefix(200))
+        }
+        discoveredTrails = merged
+        if merged.isEmpty {
             scanStatus = "No public 4x4 tracks returned for this area."
         } else {
-            scanStatus = "\(discoveredTrails.count) local USA trails"
+            scanStatus = "\(merged.count) local USA trails"
         }
     }
 

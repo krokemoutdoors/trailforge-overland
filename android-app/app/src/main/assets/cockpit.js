@@ -68,6 +68,8 @@
     billing: { ready: false, pro: false, products: [] },
     routeGen: 0,
     scanGen: 0,
+    lastScanAnchor: null,
+    trailScanTimer: null,
     lastReroute: 0,
     aim: null,
     targetCopy: "",
@@ -414,9 +416,8 @@
       return list;
     }
     if (state.filter !== "near") return list;
-    const origin = state.fix || mapCenter();
+    const origin = mapCenter();
     list = list.slice().sort(function (a, b) { return miles(origin, a) - miles(origin, b); });
-    if (!state.fix) return list.slice(0, 14);
     const nearby = list.filter(function (trail) { return miles(origin, trail) <= 250; });
     return nearby.length ? nearby : list.slice(0, 14);
   }
@@ -457,9 +458,14 @@
   }
 
   function listedCamps() {
-    const pads = pickerTrails().flatMap(spotsFor);
-    const origin = state.fix;
-    if (!origin) return pads.sort(function (a, b) { return a.slope - b.slope; });
+    const source = map ? drawableTrails() : pickerTrails().filter(function (trail) { return !trail.bdr || trail.id === state.selectedId; });
+    const pads = [];
+    source.forEach(function (trail) {
+      spotsFor(trail).forEach(function (spot) {
+        if (spot.slope < 3) pads.push(spot);
+      });
+    });
+    const origin = mapCenter();
     return pads.sort(function (a, b) { return miles(origin, a) - miles(origin, b); });
   }
 
@@ -930,13 +936,33 @@
     if (targetCard) targetCard.innerHTML = "<span>TARGET</span><b>" + esc(aimText || "—") + "</b>";
   }
 
+  function trailInView(trail, bounds) {
+    if (!bounds) return true;
+    const lat = Number(trail.lat);
+    const lon = Number(trail.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lon) && bounds.contains([lat, lon])) return true;
+    const coords = trail.coordinates || [];
+    const step = Math.max(1, Math.ceil(coords.length / 12));
+    for (let index = 0; index < coords.length; index += step) {
+      if (bounds.contains(coords[index])) return true;
+    }
+    return false;
+  }
+
   function drawableTrails() {
-    const list = pickerTrails().filter(function (trail) {
-      return !trail.bdr || trail.id === state.selectedId;
+    const bounds = map && map.getBounds ? map.getBounds().pad(0.35) : null;
+    const seen = new Set();
+    const visible = [];
+    allTrails().forEach(function (trail) {
+      if (!trail || seen.has(trail.id)) return;
+      if (trail.bdr && trail.id !== state.selectedId) return;
+      if (bounds && trail.id !== state.selectedId && !trailInView(trail, bounds)) return;
+      seen.add(trail.id);
+      visible.push(trail);
     });
-    if (state.filter !== "all" && list.length <= 80) return list;
-    const signature = list.filter(function (trail) { return trail.signature || trail.live; });
-    const chosen = (signature.length ? signature : list).slice(0, 80);
+    const origin = mapCenter();
+    visible.sort(function (a, b) { return meters(origin, a) - meters(origin, b); });
+    const chosen = visible.slice(0, 80);
     const current = selected();
     if (current && (!current.bdr || current.id === state.selectedId) && !chosen.some(function (trail) { return trail.id === current.id; })) chosen.push(current);
     return chosen;
@@ -969,9 +995,11 @@
         lineCap: "round",
         lineJoin: "round"
       }).addTo(trailLayer);
-      const showPads = state.mode === "camp" || zoom >= 10 || selectedTrail;
+      const view = map.getBounds().pad(0.2);
+      const showPads = state.mode === "camp" || zoom >= 8 || selectedTrail;
       if (showPads) {
         spotsFor(trail).forEach(function (spot) {
+          if (spot.slope >= 3 || !view.contains([spot.lat, spot.lon])) return;
           const icon = L.divIcon({
             className: "camp-pin" + (spot.slope >= 2 ? " warn" : ""),
             html: "<span>⛺ " + spot.slope.toFixed(1) + "°</span>",
@@ -983,13 +1011,15 @@
           }).addTo(campLayer);
         });
       }
-      if (selectedTrail) {
-        const head = trailhead(trail);
+      const head = trailhead(trail);
+      if (selectedTrail || view.contains([head.lat, head.lon])) {
         const flag = L.divIcon({ className: "flag-pin", html: "<span>⚑</span>", iconAnchor: [12, 12] });
         L.marker([head.lat, head.lon], { icon: flag, zIndexOffset: 450 }).on("click", function (event) {
           if (state.plotting) { onMapClick(event); return; }
           beginRoute(head);
         }).addTo(campLayer);
+      }
+      if (selectedTrail) {
         cruxPins(trail).forEach(function (pin) {
           const icon = L.divIcon({ className: "hazard-pin", html: "<span>" + esc(pin.short) + "</span>", iconAnchor: [14, 12] });
           L.marker([pin.lat, pin.lon], { icon: icon, zIndexOffset: 520 }).addTo(campLayer);
@@ -1205,13 +1235,22 @@
     return parseUsfs(text);
   }
 
+  function scheduleTrailScan() {
+    if (!map || SHOT) return;
+    clearTimeout(state.trailScanTimer);
+    state.trailScanTimer = setTimeout(function () {
+      const center = mapCenter();
+      if (state.lastScanAnchor && meters(state.lastScanAnchor, center) < 2500) return;
+      state.lastScanAnchor = { lat: center.lat, lon: center.lon };
+      scanAt(center);
+    }, 550);
+  }
+
   async function scanAt(center) {
     if (!center || SHOT) return;
     const gen = ++state.scanGen;
     state.scanning = true;
     state.scanStatus = "Scanning USA 4x4 trails…";
-    const button = document.getElementById("scanBtn");
-    if (button) button.textContent = "Scanning…";
     renderTop();
     const status = document.getElementById("scanStatus");
     if (status) status.textContent = state.scanStatus;
@@ -1230,22 +1269,16 @@
         fresh.push(trail);
       });
       state.discovered = state.discovered.concat(fresh);
-      state.scanStatus = fresh.length || merged.length ? (state.discovered.length + " local USA trails") : "No public 4x4 tracks returned for this area.";
+      if (state.discovered.length > 200) {
+        state.discovered.sort(function (a, b) { return meters(center, a) - meters(center, b); });
+        state.discovered = state.discovered.slice(0, 200);
+      }
+      state.scanStatus = state.discovered.length ? (state.discovered.length + " local USA trails") : "No public 4x4 tracks returned for this area.";
     } catch (error) {
       if (gen !== state.scanGen) return;
       state.scanStatus = "Trail scan unavailable right now.";
     }
     state.scanning = false;
-    if (button) button.textContent = "Scan Area for All USA 4x4 Trails";
-    if (state.filter === "near") {
-      const list = pickerTrails();
-      if (list.some(function (trail) { return trail.id === state.selectedId && trail.bdr; })) {
-        renderAll();
-        return;
-      }
-      const next = list.find(function (trail) { return !trail.bdr; });
-      if (next && next.id !== state.selectedId && !state.follow) state.selectedId = next.id;
-    }
     renderAll();
   }
 
@@ -1933,10 +1966,6 @@
       state.filter = "near";
       if (state.fix) map.setView([state.fix.lat, state.fix.lon], Math.max(map.getZoom(), 11));
       applyFilter(true);
-      return;
-    }
-    if (act === "scan") {
-      scanAt(state.fix || mapCenter());
       return;
     }
     if (act === "offline") {
@@ -5967,8 +5996,8 @@
     installPitchGesture();
     applyMapPitch(false);
     map.on("dragstart", function () { state.follow = false; });
-    map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); refreshAreaChrome(); });
-    map.on("moveend", function () { applyBasemap(); scheduleParcels(); refreshAreaChrome(); });
+    map.on("zoomend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
+    map.on("moveend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
     map.on("move", function () { syncAreaPreview(); });
     refreshAreaChrome();
     map.on("click", onMapClick);
@@ -6104,6 +6133,7 @@
     loadTelemetry();
     bootShot();
     scheduleParcels();
+    scheduleTrailScan();
     refreshMvum(selected());
     refreshCommunity(false);
     setTimeout(function () {

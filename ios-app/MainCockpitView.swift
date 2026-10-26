@@ -99,6 +99,7 @@ struct MainCockpitView: View {
     @State private var offlineSaved: Bool = true
     @State private var showProPaywall: Bool = false
     @State private var mapCenter = CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352)
+    @State private var lastTrailScanCenter: CLLocationCoordinate2D?
     @State private var skipNextFocus = false
     @State private var activeRoute: ActiveCampRoute?
     @State private var followRoute = false
@@ -219,9 +220,10 @@ struct MainCockpitView: View {
         var trails = (USATrailAtlas.all + telemetry.discoveredTrails).filter { trail in
             matchesFilter(trail) && seen.insert(trail.id).inserted
         }
-        guard regionFilter == "near", let user = locationTracker.userCoordinate else { return trails }
-        trails.sort { miles(from: user, to: $0.centerCoordinate) < miles(from: user, to: $1.centerCoordinate) }
-        let nearby = trails.filter { miles(from: user, to: $0.centerCoordinate) <= 250 }
+        guard regionFilter == "near" else { return trails }
+        let origin = mapCenter
+        trails.sort { miles(from: origin, to: $0.centerCoordinate) < miles(from: origin, to: $1.centerCoordinate) }
+        let nearby = trails.filter { miles(from: origin, to: $0.centerCoordinate) <= 250 }
         return nearby.isEmpty ? Array(trails.prefix(8)) : nearby
     }
 
@@ -239,11 +241,18 @@ struct MainCockpitView: View {
     private var mapTrails: [OverlandTrail] {
         guard activeRoute == nil else { return [activeTrail] }
         let activeID = selectedTrailID
+        if regionFilter == "near" || regionFilter == "all" {
+            return viewportTrails(activeID: activeID)
+        }
         return pickerTrails.filter { !$0.isBDR || $0.id == activeID }
     }
 
     private var mapCampSpots: [CampSpot] {
-        mapTrails.flatMap(\.campSpots)
+        let pads = mapTrails.flatMap(\.campSpots)
+        let origin = mapCenter
+        let inView = pads.filter { coordinateInView($0.coordinate) || $0.trailID == selectedTrailID }
+        let sorted = inView.sorted { miles(from: origin, to: $0.coordinate) < miles(from: origin, to: $1.coordinate) }
+        return Array(sorted.prefix(80))
     }
 
     private var mapCamps: [CampSpot] {
@@ -447,13 +456,7 @@ struct MainCockpitView: View {
     }
 
     private var listedCamps: [CampSpot] {
-        let pads = mapCampSpots
-        guard let user = locationTracker.userCoordinate else {
-            return pads.sorted { $0.slopeDeg < $1.slopeDeg }
-        }
-        return pads.sorted {
-            miles(from: user, to: $0.coordinate) < miles(from: user, to: $1.coordinate)
-        }
+        mapCampSpots
     }
 
     private var filterTitle: String {
@@ -576,11 +579,6 @@ struct MainCockpitView: View {
             .onChange(of: telemetry.isScanningTrails) { _, scanning in
                 guard !scanning else { return }
                 refreshSelectedTrailDraw()
-                guard regionFilter == "near", activeRoute == nil, !followRoute else { return }
-                if pickerTrails.contains(where: { $0.id == selectedTrailID && $0.isBDR }) { return }
-                if let first = pickerTrails.first(where: { !$0.isBDR }), selectedTrailID != first.id {
-                    selectedTrailID = first.id
-                }
             }
             .onChange(of: parcelService.status) { _, _ in
                 CockpitStore.saveParcels(parcelService.parcels)
@@ -620,6 +618,7 @@ struct MainCockpitView: View {
             .task {
                 if !offlineFirst {
                     await telemetry.fetchUSGSStreamflow()
+                    refreshTrails(around: mapCenter)
                 }
                 await storeKit.loadProducts()
             }
@@ -1123,6 +1122,54 @@ struct MainCockpitView: View {
         meters(from: from, to: to) / 1609.344
     }
 
+    private func viewportTrails(activeID: String) -> [OverlandTrail] {
+        var seen = Set<String>()
+        var pool: [OverlandTrail] = []
+        for trail in USATrailAtlas.all + telemetry.discoveredTrails {
+            guard seen.insert(trail.id).inserted else { continue }
+            if trail.isBDR && trail.id != activeID { continue }
+            if trail.id == activeID || trailInView(trail) {
+                pool.append(trail)
+            }
+        }
+        let origin = mapCenter
+        pool.sort { miles(from: origin, to: $0.centerCoordinate) < miles(from: origin, to: $1.centerCoordinate) }
+        var chosen = Array(pool.prefix(80))
+        if !chosen.contains(where: { $0.id == activeID }),
+           let active = (USATrailAtlas.all + telemetry.discoveredTrails).first(where: { $0.id == activeID }) {
+            chosen.insert(active, at: 0)
+        }
+        return chosen
+    }
+
+    private func trailInView(_ trail: OverlandTrail) -> Bool {
+        if coordinateInView(trail.centerCoordinate) { return true }
+        let step = max(1, trail.coordinates.count / 12)
+        var index = 0
+        while index < trail.coordinates.count {
+            if coordinateInView(trail.coordinates[index]) { return true }
+            index += step
+        }
+        return false
+    }
+
+    private func coordinateInView(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        let region = visibleRegion
+        let latHalf = max(region.span.latitudeDelta, 0.08) * 0.7
+        let lonHalf = max(region.span.longitudeDelta, 0.08) * 0.7
+        let lat = region.center.latitude
+        let lon = region.center.longitude
+        return coordinate.latitude >= lat - latHalf && coordinate.latitude <= lat + latHalf
+            && coordinate.longitude >= lon - lonHalf && coordinate.longitude <= lon + lonHalf
+    }
+
+    private func refreshTrails(around center: CLLocationCoordinate2D) {
+        guard !offlineFirst else { return }
+        if let last = lastTrailScanCenter, meters(from: last, to: center) < 2_500 { return }
+        lastTrailScanCenter = center
+        Task { await telemetry.fetchTrailsInMapRegion(center: center) }
+    }
+
     private func focus(on trail: OverlandTrail) {
         let points = trail.coordinates
         guard let first = points.first else { return }
@@ -1179,14 +1226,6 @@ struct MainCockpitView: View {
         } else {
             applyFilterSelection(scanIfNear: true)
         }
-    }
-
-    private func scanMapCenter() {
-        if offlineFirst {
-            telemetry.scanStatus = "Offline-first • cached trails, corridors, and rig-fit stay on device"
-            return
-        }
-        Task { await telemetry.fetchTrailsInMapRegion(center: mapCenter) }
     }
 
     private func beginRoute(to spot: CampSpot, refit: Bool = true, previewOnly: Bool = false) async {
@@ -1651,6 +1690,7 @@ struct MainCockpitView: View {
         if meters(from: mapCenter, to: center) > 40 {
             mapCenter = center
         }
+        refreshTrails(around: center)
         if cameraGate.followRoute {
             if Date() < cameraGate.ignoreFollowDisengageUntil {
                 cameraGate.followSpan = span
@@ -2129,19 +2169,6 @@ struct MainCockpitView: View {
 
     private var topCluster: some View {
         HStack(spacing: 6) {
-            Button {
-                scanMapCenter()
-            } label: {
-                Text(telemetry.isScanningTrails ? "Scanning…" : "↻ Scan Area")
-                    .font(.caption.bold())
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.72))
-                    .foregroundColor(.white)
-                    .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .disabled(telemetry.isScanningTrails)
             Button {
                 toggleParcelLayer()
             } label: {
