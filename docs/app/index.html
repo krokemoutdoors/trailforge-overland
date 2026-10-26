@@ -49,11 +49,11 @@
     #stage { flex: 1 1 auto; min-height: 180px; position: relative; }
     #map { position: absolute; inset: 0; background: #0c1b27; }
     .hud-left, .hud-read, .legend, .clin-pill, .coords { position: absolute; z-index: 500; }
-    .hud-left { top: 68px; left: 8px; display: flex; flex-direction: column; gap: 6px; max-width: 230px; }
+    .hud-left { top: 10px; left: 8px; display: flex; flex-direction: column; gap: 6px; max-width: 230px; }
     .hud-left button, .clin-pill, .legend { background: rgba(8, 16, 28, 0.78); backdrop-filter: blur(8px); }
     .hud-left button { border: 0; border-radius: 999px; text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 800; white-space: nowrap; }
     .hud-left button.on { background: rgba(226, 182, 87, 0.94); color: #1c1402; }
-    .hud-read { top: 8px; left: 8px; right: auto; z-index: 580; display: flex; gap: 6px; align-items: stretch; background: rgba(8, 16, 28, 0.92); border: 1px solid rgba(62, 203, 255, 0.65); border-radius: 16px; padding: 6px 8px; }
+    .hud-read { display: none !important; }
     .hud-read div { background: rgba(0, 0, 0, 0.45); border-radius: 12px; min-width: 84px; text-align: center; padding: 6px 8px; }
     .hud-read b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; font-weight: 800; }
     .hud-read span, .legend, .clin-pill { font-size: 10px; color: #c5d5e4; letter-spacing: 0.04em; }
@@ -89,11 +89,12 @@
     .clin-pill i { width: 28px; height: 4px; border-radius: 999px; background: currentColor; display: inline-block; flex: 0 0 auto; }
     .clin-pill button, #dashTilt button { border: 0; border-radius: 999px; background: var(--cyan); color: #041018; font-size: 11px; font-weight: 800; padding: 4px 8px; }
     #dock { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); }
-    #detents, #routebar { flex: 0 0 auto; }
+    #detents, #routebar, #modebar { flex: 0 0 auto; }
+    #modebar { background: var(--panel); }
     #detents { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
     #detents button { flex: 1 1 auto; border: 0; border-radius: 999px; background: #13202e; color: #d5e2ee; font-size: 12px; font-weight: 800; min-height: 36px; padding: 8px 6px; }
     #detents button.on { background: var(--cyan); color: #041018; }
-    #app[data-detent="peek"]:not([data-dash="1"]) #dock { max-height: 18dvh; overflow: auto; }
+    #app[data-detent="peek"]:not([data-dash="1"]) #dock { max-height: max(18dvh, 156px); overflow: auto; }
     #app[data-detent="peek"]:not([data-dash="1"]) #detents { padding: 4px 8px 0; }
     #app[data-detent="peek"]:not([data-dash="1"]) #detents button { min-height: 28px; padding: 4px 6px; font-size: 11px; }
     #app[data-detent="peek"]:not([data-dash="1"]) .route-stats { display: none; }
@@ -108,10 +109,10 @@
     #app[data-detent="full"]:not([data-dash="1"]) #stage { flex: 0 0 140px; min-height: 120px; }
     #app[data-detent="full"]:not([data-dash="1"]) #dock { flex: 1 1 auto; max-height: none; min-height: 0; }
     #app[data-detent="full"]:not([data-dash="1"]) #sheet { max-height: none; flex: 1 1 auto; min-height: 0; }
-    #rail { position: absolute; z-index: 560; right: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 8px; background: rgba(8, 16, 28, 0.92); padding: 6px; border-radius: 16px; border: 1px solid var(--line); }
-    #rail button { width: 48px; height: 48px; min-width: 48px; min-height: 48px; border: 0; border-radius: 14px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 20px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+    #rail { position: absolute; z-index: 560; right: 5px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 5px; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 12px; border: 1px solid var(--line); }
+    #rail button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 16px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
     #rail button.on { background: var(--cyan); color: #041018; }
-    #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 64px; width: min(340px, calc(100% - 80px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
+    #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 50px; width: min(340px, calc(100% - 62px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
     #layerDrawer[hidden] { display: none; }
     .drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
     .drawer-head button { border: 0; background: transparent; color: white; font-size: 16px; }
@@ -162,16 +163,16 @@
     #app[data-dash="1"] { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr); grid-template-rows: auto minmax(0, 1fr); }
     #app[data-dash="1"] #top { grid-column: 1 / -1; }
     #app[data-dash="1"] #stage { grid-column: 1; grid-row: 2; min-height: 0; max-height: none; flex: unset; }
-    #app[data-dash="1"] #dock { grid-column: 2; grid-row: 2; min-height: 0; max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; border-top: 0; border-left: 1px solid var(--line); }
-    #app[data-dash="1"] #sheet { display: block !important; max-height: none !important; overflow: visible !important; flex: 1 0 auto; padding-bottom: 40px; }
-    #app[data-dash="1"] #detents { position: sticky; top: 0; z-index: 10; background: var(--panel); padding-bottom: 6px; }
+    #app[data-dash="1"] #dock { grid-column: 2; grid-row: 2; min-height: 0; max-height: 100%; overflow: hidden; display: flex; flex-direction: column; border-top: 0; border-left: 1px solid var(--line); }
+    #app[data-dash="1"] #sheet { display: block !important; max-height: none !important; overflow: auto !important; -webkit-overflow-scrolling: touch; flex: 1 1 auto; min-height: 0; padding-bottom: 40px; }
+    #app[data-dash="1"] #detents { background: var(--panel); padding-bottom: 6px; }
     #app[data-dash="1"] .modes button, #app[data-dash="1"] .actions button, #app[data-dash="1"] .reports button, #app[data-dash="1"] #detents button { min-height: 48px; font-size: 14px; }
-    #app[data-dash="1"] #rail button { width: 56px; height: 56px; font-size: 22px; }
+    #app[data-dash="1"] #rail button { width: 40px; height: 40px; min-width: 40px; min-height: 40px; font-size: 17px; }
     #app[data-night="1"] #map { filter: sepia(1) saturate(4) hue-rotate(-40deg) brightness(0.55); }
     #app[data-night="1"] .hud-read b, #app[data-night="1"] #dashHud b, #app[data-night="1"] .fit-title, #app[data-night="1"] .coords b { color: #ffb020; }
     #app[data-night="1"] .clin-pill, #app[data-night="1"] #dashHud span { color: #ff8a3d; }
     #app[data-dash="1"] .coords, #app[data-dash="1"] .clin-pill { display: none; }
-    #app[data-dash="1"] .hud-left { top: 68px; left: 8px; }
+    #app[data-dash="1"] .hud-left { top: 10px; left: 8px; }
     #app[data-dash="1"] .legend { bottom: 78px; }
     .scrub-pin, .hazard-pin { background: transparent; border: 0; }
     .scrub-pin span, .hazard-pin span { display: inline-block; background: white; color: #041018; font-size: 11px; font-weight: 800; padding: 3px 6px; border-radius: 999px; border: 2px solid #3ecbff; white-space: nowrap; }
@@ -266,7 +267,7 @@
     .crux { font-size: 12px; font-weight: 800; padding: 4px 0; }
     #convoyBanner { position: absolute; z-index: 680; top: 74px; left: 50%; transform: translateX(-50%); background: #7f1d1d; color: white; border-radius: 999px; padding: 8px 14px; font-weight: 800; font-size: 13px; max-width: 92%; }
     #convoyBanner[hidden] { display: none; }
-    #hazardSheet, #pinSheet, #markerSheet { position: absolute; z-index: 670; left: 8px; right: 72px; bottom: 8px; background: rgba(8,16,28,.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
+    #hazardSheet, #pinSheet, #markerSheet { position: absolute; z-index: 670; left: 8px; right: 52px; bottom: 8px; background: rgba(8,16,28,.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
     #hazardSheet[hidden], #pinSheet[hidden], #markerSheet[hidden] { display: none; }
     .record-card { background: #101c2b; border: 1px solid rgba(255, 45, 85, 0.55); border-radius: 12px; padding: 8px; margin: 8px 0; }
     .record-card .actions, .marker-list .actions { padding-left: 0; }
@@ -303,11 +304,6 @@
         <button type="button" data-act="near">Near My GPS</button>
         <button type="button" data-act="scan" id="scanBtn">Scan Area for All USA 4x4 Trails</button>
         <button type="button" id="parcelToggle" data-act="parcels" class="on">Parcels</button>
-      </div>
-      <div class="hud-read">
-        <div><span>SPEED (MPH)</span><b id="speedRead">—</b></div>
-        <div><span>ELEVATION (FT)</span><b id="altRead">—</b></div>
-        <div class="phone-gps">PHONE GPS</div>
       </div>
       <div class="coords" id="coordsHud">
         <div class="line" id="myGpsRead"><span class="k">MY GPS:</span><b>—</b></div>
@@ -443,6 +439,11 @@
         <button type="button" id="dashBtn" data-act="dash">In-Dash</button>
         <button type="button" data-act="thermal">🌡️ Thermal</button>
         <button type="button" data-act="night">🌙 Night</button>
+      </div>
+      <div id="modebar" class="modes" style="padding: 6px 10px 4px;">
+        <button type="button" data-act="mode" data-mode="drive" class="on">1. Go Drive</button>
+        <button type="button" data-act="mode" data-mode="camp">2. Flat Camp</button>
+        <button type="button" data-act="mode" data-mode="rig">3. My Rig</button>
       </div>
       <div id="routebar"></div>
       <div id="sheet"></div>
