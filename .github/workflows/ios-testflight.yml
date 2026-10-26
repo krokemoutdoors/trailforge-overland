@@ -14,9 +14,10 @@ permissions:
 
 jobs:
   testflight:
-    # macos-15 matches the Xcode used by the committed project. This workflow file stays
-    # on the push path filter so a merge that also changes Android still starts TestFlight.
-    runs-on: macos-15
+    # macos-15 (arm64) is queued behind a capacity outage. macos-15-intel has runners
+    # available now. This file stays on the push path filter so an Android-only merge
+    # does not start TestFlight.
+    runs-on: macos-15-intel
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -157,11 +158,27 @@ jobs:
 
       - name: Select Xcode 26 (iOS 26 SDK required by App Store Connect)
         run: |
+          set -euo pipefail
+          shopt -s nullglob
+          echo "Installed Xcode apps:"
           ls -d /Applications/Xcode*.app
-          XCODE_26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
-          if [ -n "$XCODE_26" ]; then
-            sudo xcode-select -s "$XCODE_26/Contents/Developer"
+          # Newest Xcode 26, then newest Xcode 16, then /Applications/Xcode.app.
+          # Literal Xcode.app is included only when that directory exists, so a missing
+          # Xcode_26 glob on macos-15-intel does not fail the step under pipefail.
+          candidates=()
+          for app in /Applications/Xcode_26*.app /Applications/Xcode_16*.app; do
+            candidates+=("$app")
+          done
+          if [ -d /Applications/Xcode.app ]; then
+            candidates+=("/Applications/Xcode.app")
           fi
+          if [ ${#candidates[@]} -eq 0 ]; then
+            echo "No Xcode 26, Xcode 16, or /Applications/Xcode.app found on this runner."
+            exit 1
+          fi
+          XCODE_APP="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -n 1)"
+          echo "Selecting ${XCODE_APP}"
+          sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
           xcodebuild -version
           xcodebuild -showsdks
 
