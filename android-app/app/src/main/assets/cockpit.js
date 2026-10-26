@@ -68,6 +68,8 @@
     billing: { ready: false, pro: false, products: [] },
     routeGen: 0,
     scanGen: 0,
+    lastScanAnchor: null,
+    trailScanTimer: null,
     lastReroute: 0,
     aim: null,
     targetCopy: "",
@@ -95,6 +97,8 @@
     packKind: localStorage.getItem("tf-pack-kind") === "satellite" ? "satellite" : "topo",
     packArea: localStorage.getItem("tf-pack-area") || "corridor",
     packBusy: false,
+    map3d: localStorage.getItem("tf-map-3d") === "1",
+    mapPitch: Number(localStorage.getItem("tf-map-pitch") || 0),
     scrubIndex: null,
     scrubTrailId: null,
     plotMode: localStorage.getItem("tf-plot-mode") === "freehand" ? "freehand" : "snap",
@@ -150,6 +154,7 @@
   let areaPreviewLayer;
   let hybridLayer;
   let imageryLayer;
+  let hillshadeLayer;
   let topoLayer;
   let labelLayer;
   let darkLayer;
@@ -411,9 +416,8 @@
       return list;
     }
     if (state.filter !== "near") return list;
-    const origin = state.fix || mapCenter();
+    const origin = mapCenter();
     list = list.slice().sort(function (a, b) { return miles(origin, a) - miles(origin, b); });
-    if (!state.fix) return list.slice(0, 14);
     const nearby = list.filter(function (trail) { return miles(origin, trail) <= 250; });
     return nearby.length ? nearby : list.slice(0, 14);
   }
@@ -454,9 +458,14 @@
   }
 
   function listedCamps() {
-    const pads = pickerTrails().flatMap(spotsFor);
-    const origin = state.fix;
-    if (!origin) return pads.sort(function (a, b) { return a.slope - b.slope; });
+    const source = map ? drawableTrails() : pickerTrails().filter(function (trail) { return !trail.bdr || trail.id === state.selectedId; });
+    const pads = [];
+    source.forEach(function (trail) {
+      spotsFor(trail).forEach(function (spot) {
+        if (spot.slope < 3) pads.push(spot);
+      });
+    });
+    const origin = mapCenter();
     return pads.sort(function (a, b) { return miles(origin, a) - miles(origin, b); });
   }
 
@@ -799,7 +808,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.4 · build 16<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.5 · build 17<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -927,13 +936,33 @@
     if (targetCard) targetCard.innerHTML = "<span>TARGET</span><b>" + esc(aimText || "—") + "</b>";
   }
 
+  function trailInView(trail, bounds) {
+    if (!bounds) return true;
+    const lat = Number(trail.lat);
+    const lon = Number(trail.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lon) && bounds.contains([lat, lon])) return true;
+    const coords = trail.coordinates || [];
+    const step = Math.max(1, Math.ceil(coords.length / 12));
+    for (let index = 0; index < coords.length; index += step) {
+      if (bounds.contains(coords[index])) return true;
+    }
+    return false;
+  }
+
   function drawableTrails() {
-    const list = pickerTrails().filter(function (trail) {
-      return !trail.bdr || trail.id === state.selectedId;
+    const bounds = map && map.getBounds ? map.getBounds().pad(0.35) : null;
+    const seen = new Set();
+    const visible = [];
+    allTrails().forEach(function (trail) {
+      if (!trail || seen.has(trail.id)) return;
+      if (trail.bdr && trail.id !== state.selectedId) return;
+      if (bounds && trail.id !== state.selectedId && !trailInView(trail, bounds)) return;
+      seen.add(trail.id);
+      visible.push(trail);
     });
-    if (state.filter !== "all" && list.length <= 80) return list;
-    const signature = list.filter(function (trail) { return trail.signature || trail.live; });
-    const chosen = (signature.length ? signature : list).slice(0, 80);
+    const origin = mapCenter();
+    visible.sort(function (a, b) { return meters(origin, a) - meters(origin, b); });
+    const chosen = visible.slice(0, 80);
     const current = selected();
     if (current && (!current.bdr || current.id === state.selectedId) && !chosen.some(function (trail) { return trail.id === current.id; })) chosen.push(current);
     return chosen;
@@ -966,9 +995,11 @@
         lineCap: "round",
         lineJoin: "round"
       }).addTo(trailLayer);
-      const showPads = state.mode === "camp" || zoom >= 10 || selectedTrail;
+      const view = map.getBounds().pad(0.2);
+      const showPads = state.mode === "camp" || zoom >= 8 || selectedTrail;
       if (showPads) {
         spotsFor(trail).forEach(function (spot) {
+          if (spot.slope >= 3 || !view.contains([spot.lat, spot.lon])) return;
           const icon = L.divIcon({
             className: "camp-pin" + (spot.slope >= 2 ? " warn" : ""),
             html: "<span>⛺ " + spot.slope.toFixed(1) + "°</span>",
@@ -980,13 +1011,15 @@
           }).addTo(campLayer);
         });
       }
-      if (selectedTrail) {
-        const head = trailhead(trail);
+      const head = trailhead(trail);
+      if (selectedTrail || view.contains([head.lat, head.lon])) {
         const flag = L.divIcon({ className: "flag-pin", html: "<span>⚑</span>", iconAnchor: [12, 12] });
         L.marker([head.lat, head.lon], { icon: flag, zIndexOffset: 450 }).on("click", function (event) {
           if (state.plotting) { onMapClick(event); return; }
           beginRoute(head);
         }).addTo(campLayer);
+      }
+      if (selectedTrail) {
         cruxPins(trail).forEach(function (pin) {
           const icon = L.divIcon({ className: "hazard-pin", html: "<span>" + esc(pin.short) + "</span>", iconAnchor: [14, 12] });
           L.marker([pin.lat, pin.lon], { icon: icon, zIndexOffset: 520 }).addTo(campLayer);
@@ -1202,13 +1235,22 @@
     return parseUsfs(text);
   }
 
+  function scheduleTrailScan() {
+    if (!map || SHOT) return;
+    clearTimeout(state.trailScanTimer);
+    state.trailScanTimer = setTimeout(function () {
+      const center = mapCenter();
+      if (state.lastScanAnchor && meters(state.lastScanAnchor, center) < 2500) return;
+      state.lastScanAnchor = { lat: center.lat, lon: center.lon };
+      scanAt(center);
+    }, 550);
+  }
+
   async function scanAt(center) {
     if (!center || SHOT) return;
     const gen = ++state.scanGen;
     state.scanning = true;
     state.scanStatus = "Scanning USA 4x4 trails…";
-    const button = document.getElementById("scanBtn");
-    if (button) button.textContent = "Scanning…";
     renderTop();
     const status = document.getElementById("scanStatus");
     if (status) status.textContent = state.scanStatus;
@@ -1227,22 +1269,16 @@
         fresh.push(trail);
       });
       state.discovered = state.discovered.concat(fresh);
-      state.scanStatus = fresh.length || merged.length ? (state.discovered.length + " local USA trails") : "No public 4x4 tracks returned for this area.";
+      if (state.discovered.length > 200) {
+        state.discovered.sort(function (a, b) { return meters(center, a) - meters(center, b); });
+        state.discovered = state.discovered.slice(0, 200);
+      }
+      state.scanStatus = state.discovered.length ? (state.discovered.length + " local USA trails") : "No public 4x4 tracks returned for this area.";
     } catch (error) {
       if (gen !== state.scanGen) return;
       state.scanStatus = "Trail scan unavailable right now.";
     }
     state.scanning = false;
-    if (button) button.textContent = "Scan Area for All USA 4x4 Trails";
-    if (state.filter === "near") {
-      const list = pickerTrails();
-      if (list.some(function (trail) { return trail.id === state.selectedId && trail.bdr; })) {
-        renderAll();
-        return;
-      }
-      const next = list.find(function (trail) { return !trail.bdr; });
-      if (next && next.id !== state.selectedId && !state.follow) state.selectedId = next.id;
-    }
     renderAll();
   }
 
@@ -1932,10 +1968,6 @@
       applyFilter(true);
       return;
     }
-    if (act === "scan") {
-      scanAt(state.fix || mapCenter());
-      return;
-    }
     if (act === "offline") {
       state.offlineSaved = !state.offlineSaved;
       localStorage.setItem("tf-offline", state.offlineSaved ? "1" : "0");
@@ -2062,7 +2094,16 @@
       downloadCorridor();
       return;
     }
-    if (act === "close-drawer") { state.drawer = null; renderDrawer(); applyChrome(); return; }
+    if (act === "close-drawer") { state.drawer = null; renderDrawer(); applyChrome(); syncAreaPreview(); return; }
+    if (act === "toggle-3d") {
+      setMapPitch(state.mapPitch > 1 ? 0 : 55);
+      return;
+    }
+    if (act === "map-pitch") {
+      const pitch = Number(button.dataset.id);
+      setMapPitch(pitch === 40 || pitch === 55 ? pitch : 0);
+      return;
+    }
     if (act === "basemap") {
       const id = button.dataset.id;
       state.basemap = id === "topo" || id === "satellite" || id === "dark" ? id : "hybrid";
@@ -3289,6 +3330,12 @@
     if (plotBtn) plotBtn.classList.toggle("on", state.plotting);
     if (layerBtn) layerBtn.classList.toggle("on", state.drawer === "layers");
     if (corridorBtn) corridorBtn.classList.toggle("on", state.drawer === "corridor" || state.packBusy);
+    drawer.querySelectorAll("[data-act=map-pitch]").forEach(function (button) {
+      button.classList.toggle("on", Math.round(Number(button.dataset.id)) === Math.round(state.mapPitch));
+    });
+    const tiltBtn = document.querySelector('#rail [data-act="toggle-3d"]');
+    if (tiltBtn) tiltBtn.classList.toggle("on", !!(state.map3d && state.mapPitch > 1));
+    syncAreaPreview();
   }
 
   function setOverlay(name, value) {
@@ -3330,6 +3377,115 @@
     return false;
   }
 
+  function setMapPitch(pitch, live) {
+    const next = Math.max(0, Math.min(60, Number(pitch) || 0));
+    const wasRelief = state.map3d && state.mapPitch > 1;
+    state.mapPitch = next;
+    state.map3d = next > 1;
+    localStorage.setItem("tf-map-pitch", String(next));
+    localStorage.setItem("tf-map-3d", state.map3d ? "1" : "0");
+    applyMapPitch(!!live);
+    if (!live || wasRelief !== state.map3d) applyBasemap();
+    if (live) {
+      const tiltBtn = document.querySelector('#rail [data-act="toggle-3d"]');
+      if (tiltBtn) tiltBtn.classList.toggle("on", state.map3d);
+      return;
+    }
+    renderDrawer();
+  }
+
+  function applyMapPitch(live) {
+    const el = document.getElementById("map");
+    if (!el) return;
+    const pitch = state.map3d ? Math.max(0, Math.min(60, Number(state.mapPitch) || 0)) : 0;
+    el.classList.toggle("map-tilted", pitch > 0.5);
+    el.classList.toggle("map-tilt-live", !!live && pitch > 0.5);
+    if (pitch <= 0.5) {
+      el.style.transform = "";
+      return;
+    }
+    const scale = (1 + pitch * 0.0045).toFixed(4);
+    el.style.transform = "perspective(1100px) rotateX(" + pitch.toFixed(1) + "deg) scale(" + scale + ")";
+  }
+
+  function mapContainerPoint(clientX, clientY) {
+    if (!map) return L.point(0, 0);
+    const mapEl = map.getContainer();
+    const parent = mapEl.offsetParent || mapEl.parentElement || document.body;
+    const parentRect = parent.getBoundingClientRect();
+    const left = parentRect.left + mapEl.offsetLeft;
+    const top = parentRect.top + mapEl.offsetTop;
+    const width = mapEl.offsetWidth || mapEl.clientWidth || 1;
+    const height = mapEl.offsetHeight || mapEl.clientHeight || 1;
+    const pitch = state.map3d ? Math.max(0, Math.min(60, Number(state.mapPitch) || 0)) : 0;
+    if (pitch <= 0.5) return L.point(clientX - left, clientY - top);
+    const scale = 1 + pitch * 0.0045;
+    const rad = pitch * Math.PI / 180;
+    const distance = 1100;
+    const screenX = clientX - (left + width * 0.5);
+    const screenY = clientY - (top + height * 0.65);
+    const cosine = Math.cos(rad);
+    const sine = Math.sin(rad);
+    const denom = cosine + (screenY * sine) / distance;
+    const scaledY = Math.abs(denom) < 1e-6 ? screenY : screenY / denom;
+    const scaledX = screenX * (1 - (scaledY * sine) / distance);
+    return L.point(width * 0.5 + scaledX / scale, height * 0.65 + scaledY / scale);
+  }
+
+  function installPitchGesture() {
+    if (!map || !window.L || !L.DomEvent || L.DomEvent.__tfPitch) return;
+    const original = L.DomEvent.getMousePosition;
+    L.DomEvent.getMousePosition = function (event, container) {
+      if (state.map3d && state.mapPitch > 0.5 && map && container === map.getContainer() && event && event.clientX != null) {
+        return mapContainerPoint(event.clientX, event.clientY);
+      }
+      return original.call(L.DomEvent, event, container);
+    };
+    L.DomEvent.__tfPitch = true;
+    const container = map.getContainer();
+    const pointers = new Map();
+    let span = 0;
+    let pitching = false;
+    function spanNow() {
+      const pts = Array.from(pointers.values());
+      if (pts.length < 2) return 0;
+      return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    }
+    container.addEventListener("pointerdown", function (event) {
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      span = spanNow();
+      pitching = false;
+    });
+    container.addEventListener("pointermove", function (event) {
+      if (!pointers.has(event.pointerId)) return;
+      const prev = pointers.get(event.pointerId);
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const two = pointers.size >= 2;
+      const shiftDrag = pointers.size === 1 && event.shiftKey;
+      if (!two && !shiftDrag) return;
+      const nextSpan = spanNow();
+      if (two && span && Math.abs(nextSpan - span) > 22) {
+        pitching = false;
+        if (map.dragging) map.dragging.enable();
+        return;
+      }
+      const dy = event.clientY - prev.y;
+      if (!pitching && Math.abs(dy) < 6) return;
+      pitching = true;
+      if (map.dragging) map.dragging.disable();
+      setMapPitch(Math.max(0, Math.min(60, (state.mapPitch || 0) - dy * 0.28)), true);
+    });
+    function endPitch(event) {
+      pointers.delete(event.pointerId);
+      if (pointers.size >= 2) return;
+      if (pitching) setMapPitch(state.mapPitch, false);
+      pitching = false;
+      if (map && map.dragging) map.dragging.enable();
+    }
+    container.addEventListener("pointerup", endPitch);
+    container.addEventListener("pointercancel", endPitch);
+  }
+
   function applyBasemap() {
     if (!imageryLayer || !map) return;
     const center = map.getCenter();
@@ -3351,6 +3507,8 @@
     }
     if (map.attributionControl) map.attributionControl.setPrefix(MAP_ATTRIB);
     if (offlineLayer) offlineLayer.redraw();
+    const relief = !dark && state.map3d && state.mapPitch > 1 && (mode === "topo" || mode === "satellite" || mode === "hybrid");
+    toggleTile(hillshadeLayer, relief, 0.34);
   }
 
   function isCorridor(trail) {
@@ -4453,10 +4611,15 @@
     return areaChoiceLabel() + " · ~" + plan.tiles.length + " tiles · " + inside.parcels.length + " parcels · " + inside.trails.length + " trails · ~" + mb + " MB" + cap;
   }
 
+  function offlinePreviewVisible() {
+    return state.drawer === "corridor" || state.drawer === "offline" || !!state.packBusy;
+  }
+
   function syncAreaPreview() {
     if (!map || !window.L) return;
     if (!areaPreviewLayer) areaPreviewLayer = L.layerGroup().addTo(map);
     areaPreviewLayer.clearLayers();
+    if (!offlinePreviewVisible()) return;
     state.packs.forEach(function (pack) {
       if (pack.minLat == null) return;
       L.rectangle([[pack.minLat, pack.minLon], [pack.maxLat, pack.maxLon]], {
@@ -4585,6 +4748,7 @@
       saved = await fetchTilePlan(plan, kind);
     } finally {
       state.packBusy = false;
+      syncAreaPreview();
     }
     const keys = saved.keys;
     const bytes = saved.bytes;
@@ -4636,6 +4800,7 @@
       saved = await fetchTilePlan(plan, kind);
     } finally {
       state.packBusy = false;
+      syncAreaPreview();
     }
     if (saved.keys.length) {
       state.packs.unshift({
@@ -5487,6 +5652,13 @@
     let start = null;
     map.on("contextmenu", function (event) {
       if (event && event.originalEvent && event.originalEvent.preventDefault) event.originalEvent.preventDefault();
+      const source = event && event.originalEvent;
+      if (source && source.clientX != null) {
+        const point = mapContainerPoint(source.clientX, source.clientY);
+        const ll = map.containerPointToLatLng(point);
+        dropPinAt(ll.lat, ll.lng);
+        return;
+      }
       if (event && event.latlng) dropPinAt(event.latlng.lat, event.latlng.lng);
     });
     function ignoredTarget(target) {
@@ -5498,8 +5670,7 @@
       start = { x: clientX, y: clientY };
       timer = setTimeout(function () {
         if (!start || !map) return;
-        const rect = container.getBoundingClientRect();
-        const point = L.point(start.x - rect.left, start.y - rect.top);
+        const point = mapContainerPoint(start.x, start.y);
         const ll = map.containerPointToLatLng(point);
         dropPinAt(ll.lat, ll.lng);
         start = null;
@@ -5762,6 +5933,14 @@
     hybridLayer = L.tileLayer(ESRI_ROADS, { maxNativeZoom: 19, maxZoom: 19, zIndex: 2, attribution: "" });
     labelLayer = L.tileLayer(ESRI_PLACES, { maxNativeZoom: 19, maxZoom: 19, zIndex: 3, attribution: "" });
     topoLayer = L.tileLayer(USGS_TILES.topo, { maxNativeZoom: 16, maxZoom: 19, zIndex: 1, attribution: "" });
+    hillshadeLayer = L.tileLayer("https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}", {
+      opacity: 0.34,
+      maxNativeZoom: 16,
+      maxZoom: 19,
+      zIndex: 5,
+      className: "hillshade-tiles",
+      attribution: ""
+    });
     darkLayer = L.tileLayer("https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
       maxZoom: 20,
       zIndex: 1,
@@ -5814,9 +5993,11 @@
     recordLayer = L.layerGroup().addTo(map);
     markerLayer = L.layerGroup().addTo(map);
     installLongPress();
+    installPitchGesture();
+    applyMapPitch(false);
     map.on("dragstart", function () { state.follow = false; });
-    map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); refreshAreaChrome(); });
-    map.on("moveend", function () { applyBasemap(); scheduleParcels(); refreshAreaChrome(); });
+    map.on("zoomend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
+    map.on("moveend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
     map.on("move", function () { syncAreaPreview(); });
     refreshAreaChrome();
     map.on("click", onMapClick);
@@ -5952,6 +6133,7 @@
     loadTelemetry();
     bootShot();
     scheduleParcels();
+    scheduleTrailScan();
     refreshMvum(selected());
     refreshCommunity(false);
     setTimeout(function () {

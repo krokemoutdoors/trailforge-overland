@@ -51,7 +51,9 @@
     .step { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 4px 0; color: #d5e4f0; }
     .step.on { color: white; font-weight: 700; }
     #stage { flex: 1 1 auto; min-height: 180px; position: relative; }
-    #map { position: absolute; inset: 0; background: #0c1b27; }
+    #map { position: absolute; inset: 0; background: #0c1b27; transform-origin: 50% 65%; transition: transform 0.25s ease; }
+    #map.map-tilt-live { transition: none; }
+    .hillshade-tiles { mix-blend-mode: multiply; }
     .hud-left, .hud-read, .legend, .clin-pill, .coords { position: absolute; z-index: 500; }
     .hud-left { top: 10px; left: 8px; display: flex; flex-direction: column; gap: 6px; max-width: 230px; }
     .hud-left button, .clin-pill, .legend { background: rgba(8, 16, 28, 0.78); backdrop-filter: blur(8px); }
@@ -115,6 +117,7 @@
     #app[data-detent="full"]:not([data-dash="1"]) #sheet { max-height: none; flex: 1 1 auto; min-height: 0; }
     #rail { position: absolute; z-index: 560; right: 5px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 5px; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 12px; border: 1px solid var(--line); }
     #rail button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 16px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+    #rail button.rail-3d { font-size: 11px; letter-spacing: 0.02em; }
     #rail button.on { background: var(--cyan); color: #041018; }
     #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 50px; width: min(340px, calc(100% - 62px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
     #layerDrawer[hidden] { display: none; }
@@ -307,7 +310,6 @@
       <div class="hud-left">
         <button type="button" data-act="center">Center on My GPS</button>
         <button type="button" data-act="near">Near My GPS</button>
-        <button type="button" data-act="scan" id="scanBtn">Scan Area for All USA 4x4 Trails</button>
         <button type="button" id="parcelToggle" data-act="parcels" class="on">Parcels</button>
       </div>
       <div class="coords" id="coordsHud">
@@ -318,6 +320,7 @@
       <div class="lot-card" id="lotCard" hidden></div>
       <nav id="rail" aria-label="Map tools">
         <button type="button" data-act="layers" title="Layers &amp; Opacity Drawer" aria-label="Layers and Opacity Drawer">▦</button>
+        <button type="button" class="rail-3d" data-act="toggle-3d" title="3D terrain and tilt" aria-label="Toggle 3D map">3D</button>
         <button type="button" data-act="plot" title="Custom Route Plotter" aria-label="Custom Route Plotter">✎</button>
         <button type="button" data-act="corridor" title="5-Mile Corridor Offline Download" aria-label="5-Mile Corridor Offline Download">↓</button>
         <button type="button" data-act="hazard" title="Drop Hazard Pin" aria-label="Drop Hazard Pin">📸</button>
@@ -343,6 +346,12 @@
       <aside id="layerDrawer" hidden>
         <div class="drawer-head"><b id="drawerTitle">Layers &amp; Opacity</b><button type="button" data-act="close-drawer" aria-label="Close drawer">✕</button></div>
         <section data-panel="layers">
+          <div class="drawer-label">3D TERRAIN &amp; TILT</div>
+          <div class="seg" id="pitchSeg">
+            <button type="button" data-act="map-pitch" data-id="0">2D 0°</button>
+            <button type="button" data-act="map-pitch" data-id="40">3D 40°</button>
+            <button type="button" data-act="map-pitch" data-id="55">3D 55°</button>
+          </div>
           <div class="drawer-label">BASEMAP</div>
           <div class="seg" id="basemapSeg">
             <button type="button" data-act="basemap" data-id="hybrid">Hybrid Satellite+Topo</button>
