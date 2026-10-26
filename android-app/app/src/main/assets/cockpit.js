@@ -482,22 +482,67 @@
     toastTimer = setTimeout(function () { el.hidden = true; }, 2800);
   }
 
+  const NATURAL_VOICE_HINTS = ["natural", "online", "neural", "ava", "samantha (enhanced)", "samantha", "google us english", "alex", "serena"];
+  let cachedVoice = null;
+
+  function bestNaturalWebVoice() {
+    if (!window.speechSynthesis || !window.speechSynthesis.getVoices) return null;
+    const voices = window.speechSynthesis.getVoices() || [];
+    const english = voices.filter(function (voice) { return /^en([-_]|$)/i.test(voice.lang || ""); });
+    const pool = english.length ? english : voices;
+    let best = null;
+    let bestScore = 0;
+    pool.forEach(function (voice) {
+      const blob = ((voice.name || "") + " " + (voice.lang || "")).toLowerCase();
+      if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox/.test(blob)) return;
+      let score = /en-us/.test(blob) ? 8 : 0;
+      NATURAL_VOICE_HINTS.forEach(function (hint, index) {
+        if (blob.indexOf(hint) >= 0) score += 120 - index;
+      });
+      if (score > bestScore) {
+        bestScore = score;
+        best = voice;
+      }
+    });
+    return best;
+  }
+
+  function humanizeSpeech(text) {
+    return String(text || "")
+      .replace(/\b0\.2 miles\b/gi, "a fifth of a mile")
+      .replace(/\bpoint two miles\b/gi, "a fifth of a mile")
+      .replace(/\bin 0\.2 miles\b/gi, "in a fifth of a mile");
+  }
+
   function speak(text) {
-    if (state.muted || !text) return;
+    const spoken = humanizeSpeech(text);
+    if (state.muted || !spoken) return;
     try {
       if (window.TrailForgeSpeech && TrailForgeSpeech.speak) {
-        TrailForgeSpeech.speak(text);
+        TrailForgeSpeech.speak(spoken);
         return;
       }
     } catch (error) { /* Web Speech fallback below. */ }
     if (!window.speechSynthesis) return;
     try {
-      const utterance = new SpeechSynthesisUtterance(text);
+      const utterance = new SpeechSynthesisUtterance(spoken);
       utterance.lang = "en-US";
       utterance.rate = 0.96;
+      utterance.pitch = 1.02;
+      const voice = cachedVoice || bestNaturalWebVoice();
+      if (voice) {
+        cachedVoice = voice;
+        try { utterance.voice = voice; } catch (error) { /* Keep the engine default if this voice cannot be selected. */ }
+      }
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
     } catch (error) { /* No speech engine on this device. */ }
+  }
+
+  if (window.speechSynthesis && window.speechSynthesis.addEventListener) {
+    window.speechSynthesis.addEventListener("voiceschanged", function () {
+      cachedVoice = bestNaturalWebVoice();
+    });
   }
 
   function setMuted(muted) {
@@ -603,6 +648,14 @@
   function renderTop() {
     const top = document.getElementById("top");
     const trail = selected();
+    if (state.route && !state.route.confirmed) {
+      const spot = state.route.destination;
+      const remaining = remainingMeters(state.route);
+      const seconds = remainingSeconds(state.route, remaining);
+      const slope = spot.kind === "pad" ? " · " + Number(spot.slope || 0).toFixed(1) + "° slope" : "";
+      top.innerHTML = '<div class="nav preview"><div class="nav-copy"><div class="nav-dist">Previewing Route to ' + esc(spot.name) + '</div><div class="nav-street">' + esc(formatDistance(remaining) + " · " + formatDuration(seconds) + slope) + '</div></div><button type="button" class="primary" data-act="confirm-route">Start GPS Route</button><button type="button" class="ghost" data-act="end">Cancel</button></div>';
+      return;
+    }
     if (state.route) {
       const cue = nextCue();
       const steps = displaySteps(state.route);
@@ -630,7 +683,11 @@
     const sky = spot.kind === "pad" ? spot.starlink + "%" : (spot.kind === "parcel" || spot.kind === "place") ? (spot.zoning || "—") : "—";
     const slopeLabel = spot.kind === "pad" ? "pad slope" : spot.kind === "parcel" ? "lot size" : "destination";
     const skyLabel = spot.kind === "pad" ? "Starlink" : spot.kind === "parcel" ? "zoning" : spot.kind === "place" ? "address" : "sky";
-    return '<div class="route-stats"><div><b id="rbSlope">' + esc(slope) + "</b><span>" + slopeLabel + '</span></div><div><b id="rbSky">' + esc(sky) + "</b><span>" + skyLabel + '</span></div><div><b id="rbEta">' + esc(formatDuration(seconds)) + "</b><span>ETA " + esc(eta) + '</span></div><div><b id="rbMiles">' + esc(formatDistance(remaining)) + '</b><span>remaining</span></div></div><div class="actions"><button type="button" class="primary' + (state.follow ? " on" : "") + '" data-act="follow">Follow GPS</button><button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">End Route ✕</button></div>';
+    const stats = '<div class="route-stats"><div><b id="rbSlope">' + esc(slope) + "</b><span>" + slopeLabel + '</span></div><div><b id="rbSky">' + esc(sky) + "</b><span>" + skyLabel + '</span></div><div><b id="rbEta">' + esc(formatDuration(seconds)) + "</b><span>ETA " + esc(eta) + '</span></div><div><b id="rbMiles">' + esc(formatDistance(remaining)) + '</b><span>remaining</span></div></div>';
+    if (!state.route.confirmed) {
+      return stats + '<div class="actions"><button type="button" class="primary on" data-act="confirm-route">Start GPS Route</button><button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">Cancel ✕</button></div>';
+    }
+    return stats + '<div class="actions"><button type="button" class="primary' + (state.follow ? " on" : "") + '" data-act="follow">Follow GPS</button><button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">End Route ✕</button></div>';
   }
 
   function sheetHtml() {
@@ -670,7 +727,7 @@
       return '<div class="place-card"><button type="button" class="row" data-act="place-route" data-id="' + esc(place.id) + '"><span class="meta"><b>' + esc(place.name) + "</b><small>" + esc(place.address || "") + esc(away) + '</small></span></button><div class="actions"><button type="button" data-act="place-show" data-id="' + esc(place.id) + '">Show on Map</button><button type="button" class="primary" data-act="place-route" data-id="' + esc(place.id) + '">Route Here</button></div></div>';
     }).join("");
     const places = (state.placeBusy || placeRows) ? '<div class="status">Places &amp; Addresses</div>' + (state.placeBusy ? '<div class="status">Searching addresses and stores…</div>' : "") + placeRows : "";
-    return headUnitHtml() + recorderHtml() + savedMarkersHtml() + plotWaypointsHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
+    return recorderHtml() + savedMarkersHtml() + plotWaypointsHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
   }
 
   function profileHtml(trail) {
@@ -742,7 +799,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.3 · build 15<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.4 · build 16<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -919,7 +976,7 @@
           });
           L.marker([spot.lat, spot.lon], { icon: icon, zIndexOffset: 400 }).on("click", function (event) {
             if (state.plotting) { onMapClick(event); return; }
-            beginRoute(spot);
+            beginRoute(spot, true, spot.kind === "pad");
           }).addTo(campLayer);
         });
       }
@@ -1305,7 +1362,7 @@
 
   function maybeSpeakCues() {
     const route = state.route;
-    if (!route || !state.fix || route.arrived) return;
+    if (!route || !route.confirmed || !state.fix || route.arrived) return;
     const option = route.options[route.selected] || route.options[0];
     if (route.stepIndex == null) route.stepIndex = 0;
     while (route.stepIndex < option.steps.length) {
@@ -1313,7 +1370,7 @@
       const distance = meters(state.fix, { lat: step.lat, lon: step.lon }) / 1609.344;
       if (!step.approach && distance <= 0.2 && distance > 0.04 && step.type !== "depart") {
         step.approach = true;
-        speak("In 0.2 miles, " + step.instruction);
+        speak("In a fifth of a mile, " + step.instruction);
       }
       if (distance <= 0.04) {
         if (!step.at && step.type !== "depart") speak(step.instruction);
@@ -1328,7 +1385,7 @@
       const spurDistance = meters(state.fix, spurStart) / 1609.344;
       if (!route.spurApproach && spurDistance <= 0.2 && spurDistance > 0.04) {
         route.spurApproach = true;
-        speak("In 0.2 miles, proceed on the overland spur to " + route.destination.name);
+        speak("In a fifth of a mile, proceed on the overland spur to " + route.destination.name);
       }
       if (!route.spurAt && spurDistance <= 0.04) {
         route.spurAt = true;
@@ -1406,12 +1463,15 @@
     }).filter(function (option) { return option.road.length >= 2; });
   }
 
-  async function beginRoute(spot, refit) {
+  async function beginRoute(spot, refit, previewOnly) {
     if (!spot) return;
     const generation = ++state.routeGen;
+    const preview = !!previewOnly;
     const trail = trailById(spot.trailID) || selected();
     const originWasGPS = !!(state.fix && !state.fix.shotOnly);
     const origin = state.fix || { lat: trailhead(trail).lat, lon: trailhead(trail).lon };
+    const prior = state.route;
+    const wasFollowing = !!(prior && state.follow && refit === false && !preview);
     state.routing = true;
     state.aim = spot;
     state.selectedId = spot.trailID || state.selectedId;
@@ -1440,7 +1500,8 @@
       }];
     }
     const road = options[0].road;
-    const firstBuild = !state.route || state.route.destination.id !== spot.id;
+    const firstBuild = !prior || prior.destination.id !== spot.id;
+    const keepAnnounced = !firstBuild && prior && prior.announced && !preview;
     state.route = {
       destination: spot,
       options: options,
@@ -1451,11 +1512,16 @@
       arrived: false,
       spurApproach: false,
       spurAt: false,
-      announced: false
+      announced: !!keepAnnounced,
+      confirmed: !preview
     };
     state.routing = false;
     state.showSteps = false;
-    state.follow = false;
+    state.follow = wasFollowing;
+    if (preview) {
+      state.detent = "peek";
+      localStorage.setItem("tf-detent", "peek");
+    }
     renderAll();
     if (refit !== false) {
       requestAnimationFrame(function () {
@@ -1465,11 +1531,11 @@
     }
     const first = options[0].steps.find(function (step) { return step.type !== "depart"; }) || options[0].steps[0];
     const milesText = (options[0].distanceMeters / 1609.344).toFixed(1);
-    if (firstBuild || !state.route.announced) {
+    if (!preview && !state.route.announced) {
       state.route.announced = true;
-      speak("Starting route to " + spot.name + ". " + (first ? first.instruction : "Follow the route.") + " " + milesText + " miles.");
+      speak("Starting GPS route to " + spot.name + ". " + (first ? first.instruction : "Follow the route.") + " " + milesText + " miles.");
     }
-    maybeSpeakCues();
+    if (!preview) maybeSpeakCues();
     const app = document.getElementById("app");
     app.dataset.route = "1";
     if (SHOT) app.dataset.shotReady = "1";
@@ -1501,9 +1567,10 @@
     if (!route || !state.fix) return;
     if (!route.originWasGPS) {
       route.originWasGPS = true;
-      beginRoute(route.destination, !state.follow);
+      beginRoute(route.destination, !state.follow, !route.confirmed);
       return;
     }
+    if (!route.confirmed) return;
     if (!state.follow || Date.now() - state.lastReroute < 25000) return;
     const line = roadAndSpur(route);
     let best = Infinity;
@@ -1513,7 +1580,7 @@
     if (best > 450) {
       state.lastReroute = Date.now();
       speak("Recalculating route.");
-      beginRoute(route.destination, false);
+      beginRoute(route.destination, false, false);
     }
   }
 
@@ -1844,7 +1911,12 @@
       return;
     }
     if (act === "route") {
-      beginRoute(findSpot(button.dataset.id));
+      const spot = findSpot(button.dataset.id);
+      beginRoute(spot, true, !!(spot && spot.kind === "pad"));
+      return;
+    }
+    if (act === "confirm-route") {
+      confirmRoute();
       return;
     }
     if (act === "center") {
@@ -1874,6 +1946,10 @@
     if (act === "mute") { setMuted(!state.muted); return; }
     if (act === "steps") { state.showSteps = !state.showSteps; renderTop(); return; }
     if (act === "follow") {
+      if (state.route && !state.route.confirmed) {
+        confirmRoute();
+        return;
+      }
       state.follow = true;
       setDetent("peek");
       if (state.fix) map.setView([state.fix.lat, state.fix.lon], Math.max(map.getZoom(), 15));
@@ -5163,7 +5239,26 @@
   }
 
   function headUnitHtml() {
-    return '<div class="telemetry"><b>CarPlay &amp; Head-Unit Ready</b><br>Apple CarPlay and Android Auto read this phone GPS speed, elevation, trails, flat camps, and trail recording.</div>';
+    return "";
+  }
+
+  function confirmRoute() {
+    const route = state.route;
+    if (!route) return;
+    route.confirmed = true;
+    state.follow = true;
+    setDetent("peek");
+    if (state.fix && map) map.setView([state.fix.lat, state.fix.lon], Math.max(map.getZoom(), 15));
+    const spot = route.destination;
+    const option = route.options[route.selected] || route.options[0];
+    const first = option && option.steps ? option.steps.find(function (step) { return step.type !== "depart"; }) || option.steps[0] : null;
+    const milesText = option ? (option.distanceMeters / 1609.344).toFixed(1) : "";
+    if (!route.announced) {
+      route.announced = true;
+      speak("Starting GPS route to " + spot.name + ". " + (first ? first.instruction : "Follow the route.") + (milesText ? " " + milesText + " miles." : ""));
+    }
+    maybeSpeakCues();
+    renderAll();
   }
 
   function recorderHtml() {
@@ -5301,7 +5396,8 @@
       arrived: false,
       spurApproach: false,
       spurAt: false,
-      announced: true
+      announced: true,
+      confirmed: true
     };
     state.follow = true;
     renderAll();
@@ -5389,31 +5485,52 @@
     const container = map.getContainer();
     let timer = null;
     let start = null;
-    container.addEventListener("contextmenu", function (event) {
-      event.preventDefault();
-      const ll = map.mouseEventToLatLng(event);
-      dropPinAt(ll.lat, ll.lng);
+    map.on("contextmenu", function (event) {
+      if (event && event.originalEvent && event.originalEvent.preventDefault) event.originalEvent.preventDefault();
+      if (event && event.latlng) dropPinAt(event.latlng.lat, event.latlng.lng);
     });
-    container.addEventListener("touchstart", function (event) {
-      if (event.touches.length !== 1) { clearPress(); return; }
-      const touch = event.touches[0];
-      start = { x: touch.clientX, y: touch.clientY };
+    function ignoredTarget(target) {
+      return !!(target && target.closest && target.closest("button, input, a, .leaflet-marker-icon, .leaflet-interactive"));
+    }
+    function arm(clientX, clientY, target) {
+      if (ignoredTarget(target)) return;
+      clearPress();
+      start = { x: clientX, y: clientY };
       timer = setTimeout(function () {
-        if (!start) return;
-        const point = map.mouseEventToContainerPoint({ clientX: start.x, clientY: start.y });
+        if (!start || !map) return;
+        const rect = container.getBoundingClientRect();
+        const point = L.point(start.x - rect.left, start.y - rect.top);
         const ll = map.containerPointToLatLng(point);
         dropPinAt(ll.lat, ll.lng);
         start = null;
-      }, 500);
+      }, 450);
+    }
+    function moved(clientX, clientY) {
+      if (!start) return;
+      if (Math.hypot(clientX - start.x, clientY - start.y) > 14) clearPress();
+    }
+    container.addEventListener("touchstart", function (event) {
+      if (event.touches.length !== 1) { clearPress(); return; }
+      const touch = event.touches[0];
+      arm(touch.clientX, touch.clientY, event.target);
     }, { passive: true });
+    container.addEventListener("pointerdown", function (event) {
+      if (event.pointerType === "touch") return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      arm(event.clientX, event.clientY, event.target);
+    });
     container.addEventListener("touchmove", function (event) {
       if (!start || !event.touches[0] || event.touches.length > 1) { clearPress(); return; }
-      const dx = event.touches[0].clientX - start.x;
-      const dy = event.touches[0].clientY - start.y;
-      if (Math.hypot(dx, dy) > 10) clearPress();
-    }, { passive: true });
+      moved(event.touches[0].clientX, event.touches[0].clientY);
+    }, { passive: true, capture: true });
+    container.addEventListener("pointermove", function (event) {
+      if (event.pointerType === "touch") return;
+      moved(event.clientX, event.clientY);
+    }, true);
     container.addEventListener("touchend", clearPress);
     container.addEventListener("touchcancel", clearPress);
+    container.addEventListener("pointerup", clearPress);
+    container.addEventListener("pointercancel", clearPress);
     function clearPress() {
       if (timer) clearTimeout(timer);
       timer = null;
@@ -5426,8 +5543,13 @@
     }, 1000);
   }
 
+  let lastPinDrop = 0;
+
   function dropPinAt(lat, lon) {
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    const now = Date.now();
+    if (now - lastPinDrop < 600) return;
+    lastPinDrop = now;
     if (navigator.vibrate) navigator.vibrate(25);
     const parcel = parcelAt(lat, lon);
     state.droppedPin = { lat: lat, lon: lon, name: "Saved Pin " + (state.savedMarkers.length + 1), place: parcel ? parcelSummary(parcel) : "Looking up this point…" };
