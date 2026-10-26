@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import CoreMotion
 
 // MARK: - Live US Government Overland Telemetry (USGS + SNOTEL + NIFC Wildfire + USFS MVUM)
 struct USGSGaugeReading: Codable, Identifiable {
@@ -116,11 +117,33 @@ struct GPSFix: Sendable {
     var longitude: Double
     var speedMps: Double
     var altitudeMeters: Double
+    var verticalAccuracy: Double
+    var timestamp: Date
+}
+
+/// Latest phone GPS speed and elevation for the cockpit HUD and CarPlay map.
+@MainActor
+final class PhoneSensorHub {
+    static let shared = PhoneSensorHub()
+    var speedMph: Double = 0
+    var altitudeFt: Int = 0
+    var coordinate: CLLocationCoordinate2D?
+    var onUpdate: (() -> Void)?
+
+    func publish(speedMph: Double, altitudeFt: Int, coordinate: CLLocationCoordinate2D?) {
+        self.speedMph = speedMph
+        self.altitudeFt = altitudeFt
+        if let coordinate { self.coordinate = coordinate }
+        onUpdate?()
+    }
 }
 
 @MainActor
 final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
+    static let shared = LocationTracker()
+
     private let manager = CLLocationManager()
+    private let altimeter = CMAltimeter()
 
     @Published var userCoordinate: CLLocationCoordinate2D?
     @Published var speedMph: Double = 0
@@ -133,12 +156,18 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
     private var lastUIPublish = Date.distantPast
     private var lastUICoordinate: CLLocationCoordinate2D?
     private var lastHeadingPublish = Date.distantPast
+    private var lastRawCoordinate: CLLocationCoordinate2D?
+    private var lastRawDate: Date?
+    private var gpsAltitudeMeters: Double = 0
+    private var altimeterOffset: Double?
+    private var altimeterActive = false
+    private var didStartAltimeter = false
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.distanceFilter = 5
+        manager.distanceFilter = kCLDistanceFilterNone
         manager.activityType = .automotiveNavigation
         manager.headingFilter = 5
         manager.pausesLocationUpdatesAutomatically = false
@@ -149,10 +178,57 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
         manager.requestWhenInUseAuthorization()
         manager.startUpdatingLocation()
         manager.startUpdatingHeading()
+        startAltimeter()
     }
 
+    private func startAltimeter() {
+        guard !didStartAltimeter, CMAltimeter.isRelativeAltitudeAvailable() else { return }
+        didStartAltimeter = true
+        altimeterActive = true
+        altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, _ in
+            guard let data else { return }
+            let relative = data.relativeAltitude.doubleValue
+            Task { @MainActor in
+                self?.applyRelativeAltitude(relative)
+            }
+        }
+    }
+
+    /// Speed and elevation update on every hardware callback. The 5 m gate only limits map republish.
     func apply(_ fix: GPSFix) {
         let coordinate = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
+        if fix.speedMps >= 0 {
+            speedMph = max(0, fix.speedMps * 2.2369362920544)
+        } else if let previous = lastRawCoordinate, let previousDate = lastRawDate {
+            let dt = fix.timestamp.timeIntervalSince(previousDate)
+            if dt > 0.2 {
+                let meters = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
+                    .distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+                speedMph = max(0, (meters / dt) * 2.2369362920544)
+            }
+        } else {
+            speedMph = 0
+        }
+        if fix.verticalAccuracy >= 0 {
+            gpsAltitudeMeters = fix.altitudeMeters
+            if altimeterOffset == nil {
+                altimeterOffset = fix.altitudeMeters
+            }
+            if !altimeterActive {
+                altitudeFt = Int((fix.altitudeMeters * 3.280839895).rounded())
+            }
+        }
+        lastRawCoordinate = coordinate
+        lastRawDate = fix.timestamp
+        PhoneSensorHub.shared.publish(speedMph: speedMph, altitudeFt: altitudeFt, coordinate: coordinate)
+        TrailRouteRecorder.shared.capture(
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            altitudeFt: altitudeFt,
+            speedMph: speedMph,
+            timestamp: fix.timestamp
+        )
+
         let moved: Double
         if let previous = lastUICoordinate {
             moved = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
@@ -165,12 +241,16 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
         lastUIPublish = Date()
         lastUICoordinate = coordinate
         userCoordinate = coordinate
-        speedMph = fix.speedMps >= 0 ? fix.speedMps * 2.2369362920544 : 0
-        altitudeFt = Int((fix.altitudeMeters * 3.280839895).rounded())
         if !hasCenteredOnUserOnce {
             hasCenteredOnUserOnce = true
         }
         locationRevision += 1
+    }
+
+    private func applyRelativeAltitude(_ relativeMeters: Double) {
+        let absolute = (altimeterOffset ?? gpsAltitudeMeters) + relativeMeters
+        altitudeFt = Int((absolute * 3.280839895).rounded())
+        PhoneSensorHub.shared.publish(speedMph: speedMph, altitudeFt: altitudeFt, coordinate: userCoordinate ?? lastRawCoordinate)
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -179,7 +259,9 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude,
             speedMps: location.speed,
-            altitudeMeters: location.altitude
+            altitudeMeters: location.altitude,
+            verticalAccuracy: location.verticalAccuracy,
+            timestamp: location.timestamp
         )
         Task { @MainActor in
             self.apply(fix)

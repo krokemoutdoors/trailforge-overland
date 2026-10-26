@@ -11,8 +11,8 @@ android {
         applicationId = "com.edwardshin.trailforge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.4.1"
+        versionCode = 12
+        versionName = "1.5.0"
     }
 
     val releaseStore = file(
@@ -75,4 +75,5 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("androidx.car.app:app:1.4.0")
 }

@@ -79,6 +79,9 @@ class LocationBridge(
     }
 
     private fun publish(location: Location) {
+        val speedMps = if (location.hasSpeed()) location.speed.toDouble() else 0.0
+        val altitudeM = if (location.hasAltitude()) location.altitude else Double.NaN
+        PhoneTelemetryStore.update(location.latitude, location.longitude, speedMps, altitudeM)
         val json = JSONObject()
         json.put("lat", location.latitude)
         json.put("lon", location.longitude)

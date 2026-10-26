@@ -9,11 +9,12 @@
     { id: "com.edwardshin.trailforge.founders.lifetime", title: "Founders Lifetime Pass", price: "$149.99", note: "One-Time • 6-Yr Value", founders: true },
     { id: "com.edwardshin.trailforge.pro.monthly", title: "Weekend Pass", price: "$4.99/month", note: "Monthly" }
   ];
-  const MAP_ATTRIB = "USGS National Map (Public Domain) • © OpenStreetMap contributors";
+  const MAP_ATTRIB = "Imagery © Esri • USGS National Map (Public Domain) • © OpenStreetMap contributors";
   const CORRIDOR_NOTE = "Independent public-road overland corridor compiled from public USFS, BLM, and state highway data. Not affiliated with, endorsed by, or sponsored by Backcountry Discovery Routes®.";
+  const ESRI_IMAGERY = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+  const ESRI_ROADS = "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}";
+  const ESRI_PLACES = "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
   const USGS_TILES = {
-    hybrid: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}",
-    satellite: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
     topo: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}"
   };
   const NAME_TO_CODE = {};
@@ -108,7 +109,20 @@
     communityOps: loadCommunityOps(),
     communityQueue: loadCommunityQueue(),
     communityNotice: localStorage.getItem("tf-community-notice") || "",
-    communityFlushing: false
+    communityFlushing: false,
+    recording: false,
+    recordPaused: false,
+    recordPoints: [],
+    recordStarted: 0,
+    recordPausedMs: 0,
+    recordPauseMark: 0,
+    recordName: "",
+    recordedRoutes: loadRecordedRoutes(),
+    shownRecordId: null,
+    droppedPin: null,
+    pinCategory: "Waypoint",
+    savedMarkers: loadSavedMarkers(),
+    activeMarkerId: null
   };
 
   const pendingNet = new Map();
@@ -123,6 +137,8 @@
   let slopeLayer;
   let hazardLayer;
   let plotLayer;
+  let recordLayer;
+  let markerLayer;
   let hazardPinLayer;
   let communityLayer;
   let communityChannel = null;
@@ -355,17 +371,6 @@
     if (verdict === "FITS YOUR RIG") return "#3ddc84";
     if (verdict === "CAUTION") return "#ff9f1a";
     return "#ff4d4d";
-  }
-
-  function airDown() {
-    const profile = state.rig;
-    const highway = profile.rigWeightLbs > 7000 ? 55 : 36;
-    const factor = state.surface === "sand" ? 0.42 : state.surface === "rock" ? 0.52 : 0.62;
-    const bonus = Math.max(0, (profile.tireInches - 30) * 1.1);
-    const minSafe = state.beadlocks ? 10 : 15;
-    const front = Math.max(minSafe, Math.round(highway * factor - bonus));
-    const rear = front + (profile.rigWeightLbs > 6500 ? 4 : 2);
-    return { front: front, rear: rear };
   }
 
   function filterTitle() {
@@ -661,7 +666,7 @@
       return '<div class="place-card"><button type="button" class="row" data-act="place-route" data-id="' + esc(place.id) + '"><span class="meta"><b>' + esc(place.name) + "</b><small>" + esc(place.address || "") + esc(away) + '</small></span></button><div class="actions"><button type="button" data-act="place-show" data-id="' + esc(place.id) + '">Show on Map</button><button type="button" class="primary" data-act="place-route" data-id="' + esc(place.id) + '">Route Here</button></div></div>';
     }).join("");
     const places = (state.placeBusy || placeRows) ? '<div class="status">Places &amp; Addresses</div>' + (state.placeBusy ? '<div class="status">Searching addresses and stores…</div>' : "") + placeRows : "";
-    return '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
+    return headUnitHtml() + recorderHtml() + savedMarkersHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
   }
 
   function profileHtml(trail) {
@@ -709,7 +714,6 @@
 
   function rigHtml() {
     const profile = state.rig;
-    const psi = airDown();
     const horizon = "rotate(" + state.roll.toFixed(1) + "deg) translateY(" + (state.pitch * 0.6).toFixed(1) + "px)";
     const fields = [
       ["tireInches", "Tire size", "29", "40", "0.5", '"'],
@@ -735,13 +739,13 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><b id="psiRead">' + psi.front + "F / " + psi.rear + 'R</b><span>Air-down PSI · ' + esc(state.surface) + '</span><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + '°</div><div class="actions"><button type="button" data-act="zero-clinometer">Zero / Calibrate</button><button type="button" data-act="reset-clinometer">Reset</button></div></div></div><label class="field"><span>Roll warning <b id="rollLimitRead">' + Math.round(state.rollLimit) + '°</b></span><input type="range" min="8" max="45" step="1" data-roll-limit value="' + state.rollLimit + '" aria-label="Roll warning limit" /></label>' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.4.1 · build 11<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + '°</div><div class="actions"><button type="button" data-act="zero-clinometer">Zero / Calibrate</button><button type="button" data-act="reset-clinometer">Reset</button></div></div></div><label class="field"><span>Roll warning <b id="rollLimitRead">' + Math.round(state.rollLimit) + '°</b></span><input type="range" min="8" max="45" step="1" data-roll-limit value="' + state.rollLimit + '" aria-label="Roll warning limit" /></label>' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.0 · build 12<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
     document.getElementById("routebar").innerHTML = routeBarHtml();
     const active = document.activeElement;
-    if (active && active.matches && active.matches("input[type=range][data-field], input.name")) return;
+    if (active && active.matches && active.matches("input[type=range][data-field], input.name, #recordName, #pinName, #markerName")) return;
     const typingSearch = active && active.id === "search";
     const caret = typingSearch ? active.selectionStart : null;
     document.getElementById("sheet").innerHTML = sheetHtml();
@@ -816,6 +820,11 @@
     const speed = state.fix && state.fix.speedMps != null && state.fix.speedMps >= 0 ? Math.round(state.fix.speedMps * 2.2369362920544) : 0;
     const alt = state.fix && state.fix.altitudeM != null ? Math.round(state.fix.altitudeM * 3.280839895).toLocaleString("en-US") : "—";
     document.getElementById("speedRead").textContent = state.fix ? String(speed) : "—";
+    const recordBtn = document.querySelector('#rail [data-act="record-toggle"]');
+    if (recordBtn) {
+      recordBtn.classList.toggle("on", state.recording);
+      recordBtn.textContent = state.recording ? "⏹" : "⏺";
+    }
     document.getElementById("altRead").textContent = alt;
     const gpsText = state.fix ? formatPair(state.fix) : null;
     const aimText = formatPair(targetPoint());
@@ -826,21 +835,18 @@
     if (targetRead) targetRead.textContent = aimText || "—";
     const parcelToggle = document.getElementById("parcelToggle");
     if (parcelToggle) parcelToggle.classList.toggle("on", state.parcelsOn);
-    const psi = airDown();
     const limit = state.rollLimit || 25;
     const warn = Math.abs(state.roll) >= limit || Math.abs(state.pitch) >= limit;
     const pill = document.getElementById("clinPill");
     if (pill) pill.classList.toggle("warn", warn);
     const clinRead = document.getElementById("clinRead");
-    if (clinRead) clinRead.textContent = "Roll " + Math.round(state.roll) + "° / Pitch " + Math.round(state.pitch) + "° · Air Down " + psi.front + "F / " + psi.rear + "R PSI";
+    if (clinRead) clinRead.textContent = "Roll " + Math.round(state.roll) + "° / Pitch " + Math.round(state.pitch) + "°";
     const clinBar = document.getElementById("clinBar");
     if (clinBar) clinBar.style.transform = "rotate(" + (-state.roll).toFixed(1) + "deg) translateY(" + (Math.max(-18, Math.min(18, state.pitch)) * 0.35).toFixed(1) + "px)";
     const horizon = document.getElementById("horizon");
     if (horizon) horizon.style.transform = "rotate(" + state.roll.toFixed(1) + "deg) translateY(" + (state.pitch * 0.6).toFixed(1) + "px)";
     const tilt = document.getElementById("tiltRead");
     if (tilt) tilt.textContent = "Pitch " + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + "°";
-    const psiRead = document.getElementById("psiRead");
-    if (psiRead) psiRead.textContent = psi.front + "F / " + psi.rear + "R";
     const turn = document.getElementById("dashTurn");
     if (turn) {
       if (state.route) {
@@ -927,6 +933,8 @@
     drawRoute();
     updatePuck();
     drawPlot();
+    drawRecorded();
+    drawSavedMarkers();
     drawPlacePin();
     syncOverlays();
   }
@@ -1516,7 +1524,16 @@
       else if (previous && meters(previous, fix) > 8) fix.heading = bearing(previous, fix);
       else if (previous && previous.heading != null) fix.heading = previous.heading;
     }
+    if (!(fix.speedMps >= 0)) {
+      if (previous && Number.isFinite(Number(fix.time)) && Number.isFinite(Number(previous.time))) {
+        const dt = (Number(fix.time) - Number(previous.time)) / 1000;
+        if (dt > 0.2 && dt < 60) fix.speedMps = meters(previous, fix) / dt;
+        else fix.speedMps = 0;
+      } else fix.speedMps = 0;
+    }
+    if (fix.speedMps < 0) fix.speedMps = 0;
     state.fix = fix;
+    appendRecording(fix);
     updatePuck();
     updateHud();
     noteParcelFix();
@@ -1944,9 +1961,14 @@
     if (act === "basemap") {
       const id = button.dataset.id;
       state.basemap = id === "topo" || id === "satellite" || id === "dark" ? id : "hybrid";
+      if ((state.basemap === "satellite" || state.basemap === "hybrid") && state.thermal) {
+        state.thermal = false;
+        localStorage.setItem("tf-thermal", "0");
+      }
       localStorage.setItem("tf-basemap", state.basemap);
       applyBasemap();
       renderDrawer();
+      applyChrome();
       return;
     }
     if (act === "pack-kind") {
@@ -1990,7 +2012,7 @@
       localStorage.setItem("tf-thermal", state.thermal ? "1" : "0");
       applyBasemap();
       applyChrome();
-      toast(state.thermal ? "Thermal saver on — USGS topo, slower sensors" : "Thermal saver off");
+      toast(state.thermal ? "Thermal saver on — slower sensors. Satellite and Hybrid stay on imagery." : "Thermal saver off");
       return;
     }
     if (act === "night") {
@@ -2000,6 +2022,25 @@
       return;
     }
     if (act === "hazard") { openHazardSheet(); return; }
+    if (act === "record-toggle") { toggleRecording(); return; }
+    if (act === "record-start") { startRecording(); return; }
+    if (act === "record-pause") { pauseRecording(); return; }
+    if (act === "record-save") { stopAndSaveRecording(); return; }
+    if (act === "record-view") { navigateRecorded(button.dataset.id); return; }
+    if (act === "record-share") { shareRecorded(button.dataset.id); return; }
+    if (act === "record-delete") { deleteRecorded(button.dataset.id); return; }
+    if (act === "close-pin") { closePinSheet(); return; }
+    if (act === "pin-cat") { state.pinCategory = button.dataset.id || "Waypoint"; markCategory("#pinCats", state.pinCategory); return; }
+    if (act === "pin-route") { routeDroppedPin(); return; }
+    if (act === "pin-save") { saveDroppedPin(); return; }
+    if (act === "pin-gmaps") { googleDroppedPin(); return; }
+    if (act === "marker-open") { openMarker(button.dataset.id); return; }
+    if (act === "close-marker") { closeMarkerSheet(); return; }
+    if (act === "marker-cat") { setMarkerCategory(button.dataset.id); return; }
+    if (act === "marker-route") { routeActiveMarker(); return; }
+    if (act === "marker-rename") { renameActiveMarker(); return; }
+    if (act === "marker-share") { shareActiveMarker(); return; }
+    if (act === "marker-delete") { deleteActiveMarker(); return; }
     if (act === "close-hazard") { closeHazardSheet(); return; }
     if (act === "hazard-voice") { captureHazardVoice(); return; }
     if (act === "drop-hazard") { saveHazard(button.dataset.id); return; }
@@ -2020,6 +2061,10 @@
   function onBack() {
     const qr = document.getElementById("qrModal");
     if (qr && !qr.hidden) { closeQr(); return true; }
+    const pin = document.getElementById("pinSheet");
+    if (pin && !pin.hidden) { closePinSheet(); return true; }
+    const markerSheet = document.getElementById("markerSheet");
+    if (markerSheet && !markerSheet.hidden) { closeMarkerSheet(); return true; }
     const hazard = document.getElementById("hazardSheet");
     if (hazard && !hazard.hidden) { closeHazardSheet(); return true; }
     if (state.drawer) { state.drawer = null; renderDrawer(); applyChrome(); return true; }
@@ -3128,20 +3173,22 @@
   }
 
   function applyBasemap() {
-    if (!hybridLayer || !map) return;
+    if (!imageryLayer || !map) return;
     const center = map.getCenter();
     const outside = !usgsCovers(center.lat, center.lng);
     const deep = map.getZoom() > 16;
     const dark = state.basemap === "dark";
-    const mode = state.thermal ? "topo" : state.basemap;
-    const showUsgs = !outside && !dark;
-    toggleTile(hybridLayer, showUsgs && mode === "hybrid", 1);
-    toggleTile(imageryLayer, showUsgs && mode === "satellite", 1);
-    toggleTile(topoLayer, showUsgs && mode === "topo", 1);
+    const imageryChoice = state.basemap === "satellite" || state.basemap === "hybrid";
+    const mode = state.thermal && !imageryChoice ? "topo" : state.basemap;
+    const showImagery = !dark && (mode === "satellite" || mode === "hybrid");
+    toggleTile(imageryLayer, showImagery, 1);
+    toggleTile(hybridLayer, showImagery && mode === "hybrid", 1);
+    toggleTile(labelLayer, showImagery && mode === "hybrid", 1);
+    toggleTile(topoLayer, !dark && mode === "topo" && !outside && !deep, 1);
     toggleTile(darkLayer, dark, 1);
     if (osmLayer) {
       osmLayer.options.minZoom = outside ? 3 : 17;
-      toggleTile(osmLayer, !dark && (outside || deep), 1);
+      toggleTile(osmLayer, !dark && mode === "topo" && (outside || deep), 1);
       if (map.hasLayer(osmLayer)) osmLayer.redraw();
     }
     if (map.attributionControl) map.attributionControl.setPrefix(MAP_ATTRIB);
@@ -4023,7 +4070,7 @@
     let bytes = 0;
     let failed = 0;
     const root = kind === "satellite"
-      ? "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/"
+      ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
       : "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/";
     try {
       for (let index = 0; index < plan.tiles.length; index += 3) {
@@ -4582,15 +4629,517 @@
     if (openPopup) marker.openPopup();
   }
 
+  function loadRecordedRoutes() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("tf-recorded-routes-v1") || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) { return []; }
+  }
+
+  function saveRecordedRoutes() {
+    localStorage.setItem("tf-recorded-routes-v1", JSON.stringify(state.recordedRoutes.slice(0, 40)));
+  }
+
+  function loadSavedMarkers() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("tf-saved-markers-v1") || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) { return []; }
+  }
+
+  function saveSavedMarkers() {
+    localStorage.setItem("tf-saved-markers-v1", JSON.stringify(state.savedMarkers.slice(0, 80)));
+  }
+
+  function mmss(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    return String(Math.floor(total / 60)).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0");
+  }
+
+  function recordElapsed() {
+    if (!state.recordStarted) return 0;
+    const now = state.recordPaused ? state.recordPauseMark : Date.now();
+    return Math.max(0, (now - state.recordStarted - state.recordPausedMs) / 1000);
+  }
+
+  function pointsStats(points) {
+    let metersTotal = 0;
+    let gain = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      metersTotal += meters(points[index - 1], points[index]);
+      const prev = points[index - 1].altitudeM;
+      const next = points[index].altitudeM;
+      if (prev != null && next != null && next > prev) gain += (next - prev) * 3.280839895;
+    }
+    return { miles: metersTotal / 1609.344, gain: Math.round(gain), points: points.length };
+  }
+
+  function defaultRouteName(date) {
+    return "Trail Run • " + date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  }
+
+  function headUnitHtml() {
+    return '<div class="telemetry"><b>CarPlay &amp; Head-Unit Ready</b><br>Apple CarPlay and Android Auto read this phone GPS speed, elevation, trails, flat camps, and trail recording.</div>';
+  }
+
+  function recorderHtml() {
+    const live = pointsStats(state.recordPoints);
+    const controls = state.recording
+      ? '<button type="button" data-act="record-pause">' + (state.recordPaused ? "Resume" : "Pause") + '</button><button type="button" class="end" data-act="record-save">Stop &amp; Save Route</button>'
+      : '<button type="button" class="primary" data-act="record-start">Start Recording</button>';
+    const rows = state.recordedRoutes.map(function (route) {
+      return '<div class="pack"><b>' + esc(route.name) + '</b><small>' + Number(route.distanceMiles).toFixed(2) + " mi · " + mmss(route.durationSeconds) + " · +" + route.elevationGainFt + ' ft</small><div class="actions"><button type="button" data-act="record-view" data-id="' + esc(route.id) + '">Show / Navigate</button><button type="button" data-act="record-share" data-id="' + esc(route.id) + '">Share GPX</button><button type="button" class="end" data-act="record-delete" data-id="' + esc(route.id) + '">Delete</button></div></div>';
+    }).join("");
+    return '<div class="record-card"><div class="profile-top"><b>Trail Route Recorder</b><span>PHONE GPS</span></div><input class="name" id="recordName" placeholder="Route name" value="' + esc(state.recordName) + '" /><div class="route-stats"><div><b id="recDistance">' + live.miles.toFixed(2) + '</b><span>Distance mi</span></div><div><b id="recDuration">' + mmss(recordElapsed()) + '</b><span>Elapsed</span></div><div><b id="recGain">+' + live.gain + '</b><span>Elev Gain ft</span></div><div><b id="recPoints">' + live.points + '</b><span>Points</span></div></div><div class="actions">' + controls + "</div>" + rows + "</div>";
+  }
+
+  function savedMarkersHtml() {
+    const rows = state.savedMarkers.map(function (marker) {
+      return '<button type="button" class="row" data-act="marker-open" data-id="' + esc(marker.id) + '"><span class="meta"><b>' + esc(marker.name) + "</b><small>" + esc(marker.category) + " · " + esc(formatPair(marker) || "") + "</small></span></button>";
+    }).join("");
+    return '<div class="marker-list"><b>Saved Markers</b><div class="sub">Tap and hold the map to drop a pin.</div>' + (rows || '<div class="sub">No saved markers yet.</div>') + "</div>";
+  }
+
+  function toggleRecording() {
+    if (state.recording) stopAndSaveRecording();
+    else startRecording();
+  }
+
+  function startRecording() {
+    state.recording = true;
+    state.recordPaused = false;
+    state.recordPoints = [];
+    state.recordStarted = Date.now();
+    state.recordPausedMs = 0;
+    state.recordPauseMark = 0;
+    if (!state.recordName.trim()) state.recordName = defaultRouteName(new Date());
+    renderSheet();
+    drawRecorded();
+    toast("Recording trail route");
+  }
+
+  function pauseRecording() {
+    if (!state.recording) return;
+    if (state.recordPaused) {
+      state.recordPausedMs += Date.now() - state.recordPauseMark;
+      state.recordPaused = false;
+    } else {
+      state.recordPauseMark = Date.now();
+      state.recordPaused = true;
+    }
+    renderSheet();
+  }
+
+  function stopAndSaveRecording() {
+    if (!state.recording) return;
+    if (state.recordPaused) state.recordPausedMs += Date.now() - state.recordPauseMark;
+    const stats = pointsStats(state.recordPoints);
+    state.recording = false;
+    state.recordPaused = false;
+    if (state.recordPoints.length >= 2) {
+      const route = {
+        id: "rec-" + Date.now(),
+        name: state.recordName.trim() || defaultRouteName(new Date()),
+        createdAt: Date.now(),
+        durationSeconds: recordElapsed(),
+        distanceMiles: stats.miles,
+        elevationGainFt: stats.gain,
+        maxElevationFt: Math.round(Math.max.apply(null, state.recordPoints.map(function (point) { return point.altitudeM == null ? 0 : point.altitudeM * 3.280839895; }))),
+        points: state.recordPoints.slice()
+      };
+      state.recordedRoutes.unshift(route);
+      state.shownRecordId = route.id;
+      saveRecordedRoutes();
+      toast("Saved " + route.name);
+    } else toast("Need at least two GPS points to save");
+    state.recordPoints = [];
+    state.recordName = "";
+    state.recordStarted = 0;
+    renderSheet();
+    drawRecorded();
+  }
+
+  function appendRecording(fix) {
+    if (!state.recording || state.recordPaused || !fix) return;
+    const last = state.recordPoints[state.recordPoints.length - 1];
+    if (last && meters(last, fix) < 1) return;
+    state.recordPoints.push({
+      lat: fix.lat,
+      lon: fix.lon,
+      altitudeM: fix.altitudeM,
+      speedMps: fix.speedMps,
+      time: fix.time || Date.now()
+    });
+    drawRecorded();
+    const distance = document.getElementById("recDistance");
+    if (distance) {
+      const stats = pointsStats(state.recordPoints);
+      distance.textContent = stats.miles.toFixed(2);
+      const duration = document.getElementById("recDuration");
+      const gain = document.getElementById("recGain");
+      const count = document.getElementById("recPoints");
+      if (duration) duration.textContent = mmss(recordElapsed());
+      if (gain) gain.textContent = "+" + stats.gain;
+      if (count) count.textContent = String(stats.points);
+    }
+  }
+
+  function deleteRecorded(id) {
+    state.recordedRoutes = state.recordedRoutes.filter(function (route) { return route.id !== id; });
+    if (state.shownRecordId === id) state.shownRecordId = null;
+    saveRecordedRoutes();
+    renderSheet();
+    drawRecorded();
+  }
+
+  function navigateRecorded(id) {
+    const route = state.recordedRoutes.find(function (item) { return item.id === id; });
+    if (!route || !route.points || route.points.length < 2) return;
+    state.shownRecordId = route.id;
+    const end = route.points[route.points.length - 1];
+    const road = route.points.map(function (point) { return [point.lat, point.lon]; });
+    const distance = route.distanceMiles * 1609.344;
+    state.route = {
+      destination: { id: "rec-" + route.id, trailID: state.selectedId, name: route.name, lat: end.lat, lon: end.lon, slope: 0, starlink: 0, kind: "trailhead" },
+      options: [{
+        id: 0,
+        title: "Recorded trail",
+        expectedTravelTime: Math.max(60, distance / 8),
+        distanceMeters: Math.max(distance, 1),
+        road: road,
+        steps: [{ id: 0, instruction: "Follow recorded route " + route.name, distanceMeters: Math.max(distance, 1), name: route.name, type: "continue", modifier: "straight", lat: end.lat, lon: end.lon, approach: false, at: false }]
+      }],
+      selected: 0,
+      spur: [],
+      originWasGPS: true,
+      stepIndex: 0,
+      arrived: false,
+      spurApproach: false,
+      spurAt: false,
+      announced: true
+    };
+    state.follow = true;
+    renderAll();
+    if (map) map.fitBounds(road, { padding: [28, 28] });
+    speak("Starting recorded route " + route.name);
+  }
+
+  function routeToGpx(route) {
+    const points = (route.points || []).map(function (point) {
+      const ele = point.altitudeM == null ? "" : "<ele>" + Number(point.altitudeM).toFixed(1) + "</ele>";
+      const time = point.time ? "<time>" + new Date(point.time).toISOString() + "</time>" : "";
+      return '<trkpt lat="' + Number(point.lat).toFixed(6) + '" lon="' + Number(point.lon).toFixed(6) + '">' + ele + time + "</trkpt>";
+    }).join("");
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="TrailForge Overland" xmlns="http://www.topografix.com/GPX/1/1"><metadata><name>' + esc(route.name) + "</name></metadata><trk><name>" + esc(route.name) + "</name><trkseg>" + points + "</trkseg></trk></gpx>\n";
+  }
+
+  function downloadText(filename, text, type) {
+    const blob = new Blob([text], { type: type || "application/gpx+xml" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+  }
+
+  function shareRecorded(id) {
+    const route = state.recordedRoutes.find(function (item) { return item.id === id; });
+    if (!route) return;
+    const xml = routeToGpx(route);
+    const fileName = "TrailForge-" + String(route.name).replace(/[^\w.-]+/g, "-") + ".gpx";
+    const summary = route.name + " · " + Number(route.distanceMiles).toFixed(2) + " mi";
+    const file = new File([xml], fileName, { type: "application/gpx+xml" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: route.name, text: summary }).catch(function (error) {
+        if (!error || error.name !== "AbortError") downloadText(fileName, xml);
+      });
+      return;
+    }
+    if (navigator.share) {
+      navigator.share({ title: route.name, text: summary }).catch(function (error) {
+        if (!error || error.name !== "AbortError") downloadText(fileName, xml);
+      });
+      return;
+    }
+    downloadText(fileName, xml);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(summary);
+    toast("GPX downloaded");
+  }
+
+  function drawRecorded() {
+    if (!recordLayer) return;
+    recordLayer.clearLayers();
+    const live = state.recordPoints.map(function (point) { return [point.lat, point.lon]; });
+    if (live.length >= 2) {
+      L.polyline(live, { color: "#ff2d55", weight: 5, opacity: 0.95 }).addTo(recordLayer);
+    }
+    const shown = state.recordedRoutes.find(function (route) { return route.id === state.shownRecordId; });
+    if (shown && shown.points && shown.points.length >= 2 && !state.recording) {
+      L.polyline(shown.points.map(function (point) { return [point.lat, point.lon]; }), { color: "#ff2d55", weight: 5, opacity: 0.9 }).addTo(recordLayer);
+    }
+  }
+
+  function drawSavedMarkers() {
+    if (!markerLayer) return;
+    markerLayer.clearLayers();
+    if (state.droppedPin) {
+      const pin = L.marker([state.droppedPin.lat, state.droppedPin.lon], {
+        icon: L.divIcon({ className: "flag-pin", html: "<span>📍</span>", iconAnchor: [12, 12] }),
+        zIndexOffset: 800
+      });
+      pin.addTo(markerLayer);
+    }
+    state.savedMarkers.forEach(function (marker) {
+      const icon = L.divIcon({ className: "flag-pin", html: "<span>📍 " + esc(marker.name) + "</span>", iconAnchor: [14, 12] });
+      L.marker([marker.lat, marker.lon], { icon: icon, zIndexOffset: 760 }).on("click", function () {
+        openMarker(marker.id);
+      }).addTo(markerLayer);
+    });
+  }
+
+  function installLongPress() {
+    if (!map) return;
+    const container = map.getContainer();
+    let timer = null;
+    let start = null;
+    container.addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+      const ll = map.mouseEventToLatLng(event);
+      dropPinAt(ll.lat, ll.lng);
+    });
+    container.addEventListener("touchstart", function (event) {
+      if (event.touches.length !== 1) { clearPress(); return; }
+      const touch = event.touches[0];
+      start = { x: touch.clientX, y: touch.clientY };
+      timer = setTimeout(function () {
+        if (!start) return;
+        const point = map.mouseEventToContainerPoint({ clientX: start.x, clientY: start.y });
+        const ll = map.containerPointToLatLng(point);
+        dropPinAt(ll.lat, ll.lng);
+        start = null;
+      }, 500);
+    }, { passive: true });
+    container.addEventListener("touchmove", function (event) {
+      if (!start || !event.touches[0] || event.touches.length > 1) { clearPress(); return; }
+      const dx = event.touches[0].clientX - start.x;
+      const dy = event.touches[0].clientY - start.y;
+      if (Math.hypot(dx, dy) > 10) clearPress();
+    }, { passive: true });
+    container.addEventListener("touchend", clearPress);
+    container.addEventListener("touchcancel", clearPress);
+    function clearPress() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      start = null;
+    }
+    setInterval(function () {
+      if (!state.recording) return;
+      const duration = document.getElementById("recDuration");
+      if (duration) duration.textContent = mmss(recordElapsed());
+    }, 1000);
+  }
+
+  function dropPinAt(lat, lon) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if (navigator.vibrate) navigator.vibrate(25);
+    const parcel = parcelAt(lat, lon);
+    state.droppedPin = { lat: lat, lon: lon, name: "Saved Pin " + (state.savedMarkers.length + 1), place: parcel ? parcelSummary(parcel) : "Looking up this point…" };
+    state.pinCategory = "Waypoint";
+    openPinSheet();
+    drawSavedMarkers();
+    reversePin(lat, lon);
+  }
+
+  function parcelSummary(parcel) {
+    const owner = parcel.owner || parcel.ownerName || "";
+    const lot = parcel.apn || parcel.lot || parcel.id || "";
+    return [owner, lot].filter(Boolean).join(" · ") || "Parcel";
+  }
+
+  function openPinSheet() {
+    const sheet = document.getElementById("pinSheet");
+    if (!sheet || !state.droppedPin) return;
+    sheet.hidden = false;
+    document.getElementById("pinCoord").textContent = formatPair(state.droppedPin) || "";
+    document.getElementById("pinPlace").textContent = state.droppedPin.place || "";
+    document.getElementById("pinName").value = state.droppedPin.name || "";
+    markCategory("#pinCats", state.pinCategory);
+  }
+
+  function closePinSheet() {
+    const sheet = document.getElementById("pinSheet");
+    if (sheet) sheet.hidden = true;
+  }
+
+  function markCategory(selector, category) {
+    document.querySelectorAll(selector + " button").forEach(function (button) {
+      button.classList.toggle("on", button.dataset.id === category);
+    });
+  }
+
+  function reversePin(lat, lon) {
+    const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + lat + "&lon=" + lon;
+    fetch(url, { headers: { Accept: "application/json" } }).then(function (response) {
+      return response.ok ? response.json() : null;
+    }).then(function (data) {
+      if (!state.droppedPin || state.droppedPin.lat !== lat || state.droppedPin.lon !== lon) return;
+      const place = data && (data.name || data.display_name) ? String(data.name || data.display_name).split(",").slice(0, 2).join(", ") : "";
+      if (place) {
+        if (!state.droppedPin.place || state.droppedPin.place.indexOf("Looking") === 0) state.droppedPin.place = place;
+        else if (state.droppedPin.place.indexOf(place) < 0) state.droppedPin.place = place + " · " + state.droppedPin.place;
+        if ((state.droppedPin.name || "").indexOf("Saved Pin") === 0) state.droppedPin.name = place;
+      } else if (!state.droppedPin.place || state.droppedPin.place.indexOf("Looking") === 0) {
+        state.droppedPin.place = formatPair(state.droppedPin) || "";
+      }
+      openPinSheet();
+    }).catch(function () {
+      if (state.droppedPin && (!state.droppedPin.place || state.droppedPin.place.indexOf("Looking") === 0)) {
+        state.droppedPin.place = formatPair(state.droppedPin) || "";
+        openPinSheet();
+      }
+    });
+  }
+
+  function readPinName() {
+    const input = document.getElementById("pinName");
+    return (input && input.value.trim()) || (state.droppedPin && state.droppedPin.name) || "Saved Pin";
+  }
+
+  function startGpsNavigationToCoord(lat, lon, label) {
+    const spot = {
+      id: "pin-" + Date.now(),
+      trailID: state.selectedId,
+      name: label || "Dropped Pin",
+      lat: lat,
+      lon: lon,
+      slope: 0,
+      starlink: 0,
+      kind: "trailhead"
+    };
+    beginRoute(spot, true);
+  }
+
+  function routeDroppedPin() {
+    if (!state.droppedPin) return;
+    startGpsNavigationToCoord(state.droppedPin.lat, state.droppedPin.lon, readPinName());
+    closePinSheet();
+  }
+
+  function googleDroppedPin() {
+    if (!state.droppedPin) return;
+    const origin = state.fix ? "&origin=" + state.fix.lat + "," + state.fix.lon : "";
+    openExternal("https://www.google.com/maps/dir/?api=1" + origin + "&destination=" + state.droppedPin.lat + "," + state.droppedPin.lon + "&travelmode=driving");
+  }
+
+  function saveDroppedPin() {
+    if (!state.droppedPin) return;
+    const marker = {
+      id: "mark-" + Date.now(),
+      name: readPinName(),
+      category: state.pinCategory || "Waypoint",
+      lat: state.droppedPin.lat,
+      lon: state.droppedPin.lon,
+      createdAt: Date.now()
+    };
+    state.savedMarkers.unshift(marker);
+    saveSavedMarkers();
+    state.droppedPin = null;
+    closePinSheet();
+    drawSavedMarkers();
+    renderSheet();
+    toast("Saved " + marker.name);
+  }
+
+  function markerById(id) {
+    return state.savedMarkers.find(function (marker) { return marker.id === id; });
+  }
+
+  function openMarker(id) {
+    const marker = markerById(id);
+    if (!marker) return;
+    state.activeMarkerId = id;
+    const sheet = document.getElementById("markerSheet");
+    if (!sheet) return;
+    sheet.hidden = false;
+    document.getElementById("markerTitle").textContent = marker.category || "Saved Marker";
+    document.getElementById("markerCoord").textContent = formatPair(marker) || "";
+    document.getElementById("markerName").value = marker.name;
+    markCategory("#markerCats", marker.category || "Waypoint");
+  }
+
+  function closeMarkerSheet() {
+    const sheet = document.getElementById("markerSheet");
+    if (sheet) sheet.hidden = true;
+  }
+
+  function setMarkerCategory(category) {
+    const marker = markerById(state.activeMarkerId);
+    if (!marker) return;
+    marker.category = category || "Waypoint";
+    saveSavedMarkers();
+    markCategory("#markerCats", marker.category);
+    document.getElementById("markerTitle").textContent = marker.category;
+  }
+
+  function routeActiveMarker() {
+    const marker = markerById(state.activeMarkerId);
+    if (!marker) return;
+    const input = document.getElementById("markerName");
+    startGpsNavigationToCoord(marker.lat, marker.lon, (input && input.value.trim()) || marker.name);
+    closeMarkerSheet();
+  }
+
+  function renameActiveMarker() {
+    const marker = markerById(state.activeMarkerId);
+    if (!marker) return;
+    const input = document.getElementById("markerName");
+    marker.name = (input && input.value.trim()) || marker.name;
+    saveSavedMarkers();
+    drawSavedMarkers();
+    renderSheet();
+    toast("Renamed marker");
+  }
+
+  function shareActiveMarker() {
+    const marker = markerById(state.activeMarkerId);
+    if (!marker) return;
+    const text = marker.name + " · " + (formatPair(marker) || "");
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="TrailForge Overland" xmlns="http://www.topografix.com/GPX/1/1"><wpt lat="' + Number(marker.lat).toFixed(6) + '" lon="' + Number(marker.lon).toFixed(6) + '"><name>' + esc(marker.name) + "</name><type>" + esc(marker.category) + "</type><desc>" + esc(text) + "</desc></wpt></gpx>\n";
+    const fileName = "TrailForge-" + String(marker.name).replace(/[^\w.-]+/g, "-") + ".gpx";
+    const file = new File([xml], fileName, { type: "application/gpx+xml" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: marker.name, text: text }).catch(function (error) {
+        if (!error || error.name !== "AbortError") downloadText(fileName, xml);
+      });
+      return;
+    }
+    downloadText(fileName, xml);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+    toast("Marker GPX downloaded");
+  }
+
+  function deleteActiveMarker() {
+    state.savedMarkers = state.savedMarkers.filter(function (marker) { return marker.id !== state.activeMarkerId; });
+    state.activeMarkerId = null;
+    saveSavedMarkers();
+    closeMarkerSheet();
+    drawSavedMarkers();
+    renderSheet();
+  }
+
   function boot() {
     state.trails = buildBuiltins();
     map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 3, maxZoom: 19 });
     map.setView([37.9589, -107.7352], 11);
     if (map.attributionControl) map.attributionControl.setPrefix(MAP_ATTRIB);
-    const usgsOpts = { maxNativeZoom: 16, maxZoom: 19, zIndex: 1, attribution: "" };
-    hybridLayer = L.tileLayer(USGS_TILES.hybrid, usgsOpts);
-    imageryLayer = L.tileLayer(USGS_TILES.satellite, usgsOpts);
-    topoLayer = L.tileLayer(USGS_TILES.topo, usgsOpts);
+    const imageryOpts = { maxNativeZoom: 19, maxZoom: 19, zIndex: 1, attribution: "Tiles © Esri" };
+    imageryLayer = L.tileLayer(ESRI_IMAGERY, imageryOpts);
+    hybridLayer = L.tileLayer(ESRI_ROADS, { maxNativeZoom: 19, maxZoom: 19, zIndex: 2, attribution: "" });
+    labelLayer = L.tileLayer(ESRI_PLACES, { maxNativeZoom: 19, maxZoom: 19, zIndex: 3, attribution: "" });
+    topoLayer = L.tileLayer(USGS_TILES.topo, { maxNativeZoom: 16, maxZoom: 19, zIndex: 1, attribution: "" });
     darkLayer = L.tileLayer("https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
       maxZoom: 20,
       zIndex: 1,
@@ -4640,6 +5189,9 @@
     communityLayer = L.layerGroup().addTo(map);
     placeLayer = L.layerGroup().addTo(map);
     plotLayer = L.layerGroup().addTo(map);
+    recordLayer = L.layerGroup().addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
+    installLongPress();
     map.on("dragstart", function () { state.follow = false; });
     map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); });
     map.on("moveend", function () { applyBasemap(); scheduleParcels(); });
@@ -4657,6 +5209,9 @@
       handle(button);
     });
     document.addEventListener("input", function (event) {
+      if (event.target.id === "recordName") { state.recordName = event.target.value; return; }
+      if (event.target.id === "pinName") { if (state.droppedPin) state.droppedPin.name = event.target.value; return; }
+      if (event.target.id === "markerName") { return; }
       if (event.target.id === "search") {
         state.query = event.target.value;
         const list = pickerTrails();
