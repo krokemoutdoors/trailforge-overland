@@ -1,8 +1,9 @@
-const CACHE = "trailforge-overland-1.2.0-8";
+const CACHE = "trailforge-overland-1.3.0-9";
 const SHELL = [
   "./",
   "./index.html",
   "./cockpit.js",
+  "./qrcode.js",
   "./atlas.js",
   "./leaflet.js",
   "./leaflet.css",
