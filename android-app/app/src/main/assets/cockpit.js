@@ -289,7 +289,7 @@
   }
 
   function selected() {
-    return trailById(state.selectedId) || pickerTrails()[0] || state.trails[0];
+    return trailById(state.selectedId) || pickerTrails().find(function (trail) { return !trail.bdr; }) || state.trails.find(function (trail) { return !trail.bdr; }) || state.trails[0];
   }
 
   function ll(point) {
@@ -742,7 +742,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.2 · build 14<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.3 · build 15<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -871,12 +871,14 @@
   }
 
   function drawableTrails() {
-    const list = pickerTrails();
+    const list = pickerTrails().filter(function (trail) {
+      return !trail.bdr || trail.id === state.selectedId;
+    });
     if (state.filter !== "all" && list.length <= 80) return list;
     const signature = list.filter(function (trail) { return trail.signature || trail.live; });
     const chosen = (signature.length ? signature : list).slice(0, 80);
     const current = selected();
-    if (current && !chosen.some(function (trail) { return trail.id === current.id; })) chosen.push(current);
+    if (current && (!current.bdr || current.id === state.selectedId) && !chosen.some(function (trail) { return trail.id === current.id; })) chosen.push(current);
     return chosen;
   }
 
@@ -992,11 +994,23 @@
 
   function applyFilter(scan) {
     const list = pickerTrails();
-    if (!list.some(function (trail) { return trail.id === state.selectedId; }) && list[0]) state.selectedId = list[0].id;
+    if (state.filter === "bdr") {
+      const current = list.find(function (trail) { return trail.id === state.selectedId && trail.bdr; });
+      if (!current) {
+        state.menuOpen = true;
+        if (state.detent === "peek") {
+          state.detent = "split";
+          localStorage.setItem("tf-detent", "split");
+        }
+      }
+    } else if (!list.some(function (trail) { return trail.id === state.selectedId; })) {
+      const fallback = list.find(function (trail) { return !trail.bdr; });
+      if (fallback) state.selectedId = fallback.id;
+    }
     if (!state.follow) {
       const trail = selected();
-      if (state.filter === "bdr" && trail && trail.coordinates && trail.coordinates.length && map) map.fitBounds(trail.coordinates, { padding: [28, 28] });
-      else focusTrail(trail, state.filter === "all" ? 4 : 8);
+      if (state.filter === "bdr" && trail && trail.bdr && trail.coordinates && trail.coordinates.length && map) map.fitBounds(trail.coordinates, { padding: [28, 28] });
+      else if (state.filter !== "bdr") focusTrail(trail, state.filter === "all" ? 4 : 8);
     }
     renderAll();
     if (!scan || SHOT) return;
@@ -1165,7 +1179,12 @@
     if (button) button.textContent = "Scan Area for All USA 4x4 Trails";
     if (state.filter === "near") {
       const list = pickerTrails();
-      if (list[0] && list[0].id !== state.selectedId && !state.follow) state.selectedId = list[0].id;
+      if (list.some(function (trail) { return trail.id === state.selectedId && trail.bdr; })) {
+        renderAll();
+        return;
+      }
+      const next = list.find(function (trail) { return !trail.bdr; });
+      if (next && next.id !== state.selectedId && !state.follow) state.selectedId = next.id;
     }
     renderAll();
   }
@@ -5698,7 +5717,11 @@
       if (event.target.id === "search") {
         state.query = event.target.value;
         const list = pickerTrails();
-        if (!list.some(function (trail) { return trail.id === state.selectedId; }) && list[0]) state.selectedId = list[0].id;
+        if (state.filter === "bdr") state.menuOpen = true;
+        else if (!list.some(function (trail) { return trail.id === state.selectedId; })) {
+          const fallback = list.find(function (trail) { return !trail.bdr; });
+          if (fallback) state.selectedId = fallback.id;
+        }
         if (state.query.trim().length < 3) {
           state.places = [];
           state.placeBusy = false;
