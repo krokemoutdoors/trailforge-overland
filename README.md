@@ -8,11 +8,11 @@ Bundle ID: `com.edwardshin.trailforge`. Deployment target: iOS 17.
 
 `MainCockpitView` is a dark, full-bleed map with a traffic-light banner on top and a thumb sheet on the bottom. The sheet has three modes:
 
-1. **Go Drive** — pick a trail. The banner turns green, amber, or red from the rig-fit verdict, and shows gate status plus ford depth.
-2. **Flat Camp** — the nearest verified dispersed pad, with slope in degrees and a Starlink sky score.
+1. **Go Drive** — search the built-in USA atlas or filter by state and Near Me. The banner turns green, amber, or red from the rig-fit verdict, and shows gate status, ford depth, and miles from the live GPS fix.
+2. **Flat Camp** — the nearest verified dispersed pad on the selected trail, with slope in degrees and a Starlink sky score.
 3. **My Rig** — set tire size and rear locker. A floating pill on the map shows live pitch and roll from the gyroscope, plus recommended air-down PSI.
 
-The map uses a hybrid style with realistic elevation. Sample routes in the cockpit are Imogene Pass (FS-869), White Rim & Shafer Trail, and Lost Coast Usal Road.
+The map uses a hybrid style with realistic elevation. `UserAnnotation()` draws the live GPS puck and heading cone after When-In-Use permission. **Center on My GPS** snaps the camera to that fix. **Near My GPS** and **Scan Area for All USA 4x4 Trails** load local tracks from OpenStreetMap Overpass and USFS roads, drawn as rig-fit polylines (green, orange, or red). The built-in atlas has 50+ iconic 4x4 routes across the West, Rockies, Midwest, Appalachia, Northeast, Alaska, and Hawaii, including Imogene Pass, White Rim, and Lost Coast Usal Road.
 
 ## Build-matched rig filter
 
@@ -35,6 +35,10 @@ Dispersed pads are marked when the ground slope is under 3°, so a level sleep d
 - **USGS NWIS** instantaneous values for discharge (parameter `00060`, cubic feet per second) and gage height (parameter `00065`, feet). Default sites are `09010500`, `09180500`, and `10261500`. A captured response lives in `live_usgs_snapshot.json`.
 - **USDA NRCS SNOTEL** snow depth, stored on each trail as `snotelSnowIn` and shown with the route (the Imogene sample is 4.2 inches).
 - **NIFC WFIGS** current interagency fire perimeters (`poly_IncidentName`, acres, percent contained) for closure awareness.
+- **OpenStreetMap Overpass** off-road tracks (`highway=track`, grade 2–5, and unpaved unclassified roads) around the map center or the live GPS fix.
+- **USFS EDW RoadBasic** forest roads from the public ArcGIS query, turned into the same trail model with a flat-pad annotation when the estimated slope is under 3°.
+
+`LocationTracker` requests When-In-Use location at navigation accuracy, publishes elevation in feet and speed in miles per hour, and centers the map on the first fix.
 
 Trail cards also carry USFS / BLM agency labels and a gate status string.
 
@@ -62,11 +66,11 @@ codemagic.yaml
 .github/workflows/        Simulator smoke build and Pages deploy
 ```
 
-Privacy: GPS, gyroscope, and the rig profile stay on device (`NSPrivacyTracking` is false). Regional trail conditions come from anonymous requests to USGS, SNOTEL, and NIFC. The Pages source is `web-landing/index.html`.
+Privacy: the gyroscope and the rig profile stay on device (`NSPrivacyTracking` is false). A trail scan sends the map center or GPS coordinate to OpenStreetMap Overpass and the USFS road service. USGS, SNOTEL, and NIFC requests stay anonymous. The Pages source is `web-landing/index.html`.
 
 ## Build
 
-The Xcode project is committed at `ios-app/TrailForgeOverland.xcodeproj` (shared scheme `TrailForgeOverland`). Bundle ID `com.edwardshin.trailforge`, display name TrailForge Overland, version 1.0 (build 2), deployment target iOS 17. `ios-app/Info.plist` holds the location, Bluetooth, and local-network usage strings. The app icon is `ios-app/Assets.xcassets/AppIcon.appiconset`, which references the 1024×1024 icon.
+The Xcode project is committed at `ios-app/TrailForgeOverland.xcodeproj` (shared scheme `TrailForgeOverland`). Bundle ID `com.edwardshin.trailforge`, display name TrailForge Overland, version 1.0 (build 3), deployment target iOS 17. `ios-app/Info.plist` holds the location, Bluetooth, and local-network usage strings. The app icon is `ios-app/Assets.xcassets/AppIcon.appiconset`, which references the 1024×1024 icon.
 
 `ios-app/project.yml` is the XcodeGen spec for the same target. If XcodeGen is installed, `xcodegen generate` rewrites the project from that spec. The committed project is what Codemagic and Xcode open when XcodeGen is not installed.
 
