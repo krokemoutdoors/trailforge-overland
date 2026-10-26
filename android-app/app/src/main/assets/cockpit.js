@@ -634,15 +634,15 @@
   }
 
   function sheetHtml() {
-    const modes = ["drive", "camp", "rig"].map(function (mode) {
-      const label = mode === "drive" ? "1. Go Drive" : mode === "camp" ? "2. Flat Camp" : "3. My Rig";
-      return '<button type="button" data-act="mode" data-mode="' + mode + '" class="' + (state.mode === mode ? "on" : "") + '">' + label + "</button>";
-    }).join("");
-    let body = "";
-    if (state.mode === "drive") body = driveHtml();
-    else if (state.mode === "camp") body = campHtml();
-    else body = rigHtml();
-    return '<div class="modes">' + modes + "</div>" + body;
+    if (state.mode === "drive") return driveHtml();
+    if (state.mode === "camp") return campHtml();
+    return rigHtml();
+  }
+
+  function renderModebar() {
+    document.querySelectorAll("#modebar [data-act=mode]").forEach(function (button) {
+      button.classList.toggle("on", button.dataset.mode === state.mode);
+    });
   }
 
   function driveHtml() {
@@ -742,11 +742,12 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.1 · build 13<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.2 · build 14<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
     document.getElementById("routebar").innerHTML = routeBarHtml();
+    renderModebar();
     const active = document.activeElement;
     if (active && active.matches && active.matches("input[type=range][data-field], input.name, #recordName, #pinName, #markerName")) return;
     const typingSearch = active && active.id === "search";
@@ -822,13 +823,15 @@
   function updateHud() {
     const speed = state.fix && state.fix.speedMps != null && state.fix.speedMps >= 0 ? Math.round(state.fix.speedMps * 2.2369362920544) : 0;
     const alt = state.fix && state.fix.altitudeM != null ? Math.round(state.fix.altitudeM * 3.280839895).toLocaleString("en-US") : "—";
-    document.getElementById("speedRead").textContent = state.fix ? String(speed) : "—";
+    const speedRead = document.getElementById("speedRead");
+    if (speedRead) speedRead.textContent = state.fix ? String(speed) : "—";
     const recordBtn = document.querySelector('#rail [data-act="record-toggle"]');
     if (recordBtn) {
       recordBtn.classList.toggle("on", state.recording);
       recordBtn.textContent = state.recording ? "⏹" : "⏺";
     }
-    document.getElementById("altRead").textContent = alt;
+    const altRead = document.getElementById("altRead");
+    if (altRead) altRead.textContent = alt;
     const gpsText = state.fix ? formatPair(state.fix) : null;
     const aimText = formatPair(targetPoint());
     state.targetCopy = aimText ? "TARGET: " + aimText : "";
@@ -1814,6 +1817,10 @@
     }
     if (act === "mode") {
       state.mode = button.dataset.mode;
+      if (state.detent === "peek") {
+        state.detent = "split";
+        localStorage.setItem("tf-detent", "split");
+      }
       renderAll();
       return;
     }
@@ -3103,6 +3110,7 @@
     document.querySelectorAll("[data-act=detent]").forEach(function (button) {
       button.classList.toggle("on", button.dataset.id === state.detent);
     });
+    renderModebar();
     const dashBtn = document.getElementById("dashBtn");
     if (dashBtn) dashBtn.classList.toggle("on", dashOn());
     renderDrawer();

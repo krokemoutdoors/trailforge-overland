@@ -461,6 +461,9 @@ struct MainCockpitView: View {
                 }
             }
         }
+        .onChange(of: mode) { _, _ in
+            if detent == .peek { detent = .half }
+        }
         .onAppear {
             motionManager.startUpdates()
             locationTracker.start()
@@ -1766,10 +1769,6 @@ struct MainCockpitView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                     .allowsHitTesting(false)
             }
-            speedElevationCornerHUD
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.top, 8)
-                .padding(.leading, 8)
             VStack(spacing: 8) {
                 topCluster
                 if plotMode {
@@ -1788,14 +1787,14 @@ struct MainCockpitView: View {
                         .padding(.bottom, 8)
                 }
             }
-            .padding(.top, 78)
+            .padding(.top, 24)
             .padding(.leading, 8)
             HStack {
                 Spacer()
                 rightRail(showGloveRow)
             }
-            .padding(.trailing, 8)
-            .padding(.top, 64)
+            .padding(.trailing, 5)
+            .padding(.top, 24)
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
     }
@@ -1873,7 +1872,7 @@ struct MainCockpitView: View {
     }
 
     private func rightRail(_ showGloveRow: Bool) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 5) {
             railButton("square.3.layers.3d.down.right", active: showLayers) {
                 showLayers = true
             }
@@ -1886,11 +1885,6 @@ struct MainCockpitView: View {
                 showOffline = true
             }
             .accessibilityLabel("Download 5-mile corridor")
-            railButton("scope", active: parcelService.selected != nil) {
-                parcelService.inspect(at: locationTracker.userCoordinate ?? mapCenter)
-                detent = .half
-            }
-            .accessibilityLabel("Inspect point parcel")
             railButton("camera.fill", active: showHazardSheet) {
                 showHazardSheet = true
             }
@@ -1904,10 +1898,10 @@ struct MainCockpitView: View {
             }
             .accessibilityLabel("Night vision")
         }
-        .padding(6)
+        .padding(4)
         .background(Color.black.opacity(0.84))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.15), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 
     private var topCluster: some View {
@@ -1970,7 +1964,10 @@ struct MainCockpitView: View {
             gloveButton(followHeading ? "Heading" : "North", system: followHeading ? "location.north.line.fill" : "location.north.line") {
                 cycleCameraMode()
             }
-            gloveButton("<3° Camps", system: "tent.fill") { mode = .camp }
+            gloveButton("<3° Camps", system: "tent.fill") {
+                mode = .camp
+                if detent == .peek { detent = .half }
+            }
             gloveButton("Parcels", system: showParcelLayer ? "square.split.2x2.fill" : "square.dashed") {
                 toggleParcelLayer()
             }
@@ -2105,12 +2102,27 @@ struct MainCockpitView: View {
     }
 
     private var modePicker: some View {
-        Picker("Mode", selection: $mode) {
+        HStack(spacing: 6) {
             ForEach(CockpitMode.allCases, id: \.self) { item in
-                Text(item.rawValue).tag(item)
+                Button {
+                    mode = item
+                    if detent == .peek {
+                        detent = .half
+                    }
+                } label: {
+                    Text(item.rawValue)
+                        .font(.caption.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(mode == item ? Color.cyan : Color.white.opacity(0.12))
+                        .foregroundColor(mode == item ? .black : .white)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
         }
-        .pickerStyle(.segmented)
     }
 
     @ViewBuilder
@@ -2782,55 +2794,6 @@ struct MainCockpitView: View {
         return []
     }
 
-    private var speedElevationCornerHUD: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("SPEED")
-                        .font(.caption2.bold())
-                        .foregroundColor(.cyan)
-                    Text("\(Int(locationTracker.speedMph.rounded()))")
-                        .font(.title2.monospacedDigit().bold())
-                        .foregroundColor(.white)
-                    Text("MPH")
-                        .font(.caption2.bold())
-                        .foregroundColor(.white.opacity(0.82))
-                }
-                Rectangle()
-                    .fill(Color.white.opacity(0.2))
-                    .frame(width: 1, height: 44)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("ELEVATION")
-                        .font(.caption2.bold())
-                        .foregroundColor(.green)
-                    Text(locationTracker.altitudeFt.formatted())
-                        .font(.title2.monospacedDigit().bold())
-                        .foregroundColor(.white)
-                    Text("FT")
-                        .font(.caption2.bold())
-                        .foregroundColor(.white.opacity(0.82))
-                }
-            }
-            HStack(spacing: 4) {
-                Image(systemName: "location.fill")
-                Text("PHONE GPS")
-            }
-            .font(.caption2.bold())
-            .foregroundColor(.green)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.black.opacity(0.84))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(
-                    LinearGradient(colors: [.cyan, .green], startPoint: .leading, endPoint: .trailing),
-                    lineWidth: 1.5
-                )
-        )
-    }
-
     private var headUnitCard: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("CarPlay & Head-Unit Ready")
@@ -3298,11 +3261,11 @@ struct MainCockpitView: View {
     private func railButton(_ system: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.body.bold())
-                .frame(width: 44, height: 44)
+                .font(.subheadline.bold())
+                .frame(width: 34, height: 34)
                 .background(active ? Color.cyan : Color.black.opacity(0.78))
                 .foregroundColor(active ? .black : .white)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
     }
