@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    paths:
+      - 'ios-app/**'
+      - '.github/workflows/ios-testflight.yml'
 
 permissions:
   contents: read
