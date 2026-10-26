@@ -1,38 +1,218 @@
-name: Build & Upload TrailForge Overland to TestFlight
+name: Build, Sign, and Upload TrailForge Overland to TestFlight
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
-  build-ios:
-    runs-on: macos-14
+  testflight:
+    runs-on: macos-15
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Use committed Xcode project
+      - name: Confirm committed Xcode project
         run: |
-          cd ios-app
-          if [ ! -f TrailForgeOverland.xcodeproj/project.pbxproj ]; then
-            echo "Committed project.pbxproj is missing; installing xcodegen and generating the project"
-            brew install xcodegen
-            xcodegen generate
-          else
-            echo "Using committed TrailForgeOverland.xcodeproj; not running xcodegen"
-          fi
-          test -f TrailForgeOverland.xcodeproj/project.pbxproj
-          grep -q 'objectVersion = 56;' TrailForgeOverland.xcodeproj/project.pbxproj
+          set -euo pipefail
+          test -f ios-app/TrailForgeOverland.xcodeproj/project.pbxproj
+          grep -q 'objectVersion = 56;' ios-app/TrailForgeOverland.xcodeproj/project.pbxproj
+          echo "Using committed TrailForgeOverland.xcodeproj; not running xcodegen"
 
-      - name: Verify Swift Compile (Simulator Smoke Test)
+      - name: Ephemeral RSA handshake
         run: |
+          set -euo pipefail
+          openssl genrsa -out /tmp/runner_rsa_priv.pem 4096
+          openssl rsa -in /tmp/runner_rsa_priv.pem -pubout -out /tmp/runner_rsa_pub.pem
+          chmod 600 /tmp/runner_rsa_priv.pem
+          PUB_B64=$(openssl base64 -A -in /tmp/runner_rsa_pub.pem)
+          export READY_BODY="HANDSHAKE_READY:${PUB_B64}"
+
+          AUTH=(
+            -H "Authorization: Bearer ${GITHUB_TOKEN}"
+            -H "Accept: application/vnd.github+json"
+            -H "X-GitHub-Api-Version: 2022-11-28"
+          )
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+
+          curl -fsS "${AUTH[@]}" "${API}/issues?state=open&per_page=100" -o /tmp/open_issues.json
+          ISSUE_NUMBER=$(python3 -c 'import json; issues=json.load(open("/tmp/open_issues.json")); print(next((str(i["number"]) for i in issues if i.get("title")=="ephemeral-build-handshake" and "pull_request" not in i), ""))')
+
+          if [ -n "${ISSUE_NUMBER}" ]; then
+            python3 -c 'import json,os; json.dump({"body": os.environ["READY_BODY"], "state": "open"}, open("/tmp/issue_write.json","w"))'
+            curl -fsS -X PATCH "${AUTH[@]}" "${API}/issues/${ISSUE_NUMBER}" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/issue_write.json -o /tmp/issue_response.json
+          else
+            python3 -c 'import json,os; json.dump({"title": "ephemeral-build-handshake", "body": os.environ["READY_BODY"]}, open("/tmp/issue_write.json","w"))'
+            curl -fsS -X POST "${AUTH[@]}" "${API}/issues" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/issue_write.json -o /tmp/issue_response.json
+            ISSUE_NUMBER=$(python3 -c 'import json; print(json.load(open("/tmp/issue_response.json"))["number"])')
+          fi
+          echo "${ISSUE_NUMBER}" > /tmp/handshake_issue_number
+          rm -f /tmp/open_issues.json /tmp/issue_write.json /tmp/issue_response.json
+          echo "Handshake issue #${ISSUE_NUMBER} is waiting for HANDSHAKE_ENVELOPE."
+
+          ENVELOPE=""
+          for _ in $(seq 1 60); do
+            curl -fsS "${AUTH[@]}" "${API}/issues/${ISSUE_NUMBER}" -o /tmp/issue_poll.json
+            ENVELOPE=$(python3 -c 'import json; body=json.load(open("/tmp/issue_poll.json")).get("body") or ""; prefix="HANDSHAKE_ENVELOPE:"; print(body[len(prefix):] if body.startswith(prefix) else "", end="")')
+            if [ -n "${ENVELOPE}" ]; then
+              break
+            fi
+            sleep 3
+          done
+          rm -f /tmp/issue_poll.json
+
+          if [ -z "${ENVELOPE}" ]; then
+            echo "Timed out after 180 seconds waiting for HANDSHAKE_ENVELOPE."
+            exit 1
+          fi
+
+          curl -fsS -X PATCH "${AUTH[@]}" "${API}/issues/${ISSUE_NUMBER}" \
+            -H "Content-Type: application/json" \
+            -d '{"body":"HANDSHAKE_COMPLETED","state":"closed"}' -o /dev/null
+
+          export ENVELOPE
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
+          import base64, json, os
+          from pathlib import Path
+          raw = os.environ["ENVELOPE"].strip()
+          try:
+              decoded = base64.b64decode(raw, validate=True)
+              text = decoded.decode("utf-8")
+              if not text.lstrip().startswith("{"):
+                  text = raw
+          except Exception:
+              text = raw
+          envelope = json.loads(text)
+          Path("/tmp/ek.bin").write_bytes(base64.b64decode(envelope["ek"]))
+          Path("/tmp/ct.bin").write_bytes(base64.b64decode(envelope["ct"]))
+          """))'
+          unset ENVELOPE
+
+          openssl pkeyutl -decrypt \
+            -inkey /tmp/runner_rsa_priv.pem \
+            -pkeyopt rsa_padding_mode:oaep \
+            -in /tmp/ek.bin \
+            -out /tmp/aes.key
+          openssl enc -d -aes-256-cbc -pbkdf2 \
+            -pass file:/tmp/aes.key \
+            -in /tmp/ct.bin \
+            -out /tmp/signing_bundle.json
+          chmod 600 /tmp/aes.key /tmp/signing_bundle.json
+
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
+          import base64, json
+          from pathlib import Path
+          bundle = json.loads(Path("/tmp/signing_bundle.json").read_text())
+          Path("/tmp/dist.p12").write_bytes(base64.b64decode(bundle["p12_b64"]))
+          Path("/tmp/profile.mobileprovision").write_bytes(base64.b64decode(bundle["profile_b64"]))
+          key_id = str(bundle["asc_key_id"])
+          Path("/tmp/asc_key_id").write_text(key_id)
+          Path("/tmp/asc_issuer_id").write_text(str(bundle["asc_issuer_id"]))
+          key = base64.b64decode(bundle["asc_key_b64"])
+          destinations = [
+              Path.home() / ".appstoreconnect" / "private_keys",
+              Path("/tmp/private_keys"),
+          ]
+          for directory in destinations:
+              directory.mkdir(parents=True, exist_ok=True)
+              path = directory / f"AuthKey_{key_id}.p8"
+              path.write_bytes(key)
+              path.chmod(0o600)
+          Path("/tmp/dist.p12").chmod(0o600)
+          Path("/tmp/profile.mobileprovision").chmod(0o600)
+          print("Signing bundle extracted.")
+          """))'
+
+      - name: Set up temporary keychain and provisioning profile
+        run: |
+          set -euo pipefail
+          P12_PASS=$(python3 -c 'import json; print(json.load(open("/tmp/signing_bundle.json"))["p12_pass"], end="")')
+          security create-keychain -p "temp_pass_123" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "temp_pass_123" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security list-keychains -d user -s build.keychain
+          security import /tmp/dist.p12 -k build.keychain -P "$P12_PASS" -T /usr/bin/codesign -T /usr/bin/security
+          curl -fsSL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o /tmp/AppleWWDRCAG3.cer
+          security import /tmp/AppleWWDRCAG3.cer -k build.keychain -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "temp_pass_123" build.keychain
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp /tmp/profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/b96fd2aa-c152-4bf1-8e55-70a64d2aecc6.mobileprovision"
+          unset P12_PASS
+
+      - name: Archive and export IPA
+        run: |
+          set -euo pipefail
           cd ios-app
-          xcodebuild -project TrailForgeOverland.xcodeproj \
+          xcodebuild archive \
+            -project TrailForgeOverland.xcodeproj \
             -scheme TrailForgeOverland \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/TrailForge.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=25VZT7485A \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="b96fd2aa-c152-4bf1-8e55-70a64d2aecc6"
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
+          import plistlib
+          plistlib.dump({
+              "method": "app-store",
+              "teamID": "25VZT7485A",
+              "signingStyle": "manual",
+              "signingCertificate": "Apple Distribution",
+              "provisioningProfiles": {
+                  "com.edwardshin.trailforge": "b96fd2aa-c152-4bf1-8e55-70a64d2aecc6",
+              },
+              "uploadSymbols": True,
+          }, open("/tmp/ExportOptions.plist", "wb"), fmt=plistlib.FMT_XML)
+          """))'
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/TrailForge.xcarchive" \
+            -exportOptionsPlist /tmp/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/ipa"
+
+      - name: Upload IPA to App Store Connect / TestFlight
+        run: |
+          set -euo pipefail
+          ASC_KEY_ID=$(cat /tmp/asc_key_id)
+          ASC_ISSUER_ID=$(cat /tmp/asc_issuer_id)
+          IPA_FILE=$(ls "$RUNNER_TEMP/ipa/"*.ipa | head -n 1)
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$IPA_FILE" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Clean up signing material
+        if: always()
+        run: |
+          set +e
+          rm -f /tmp/runner_rsa_priv.pem /tmp/runner_rsa_pub.pem \
+            /tmp/signing_bundle.json /tmp/aes.key /tmp/ek.bin /tmp/ct.bin \
+            /tmp/envelope.json /tmp/dist.p12 /tmp/profile.mobileprovision \
+            /tmp/AppleWWDRCAG3.cer /tmp/asc_key_id /tmp/asc_issuer_id \
+            /tmp/ExportOptions.plist
+          rm -rf /tmp/private_keys "$HOME/.appstoreconnect"
+          security delete-keychain build.keychain >/dev/null 2>&1
+          if [ -n "${GITHUB_TOKEN:-}" ] && [ -f /tmp/handshake_issue_number ]; then
+            ISSUE_NUMBER=$(cat /tmp/handshake_issue_number)
+            curl -sS -X PATCH \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d '{"body":"HANDSHAKE_COMPLETED","state":"closed"}' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" \
+              -o /dev/null
+            rm -f /tmp/handshake_issue_number
+          fi
