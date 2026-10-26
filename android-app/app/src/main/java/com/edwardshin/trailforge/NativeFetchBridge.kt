@@ -21,7 +21,9 @@ class NativeFetchBridge(
         "wcc.sc.egov.usda.gov",
         "gis.blm.gov",
         "geocoding.geo.census.gov",
-        "nominatim.openstreetmap.org"
+        "nominatim.openstreetmap.org",
+        "server.arcgisonline.com",
+        "basemap.nationalmap.gov"
     )
 
     @JavascriptInterface
@@ -41,7 +43,7 @@ class NativeFetchBridge(
                     readTimeout = 40000
                     instanceFollowRedirects = true
                     setRequestProperty("Accept", "application/json,text/plain,*/*")
-                    setRequestProperty("User-Agent", "TrailForgeOverland/1.1.0")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.2.0")
                     if (requestMethod == "POST") {
                         doOutput = true
                         setRequestProperty("Content-Type", "text/plain; charset=utf-8")
@@ -55,6 +57,37 @@ class NativeFetchBridge(
                 val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
                 connection.disconnect()
                 deliver(requestId, text, code in 200..299)
+            } catch (error: Exception) {
+                deliver(requestId, error.message ?: "network error", false)
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun fetchBytes(id: String?, url: String?) {
+        val requestId = id ?: return
+        val target = url ?: return
+        executor.execute {
+            try {
+                val parsed = URI(target)
+                if (!parsed.scheme.equals("https", true) || parsed.host !in allowed) {
+                    deliver(requestId, "blocked host", false)
+                    return@execute
+                }
+                val connection = (URL(target).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    instanceFollowRedirects = true
+                    setRequestProperty("Accept", "image/png,image/jpeg,*/*")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.2.0")
+                }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
+                connection.disconnect()
+                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                onResult(requestId, encoded, code in 200..299 && bytes.isNotEmpty())
             } catch (error: Exception) {
                 deliver(requestId, error.message ?: "network error", false)
             }
