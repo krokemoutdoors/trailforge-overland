@@ -24,6 +24,7 @@
 		A20000000000000000000014 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000014 /* CoreMotion.framework */; };
 		A20000000000000000000015 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000015 /* StoreKit.framework */; };
 		A20000000000000000000016 /* MultipeerConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000016 /* MultipeerConnectivity.framework */; };
+		A20000000000000000000018 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000018 /* AVFoundation.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +48,7 @@
 		A30000000000000000000014 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
 		A30000000000000000000015 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		A30000000000000000000016 /* MultipeerConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MultipeerConnectivity.framework; path = System/Library/Frameworks/MultipeerConnectivity.framework; sourceTree = SDKROOT; };
+		A30000000000000000000018 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -60,6 +62,7 @@
 				A20000000000000000000014 /* CoreMotion.framework in Frameworks */,
 				A20000000000000000000015 /* StoreKit.framework in Frameworks */,
 				A20000000000000000000016 /* MultipeerConnectivity.framework in Frameworks */,
+				A20000000000000000000018 /* AVFoundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +99,7 @@
 				A30000000000000000000014 /* CoreMotion.framework */,
 				A30000000000000000000015 /* StoreKit.framework */,
 				A30000000000000000000016 /* MultipeerConnectivity.framework */,
+				A30000000000000000000018 /* AVFoundation.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -316,7 +320,7 @@
 			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 			CODE_SIGN_IDENTITY = "iPhone Developer";
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 4;
+			CURRENT_PROJECT_VERSION = 5;
 			DEVELOPMENT_TEAM = 25VZT7485A;
 			ENABLE_PREVIEWS = YES;
 			GENERATE_INFOPLIST_FILE = NO;
@@ -343,7 +347,7 @@
 			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 			CODE_SIGN_IDENTITY = "iPhone Developer";
 			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 4;
+			CURRENT_PROJECT_VERSION = 5;
 			DEVELOPMENT_TEAM = 25VZT7485A;
 			ENABLE_PREVIEWS = YES;
 			GENERATE_INFOPLIST_FILE = NO;

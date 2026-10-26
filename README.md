@@ -14,11 +14,15 @@ Bundle ID: `com.edwardshin.trailforge`. Deployment target: iOS 17.
 
 The map uses a hybrid style with realistic elevation. `UserAnnotation()` draws the live GPS puck and heading cone after When-In-Use permission. **Center on My GPS** snaps the camera to that fix. **Near My GPS** and **Scan Area for All USA 4x4 Trails** load local tracks from OpenStreetMap Overpass and USFS roads, drawn as rig-fit polylines (green, orange, or red).
 
-## Build 4
+## Build 5
 
-Build 4 (`CFBundleVersion` 4) adds tap-to-route navigation and a trail dropdown that follows the state filter.
+Build 5 (`CFBundleVersion` 5) keeps tap-to-route navigation and the state dropdown, and replaces the straight-line fallback with a street route plus spoken turn-by-turn.
 
-**Tap-to-route GPS directions.** Every flat camp pad (`CampSpot`) and every trailhead on the map is a button, in Go Drive and in Flat Camp. Tapping a pad, a trailhead, or **Route Here** requests an Apple `MKDirections` driving route from the live GPS fix (or from the trailhead until GPS locks, then recalculates). The map draws that route in cyan with a blue casing, then a dashed orange-on-green overland spur from the end of the road route to the exact pad. If Apple returns no road route, the trail polyline is the approach and the spur still ends on the pad. The camera frames the full route. **Start Turn-by-Turn** follows live heading, **Overview** frames the route again, and **End Route** clears it. The top banner shows the next maneuver and the full step list. The bottom card shows the destination, ETA, remaining distance, alternate routes, and a handoff to Apple Maps or Google Maps.
+**Street routing.** Tapping a flat pad, a trailhead, or **Route Here** builds a driving route from the live GPS fix. The router tries Apple `MKDirections` to the pad, then Apple to the trailhead or the nearest trail vertex, then the public OSRM driving API (`router.project-osrm.org`) with `steps=true`, then shorter Apple legs at 75%, 50%, and 25% of the way to the trail. A route is kept only when it starts near the phone, has more than two points, and is not a long crow-flies segment. The trail polyline is stitched on only after the road route reaches the trail, and the dashed overland spur is drawn only when the remaining gap is under two miles. If every stage fails, the banner says to check the signal instead of drawing a line across town. The selected road is a 3.2 pt cyan stroke inside a 5 pt blue casing. Alternates are 2.2 pt. The spur is a 2.5 pt dashed orange line. The live blue GPS puck stays visible; a small start dot appears only when the route began from a trailhead before GPS locked.
+
+**Live guidance.** `LocationTracker` uses navigation accuracy, no distance filter, automotive activity, and heading updates. The banner counts down to the current maneuver (`In 450 ft • Turn left onto S Harrier Rd`) and advances the step when the phone is within about 35 m of that maneuver. Remaining distance and ETA follow the driven portion of the route. **Follow GPS** locks the camera to the user heading. While a route is active, the three wide map buttons collapse to a single row of icons.
+
+**Spoken directions.** Voice guidance is on by default. `VoiceNavigationAnnouncer` uses `AVSpeechSynthesizer` with an `AVAudioSession` in `.playback` / `.voicePrompt`, ducking other audio. The speaker button on the turn banner mutes and unmutes it. Tapping the banner speaks the current line immediately. The phone speaks an opening summary when a route starts and when **Follow GPS** is tapped, a single approach prompt about 0.2 mi before a maneuver, the maneuver itself (plus the following step) when the step advances, and an arrival line within about 50 m of the pad, including slope. Each of those prompts is remembered per step so a GPS tick cannot repeat it.
 
 **50-state and Near Me dropdown.** The filter bar lists **Near Me**, **All USA**, and all 50 states. Choosing one immediately replaces the trail menu and the route pills with matching routes only. The previously selected trail is not kept when it is outside the new filter. **Near Me** sorts by distance to the live GPS fix, scans Overpass and USFS roads around that fix, and merges those tracks into the menu with a `mi away` badge. A state pill selects the first route in that state and pans the camera there. Each menu row shows state, name, distance, clearance, and rig-fit (`FITS`, `CAUTION`, `NO-GO`). Live-scanned tracks are tagged with the nearest US state code, so they show up under that state instead of a generic `US` label. The built-in atlas has at least one real route in every state, including Imogene Pass, White Rim, and Lost Coast Usal Road.
 
@@ -46,7 +50,7 @@ Dispersed pads are marked when the ground slope is under 3°, so a level sleep d
 - **OpenStreetMap Overpass** off-road tracks (`highway=track`, grade 2–5, and unpaved unclassified roads) around the map center or the live GPS fix.
 - **USFS EDW RoadBasic** forest roads from the public ArcGIS query, turned into the same trail model with a flat-pad annotation when the estimated slope is under 3°.
 
-`LocationTracker` requests When-In-Use location at navigation accuracy, publishes elevation in feet and speed in miles per hour, and centers the map on the first fix.
+`LocationTracker` requests When-In-Use location at navigation accuracy, with heading updates, and publishes elevation in feet and speed in miles per hour. The map centers on the first fix.
 
 Trail cards also carry USFS / BLM agency labels and a gate status string.
 
@@ -74,11 +78,11 @@ codemagic.yaml
 .github/workflows/        Simulator smoke build and Pages deploy
 ```
 
-Privacy: the gyroscope and the rig profile stay on device (`NSPrivacyTracking` is false). A trail scan sends the map center or GPS coordinate to OpenStreetMap Overpass and the USFS road service. Turn-by-turn routing sends the start and destination to Apple. USGS, SNOTEL, and NIFC requests stay anonymous. The Pages source is `web-landing/index.html`.
+Privacy: the gyroscope and the rig profile stay on device (`NSPrivacyTracking` is false). A trail scan sends the map center or GPS coordinate to OpenStreetMap Overpass and the USFS road service. Turn-by-turn routing sends the start and destination to Apple, and to the public OSRM driving service when Apple cannot return a road route. USGS, SNOTEL, and NIFC requests stay anonymous. Spoken prompts stay on the phone. The Pages source is `web-landing/index.html`.
 
 ## Build
 
-The Xcode project is committed at `ios-app/TrailForgeOverland.xcodeproj` (shared scheme `TrailForgeOverland`). Bundle ID `com.edwardshin.trailforge`, display name TrailForge Overland, version 1.0 (build 4), deployment target iOS 17. `ios-app/Info.plist` holds the location, Bluetooth, and local-network usage strings. The app icon is `ios-app/Assets.xcassets/AppIcon.appiconset`, which references the 1024×1024 icon.
+The Xcode project is committed at `ios-app/TrailForgeOverland.xcodeproj` (shared scheme `TrailForgeOverland`). Bundle ID `com.edwardshin.trailforge`, display name TrailForge Overland, version 1.0 (build 5), deployment target iOS 17. `ios-app/Info.plist` holds the location, Bluetooth, and local-network usage strings. The app icon is `ios-app/Assets.xcassets/AppIcon.appiconset`, which references the 1024×1024 icon.
 
 `ios-app/project.yml` is the XcodeGen spec for the same target. If XcodeGen is installed, `xcodegen generate` rewrites the project from that spec. The committed project is what Codemagic and Xcode open when XcodeGen is not installed.
 
