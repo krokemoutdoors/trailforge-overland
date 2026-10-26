@@ -103,6 +103,30 @@ struct MainCockpitView: View {
     @StateObject private var parcelService = ParcelBoundaryService()
     @State private var showParcelLayer = true
     @State private var parcelsCollapsedForFollow = false
+    @State private var detent: CockpitDetent = .half
+    @State private var followHeading = false
+    @State private var showLayers = false
+    @State private var showOffline = false
+    @State private var plotMode = false
+    @State private var straightSpur = false
+    @State private var plotPoints: [CLLocationCoordinate2D] = []
+    @State private var profileIndex: Int?
+    @State private var reports: [TrailConditionReport] = []
+    @State private var offlinePacks: [OfflineCorridorPack] = []
+    @State private var downloadProgress: Double = 0
+    @State private var downloadRunning = false
+    @State private var offlineTier = "Standard Topo + Parcels"
+    @State private var gpxDraft = ""
+    @State private var remoteHazards: [MapHazard] = []
+    @State private var lastHazardFetch: CLLocationCoordinate2D?
+    @AppStorage("trailforge.offlineFirst") private var offlineFirst = false
+    @AppStorage("trailforge.dashMode") private var dashMode = "auto"
+    @AppStorage("trailforge.basemap") private var basemapRaw = BasemapChoice.hybrid.rawValue
+    @AppStorage("trailforge.parcelOpacity") private var parcelOpacity = 1.0
+    @AppStorage("trailforge.trailOpacity") private var trailCorridorOpacity = 1.0
+    @AppStorage("trailforge.campOpacity") private var campSlopeOpacity = 0.9
+    @AppStorage("trailforge.hazardOpacity") private var hazardOverlayOpacity = 0.85
+    @AppStorage("trailforge.starlinkOpacity") private var starlinkOverlayOpacity = 0.75
 
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -212,7 +236,75 @@ struct MainCockpitView: View {
         hasher.combine(showParcelLayer)
         hasher.combine(parcelService.selectedID)
         hasher.combine(drawnParcels.map(\.id).joined(separator: ","))
+        hasher.combine(basemapRaw)
+        hasher.combine(Int(parcelOpacity * 20))
+        hasher.combine(Int(trailCorridorOpacity * 20))
+        hasher.combine(Int(campSlopeOpacity * 20))
+        hasher.combine(Int(hazardOverlayOpacity * 20))
+        hasher.combine(Int(starlinkOverlayOpacity * 20))
+        hasher.combine(plotPoints.map { String(format: "%.4f,%.4f", $0.latitude, $0.longitude) }.joined(separator: "|"))
+        hasher.combine(straightSpur)
+        hasher.combine(profileIndex)
+        hasher.combine(mapHazards.map(\.id).joined(separator: ","))
         return hasher.finalize()
+    }
+
+    private var basemap: BasemapChoice {
+        BasemapChoice(rawValue: basemapRaw) ?? .hybrid
+    }
+
+    private var rideSamples: [RideSample] {
+        RideProfile.samples(for: activeTrail)
+    }
+
+    private var scrubCoordinate: CLLocationCoordinate2D? {
+        guard let profileIndex, rideSamples.indices.contains(profileIndex) else { return nil }
+        return rideSamples[profileIndex].coordinate
+    }
+
+    private var plottedLine: [CLLocationCoordinate2D] {
+        guard plotPoints.count >= 2 else { return plotPoints }
+        if straightSpur { return cappedPlot(plotPoints) }
+        var line: [CLLocationCoordinate2D] = [plotPoints[0]]
+        let trail = activeTrail.coordinates
+        for index in 1..<plotPoints.count {
+            let start = plotPoints[index - 1]
+            let end = plotPoints[index]
+            let slice = trailSlice(from: start, to: end, trail: trail)
+            if slice.count >= 2, polylineMeters(slice) < max(meters(from: start, to: end) * 3, 1) {
+                line.append(contentsOf: slice.dropFirst())
+            } else {
+                line.append(end)
+            }
+        }
+        return cappedPlot(line)
+    }
+
+    private var mapHazards: [MapHazard] {
+        guard hazardOverlayOpacity > 0.02 else { return [] }
+        return TrailHazards.localMarkers(on: activeTrail) + remoteHazards
+    }
+
+    private var customRouteMiles: Double {
+        polylineMeters(plottedLine) / 1609.344
+    }
+
+    private var customRouteFit: (verdict: RigFitVerdict, notes: [String]) {
+        var fit = rigStore.evaluate(trail: activeTrail)
+        if straightSpur, fit.verdict == .fits {
+            fit.notes.insert("Straight-line spur leaves the mapped corridor.", at: 0)
+            return (.caution, fit.notes)
+        }
+        return fit
+    }
+
+    private var cockpitSummary: String {
+        if let route = activeRoute {
+            let step = route.displaySteps.first?.instruction ?? "On route"
+            let miles = liveRemainingMiles ?? (route.selected.distanceMeters / 1609.344)
+            return String(format: "%@ • %.1f mi", step, miles)
+        }
+        return "\(shortFit(activeTrail)) • \(activeTrail.name)"
     }
 
     private var listedCamps: [CampSpot] {
@@ -236,167 +328,42 @@ struct MainCockpitView: View {
 
     var body: some View {
         let _ = syncCameraGate()
-        VStack(spacing: 0) {
-            if let route = activeRoute {
-                navigationBanner(route)
-            } else {
-                fitBanner
-            }
-
+        GeometryReader { geo in
+            let dash = wantsDash(geo.size)
             ZStack {
-                StableRouteMap(
-                    cameraPosition: $cameraPosition,
-                    sceneToken: mapSceneToken,
-                    cameraCommand: cameraCommand,
-                    showAlternates: showRouteAlternates,
-                    routeStartedFromGPS: routeStartedFromGPS,
-                    routingActive: activeRoute != nil,
-                    selectedTrailID: selectedTrailID,
-                    trails: mapTrails,
-                    trailColors: visibleTrailColors,
-                    selectedTrailLine: selectedTrailDraw,
-                    camps: mapCamps,
-                    route: activeRoute,
-                    parcels: drawnParcels,
-                    selectedParcelID: parcelService.selectedID,
-                    parcelInspectEnabled: showParcelLayer,
-                    onCameraEnd: { region in
-                        handleCameraEnd(region)
-                    },
-                    onSpot: { spot in
-                        Task { await beginRoute(to: spot) }
-                    },
-                    onInspect: { coordinate in
-                        inspectParcels(at: coordinate)
-                    },
-                    onSelectParcel: { id in
-                        if let parcel = parcelService.parcels.first(where: { $0.id == id }) {
-                            parcelService.select(parcel)
-                        }
-                    }
-                )
-                .equatable()
-
-                VStack {
-                    HStack {
-                        if activeRoute == nil {
-                            VStack(alignment: .leading, spacing: 8) {
-                                mapButton("Center on My GPS", systemImage: "location.fill") {
-                                    followRoute = false
-                                    showingRouteOverview = false
-                                    pushCamera(.userLocation(fallback: .automatic))
-                                }
-                                mapButton("Near My GPS", systemImage: "location.circle.fill") {
-                                    selectNearMe()
-                                }
-                                mapButton(telemetry.isScanningTrails ? "Scanning…" : "Scan Area for All USA 4x4 Trails", systemImage: "binoculars.fill") {
-                                    scanMapCenter()
-                                }
-                                .disabled(telemetry.isScanningTrails)
-                                mapButton(parcelLayerTitle, systemImage: showParcelLayer ? "square.split.2x2.fill" : "square.dashed") {
-                                    toggleParcelLayer()
-                                }
-                                if showParcelLayer {
-                                    mapButton(parcelService.isLoading ? "Scanning parcels…" : "Scan Parcels Here", systemImage: "map.fill") {
-                                        scanParcelsHere()
-                                    }
-                                    .disabled(parcelService.isLoading)
-                                }
-                            }
-                        } else {
-                            HStack(spacing: 6) {
-                                miniMapButton("location.fill") {
-                                    followRoute = false
-                                    showingRouteOverview = false
-                                    pushCamera(.userLocation(fallback: .automatic))
-                                }
-                                miniMapButton("location.circle.fill") { selectNearMe() }
-                                miniMapButton(telemetry.isScanningTrails ? "hourglass" : "binoculars.fill") { scanMapCenter() }
-                                    .disabled(telemetry.isScanningTrails)
-                                miniMapButton(showParcelLayer ? "square.split.2x2.fill" : "square.dashed") { toggleParcelLayer() }
-                                if showParcelLayer {
-                                    miniMapButton("map.fill") { scanParcelsHere() }
-                                        .disabled(parcelService.isLoading)
-                                }
-                            }
-                        }
-                        Spacer()
-                    }
-                    Spacer()
-                    VStack(spacing: 8) {
-                        coordinatesBar(filled: true)
-                        Text(gpsTelemetryLine)
-                            .font(.caption.monospacedDigit().bold())
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.55))
-                            .clipShape(Capsule())
-                        HStack(spacing: 16) {
-                            let psi = rigStore.recommendedAirDownPSI(surface: "rock", beadlocks: false)
-                            Label("Roll \(Int(motionManager.rollDegrees))° / Pitch \(Int(motionManager.pitchDegrees))°", systemImage: "gyroscope")
-                                .font(.caption.monospacedDigit().bold())
-                                .foregroundColor(abs(motionManager.rollDegrees) >= 25 ? .red : .cyan)
-                            Divider().frame(height: 14)
-                            Text("Air Down: \(psi.front)F / \(psi.rear)R PSI")
-                                .font(.caption.bold())
-                                .foregroundColor(.mint)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
-                    }
-                    .padding(.bottom, 10)
-                }
-                .padding(.top, 10)
-                .padding(.horizontal, 10)
-            }
-            .frame(maxHeight: .infinity)
-
-            if let route = activeRoute {
-                routeCard(route)
-            }
-
-            VStack(spacing: 10) {
-                if let parcel = parcelService.selected {
-                    propertyCard(parcel)
-                }
-                Picker("Mode", selection: $mode) {
-                    ForEach(CockpitMode.allCases, id: \.self) { item in
-                        Text(item.rawValue).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                if mode == .drive {
-                    driveControls
-                } else if mode == .camp {
-                    campList
+                if dash {
+                    dashCockpit(geo.size)
                 } else {
-                    HStack {
-                        Stepper("Tires: \(Int(rigStore.profile.tireInches))\"", value: $rigStore.profile.tireInches, in: 29...37, step: 1)
-                        Toggle("Locker", isOn: $rigStore.profile.hasRearLocker)
-                            .labelsHidden()
-                    }
-                    .font(.caption.bold())
+                    portraitCockpit(geo.size)
+                }
+                if showLayers {
+                    layersDrawer
+                }
+                if showOffline {
+                    offlineDrawer
                 }
             }
-            .padding(14)
-            .background(Color(red: 0.06, green: 0.09, blue: 0.14))
         }
         .onAppear {
             motionManager.startUpdates()
             locationTracker.start()
             refreshSelectedTrailDraw()
-            parcelService.refresh(around: locationTracker.userCoordinate ?? mapCenter, force: true)
+            reports = CockpitStore.loadReports()
+            offlinePacks = CockpitStore.loadPacks()
+            if offlineFirst {
+                parcelService.replace(CockpitStore.loadParcels())
+            } else {
+                parcelService.refresh(around: locationTracker.userCoordinate ?? mapCenter, force: true)
+            }
         }
         .onChange(of: locationTracker.hasCenteredOnUserOnce) { _, centered in
             guard centered, let coordinate = locationTracker.userCoordinate else { return }
             mapCenter = coordinate
-            parcelService.refresh(around: coordinate, force: true)
+            if offlineFirst {
+                parcelService.replace(CockpitStore.loadParcels())
+            } else {
+                parcelService.refresh(around: coordinate, force: true)
+            }
             if activeRoute == nil, regionFilter == "near" {
                 applyFilterSelection(scanIfNear: true)
             } else if activeRoute == nil {
@@ -407,6 +374,7 @@ struct MainCockpitView: View {
             handleLiveGPS()
         }
         .onChange(of: selectedTrailID) { _, newID in
+            profileIndex = nil
             if selectedCampSpot?.trailID != newID {
                 selectedCampSpot = nil
             }
@@ -423,6 +391,7 @@ struct MainCockpitView: View {
         }
         .onChange(of: followRoute) { _, following in
             if following {
+                detent = .peek
                 if showParcelLayer {
                     showParcelLayer = false
                     parcelsCollapsedForFollow = true
@@ -444,8 +413,20 @@ struct MainCockpitView: View {
                 selectedTrailID = first.id
             }
         }
+        .onChange(of: parcelService.status) { _, _ in
+            CockpitStore.saveParcels(parcelService.parcels)
+        }
+        .onChange(of: hazardOverlayOpacity) { _, value in
+            if value > 0.02 {
+                refreshHazards(around: mapCenter)
+            } else {
+                remoteHazards = []
+            }
+        }
         .task {
-            await telemetry.fetchUSGSStreamflow()
+            if !offlineFirst {
+                await telemetry.fetchUSGSStreamflow()
+            }
             await storeKit.loadProducts()
         }
     }
@@ -680,6 +661,8 @@ struct MainCockpitView: View {
                     }
                 }
             }
+            elevationProfileCard
+            trailReportBar
             if !telemetry.scanStatus.isEmpty {
                 Text(telemetry.scanStatus)
                     .font(.caption2)
@@ -891,6 +874,10 @@ struct MainCockpitView: View {
     }
 
     private func scanMapCenter() {
+        if offlineFirst {
+            telemetry.scanStatus = "Offline-first • cached trails, BDRs, and rig-fit stay on device"
+            return
+        }
         Task { await telemetry.fetchTrailsInMapRegion(center: mapCenter) }
     }
 
@@ -974,6 +961,8 @@ struct MainCockpitView: View {
 
     private func startFollow() {
         followRoute = true
+        followHeading = true
+        detent = .peek
         showingRouteOverview = false
         followUserCamera()
         if let route = activeRoute {
@@ -1179,7 +1168,14 @@ struct MainCockpitView: View {
     private func handleCameraEnd(_ region: MKCoordinateRegion) {
         let span = max(region.span.latitudeDelta, region.span.longitudeDelta)
         let center = region.center
-        parcelService.refresh(around: center)
+        if offlineFirst {
+            if parcelService.parcels.isEmpty {
+                parcelService.replace(CockpitStore.loadParcels())
+            }
+        } else {
+            parcelService.refresh(around: center)
+            refreshHazards(around: center)
+        }
         if meters(from: mapCenter, to: center) > 40 {
             mapCenter = center
         }
@@ -1306,6 +1302,793 @@ struct MainCockpitView: View {
                 .padding(8)
                 .background(.ultraThinMaterial)
                 .clipShape(Circle())
+        }
+    }
+
+    private func wantsDash(_ size: CGSize) -> Bool {
+        if dashMode == "on" { return true }
+        if dashMode == "off" { return false }
+        return size.width > size.height
+    }
+
+    private func sheetHeight(_ total: CGFloat) -> CGFloat {
+        switch detent {
+        case .peek:
+            return CGFloat(172)
+        case .half:
+            return max(CGFloat(300), total * 0.46)
+        case .full:
+            return max(CGFloat(460), total * 0.82)
+        }
+    }
+
+    private func portraitCockpit(_ size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            mapStage(showGloveRow: false)
+            cockpitSheet(expanded: detent != .peek)
+                .frame(height: sheetHeight(size.height))
+        }
+    }
+
+    private func dashCockpit(_ size: CGSize) -> some View {
+        HStack(spacing: 0) {
+            mapStage(showGloveRow: true)
+                .frame(width: size.width * 0.65)
+            dashColumn
+                .frame(width: size.width * 0.35)
+                .background(Color(red: 0.05, green: 0.08, blue: 0.12))
+        }
+    }
+
+    private func mapStage(showGloveRow: Bool) -> some View {
+        ZStack {
+            routeMap
+            VStack(spacing: 8) {
+                topCluster
+                if plotMode {
+                    Text(straightSpur ? "Plotter • straight spur" : "Plotter • tap the map to snap a waypoint")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.72))
+                        .foregroundColor(.cyan)
+                        .clipShape(Capsule())
+                }
+                Spacer()
+                if showGloveRow {
+                    gloveRow
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 8)
+                }
+            }
+            .padding(.top, 8)
+            HStack {
+                Spacer()
+                rightRail
+            }
+            .padding(.trailing, 8)
+            .padding(.top, 64)
+        }
+    }
+
+    private var routeMap: some View {
+        StableRouteMap(
+            cameraPosition: $cameraPosition,
+            sceneToken: mapSceneToken,
+            cameraCommand: cameraCommand,
+            showAlternates: showRouteAlternates,
+            routeStartedFromGPS: routeStartedFromGPS,
+            routingActive: activeRoute != nil,
+            selectedTrailID: selectedTrailID,
+            trails: mapTrails,
+            trailColors: visibleTrailColors,
+            selectedTrailLine: selectedTrailDraw,
+            camps: mapCamps,
+            route: activeRoute,
+            parcels: parcelOpacity > 0.02 ? drawnParcels : [],
+            selectedParcelID: parcelService.selectedID,
+            parcelInspectEnabled: showParcelLayer || plotMode,
+            basemap: basemap,
+            parcelOpacity: parcelOpacity,
+            trailOpacity: trailCorridorOpacity,
+            campSlopeOpacity: campSlopeOpacity,
+            hazardOpacity: hazardOverlayOpacity,
+            starlinkOpacity: starlinkOverlayOpacity,
+            hazards: mapHazards,
+            plotLine: plottedLine,
+            plotMarkers: plotPoints,
+            scrub: scrubCoordinate,
+            onCameraEnd: { region in
+                handleCameraEnd(region)
+            },
+            onSpot: { spot in
+                Task { await beginRoute(to: spot) }
+            },
+            onInspect: { coordinate in
+                if plotMode {
+                    addPlotPoint(coordinate)
+                } else {
+                    inspectParcels(at: coordinate)
+                }
+            },
+            onSelectParcel: { id in
+                if let parcel = parcelService.parcels.first(where: { $0.id == id }) {
+                    parcelService.select(parcel)
+                }
+            }
+        )
+        .equatable()
+    }
+
+    private var rightRail: some View {
+        VStack(spacing: 8) {
+            railButton(followHeading ? "location.north.line.fill" : "location.fill", active: followHeading) {
+                cycleCameraMode()
+            }
+            .accessibilityLabel(followHeading ? "Follow heading" : "Center on GPS")
+            railButton("square.3.layers.3d.down.right", active: showLayers) {
+                showLayers = true
+            }
+            .accessibilityLabel("Map layers")
+            railButton("point.topleft.down.curvedto.point.bottomright.up", active: plotMode) {
+                togglePlotter()
+            }
+            .accessibilityLabel("Custom route plotter")
+            railButton("arrow.down.circle.fill", active: showOffline) {
+                showOffline = true
+            }
+            .accessibilityLabel("Download 5-mile corridor")
+        }
+    }
+
+    private var topCluster: some View {
+        HStack(spacing: 6) {
+            Button {
+                scanMapCenter()
+            } label: {
+                Text(telemetry.isScanningTrails ? "Scanning…" : "↻ Scan Area")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.72))
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(telemetry.isScanningTrails)
+            Button {
+                toggleParcelLayer()
+            } label: {
+                Text(showParcelLayer ? "Parcels" : "Parcels Off")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(showParcelLayer ? Color.cyan : Color.black.opacity(0.72))
+                    .foregroundColor(showParcelLayer ? .black : .white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            Button {
+                showOffline = true
+            } label: {
+                Text("Offline")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.72))
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var gloveRow: some View {
+        HStack(spacing: 8) {
+            gloveButton("Recenter", system: "location.fill") { recenterGPS() }
+            gloveButton(followHeading ? "Heading" : "North", system: followHeading ? "location.north.line.fill" : "location.north.line") {
+                cycleCameraMode()
+            }
+            gloveButton("<3° Camps", system: "tent.fill") { mode = .camp }
+            gloveButton("Parcels", system: showParcelLayer ? "square.split.2x2.fill" : "square.dashed") {
+                toggleParcelLayer()
+            }
+        }
+    }
+
+    private func cockpitSheet(expanded: Bool) -> some View {
+        VStack(spacing: 8) {
+            sheetGrabber
+            modePicker
+            Text(cockpitSummary)
+                .font(.caption.bold())
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if expanded {
+                ScrollView {
+                    VStack(spacing: 10) {
+                        if let route = activeRoute {
+                            routeCard(route)
+                        } else {
+                            fitBanner
+                        }
+                        if let parcel = parcelService.selected {
+                            propertyCard(parcel)
+                        }
+                        if plotMode {
+                            plotterCard
+                        }
+                        cockpitModeBody
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(red: 0.06, green: 0.09, blue: 0.14))
+    }
+
+    private var dashColumn: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("In-Dash")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Spacer()
+                Button(dashMode == "on" ? "Locked" : "Lock") { toggleDashLock() }
+                    .font(.caption.bold())
+            }
+            let psi = rigStore.recommendedAirDownPSI(surface: "rock", beadlocks: false)
+            Text("Roll \(Int(motionManager.rollDegrees))°  •  Pitch \(Int(motionManager.pitchDegrees))°")
+                .font(.title3.monospacedDigit().bold())
+                .foregroundColor(abs(motionManager.rollDegrees) >= 25 ? .red : .cyan)
+            Text("Air Down \(psi.front)F / \(psi.rear)R PSI")
+                .font(.headline)
+                .foregroundColor(.mint)
+            coordinatesBar(filled: true)
+            Text(nextTurnLine)
+                .font(.subheadline.bold())
+                .foregroundColor(.white)
+                .lineLimit(3)
+            Text(cockpitSummary)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(2)
+            modePicker
+            ScrollView {
+                VStack(spacing: 10) {
+                    if plotMode { plotterCard }
+                    cockpitModeBody
+                }
+            }
+        }
+        .padding(12)
+    }
+
+    private var sheetGrabber: some View {
+        VStack(spacing: 8) {
+            Capsule()
+                .fill(Color.white.opacity(0.45))
+                .frame(width: 48, height: 5)
+                .padding(.top, 6)
+                .accessibilityLabel("Drag to resize cockpit")
+            HStack(spacing: 6) {
+                ForEach(CockpitDetent.allCases) { item in
+                    Button(item.rawValue) { detent = item }
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(detent == item ? Color.cyan : Color.white.opacity(0.12))
+                        .foregroundColor(detent == item ? .black : .white)
+                        .clipShape(Capsule())
+                }
+                Spacer(minLength: 4)
+                Button(dashMode == "on" ? "In-Dash On" : "In-Dash") { toggleDashLock() }
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(dashMode == "on" ? Color.cyan : Color.white.opacity(0.12))
+                    .foregroundColor(dashMode == "on" ? .black : .white)
+                    .clipShape(Capsule())
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(sheetDrag)
+    }
+
+    private var sheetDrag: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onEnded { value in
+                if value.translation.height > 42 {
+                    detent = detent == .full ? .half : .peek
+                } else if value.translation.height < -42 {
+                    detent = detent == .peek ? .half : .full
+                }
+            }
+    }
+
+    private var modePicker: some View {
+        Picker("Mode", selection: $mode) {
+            ForEach(CockpitMode.allCases, id: \.self) { item in
+                Text(item.rawValue).tag(item)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private var cockpitModeBody: some View {
+        if mode == .drive {
+            driveControls
+        } else if mode == .camp {
+            campList
+        } else {
+            rigPanel
+        }
+    }
+
+    private var rigPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Stepper("Tires: \(Int(rigStore.profile.tireInches))\"", value: $rigStore.profile.tireInches, in: 29...37, step: 1)
+                Toggle("Locker", isOn: $rigStore.profile.hasRearLocker)
+                    .labelsHidden()
+            }
+            .font(.caption.bold())
+            Toggle("Offline-First / No-Signal Simulation", isOn: $offlineFirst)
+                .font(.caption.bold())
+                .tint(.cyan)
+            Text(offlineFirst
+                 ? "Offline-first is on. Cached trails, BDRs, saved parcels, and rig-fit stay available with no cell signal."
+                 : "Turn this on to keep navigation on the saved atlas, BDR routes, corridor packs, and rig-fit math when the radio is dark.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var layersDrawer: some View {
+        ZStack(alignment: .trailing) {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .onTapGesture { showLayers = false }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Text("Map Layers & Opacity")
+                            .font(.headline)
+                        Spacer()
+                        Button("Close") { showLayers = false }
+                            .font(.caption.bold())
+                    }
+                    Picker("Basemap", selection: $basemapRaw) {
+                        ForEach(BasemapChoice.allCases) { choice in
+                            Text(choice.rawValue).tag(choice.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    opacitySlider("Property Boundaries & Landowners", value: $parcelOpacity)
+                    opacitySlider("USFS & BLM Legal Trail Corridors", value: $trailCorridorOpacity)
+                    opacitySlider("<3° LIDAR Flat Camp Slope Shading", value: $campSlopeOpacity)
+                    opacitySlider("NIFC Wildfire Perimeters & USGS Hazards", value: $hazardOverlayOpacity)
+                    opacitySlider("Starlink Clear-Sky & Cell Coverage Mask", value: $starlinkOverlayOpacity)
+                    Text("NIFC perimeters and USGS quakes load when a signal is available. Fords and ledges stay on the cached route. Starlink shading uses each pad's sky view, not a live carrier map.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .padding(16)
+            }
+            .frame(maxWidth: 360)
+            .background(.ultraThinMaterial)
+        }
+    }
+
+    private var offlineDrawer: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .onTapGesture { showOffline = false }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("5-Mile Route Corridor")
+                        .font(.headline)
+                    Spacer()
+                    Button("Close") { showOffline = false }
+                        .font(.caption.bold())
+                }
+                Text("Saves the active trail or GPS route, its camps, parcels, and rig-fit notes on this device. The tier name is the pack you asked to keep, not a live satellite download.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Picker("Pack", selection: $offlineTier) {
+                    Text("Standard Topo + Parcels (~28 MB)").tag("Standard Topo + Parcels")
+                    Text("Max Satellite + LIDAR (~94 MB)").tag("Max Satellite + LIDAR")
+                }
+                .pickerStyle(.segmented)
+                Button(downloadRunning ? "Saving corridor…" : "Download 5-Mile Corridor") {
+                    downloadCorridor()
+                }
+                .font(.headline)
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
+                .disabled(downloadRunning)
+                ProgressView(value: downloadRunning ? downloadProgress : (offlinePacks.isEmpty ? 0.0 : 1.0))
+                    .tint(.cyan)
+                if offlinePacks.isEmpty {
+                    Text("No saved corridor packs yet.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(offlinePacks) { pack in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(pack.name)
+                                    .font(.caption.bold())
+                                    .lineLimit(1)
+                                Text("\(pack.tier) • \(pack.nominalMegabytes) MB • \(pack.vertexCount) pts")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            Button("Remove") { removePack(pack.id) }
+                                .font(.caption2.bold())
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .padding()
+        }
+    }
+
+    private var elevationProfileCard: some View {
+        let samples = rideSamples
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Elevation & Obstacles")
+                .font(.caption.bold())
+                .foregroundColor(.cyan)
+            Text("High point is this route's listed peak. Drag to scrub the milepost on the map.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            if samples.count < 2 {
+                Text("This route has no profile yet.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
+                GeometryReader { bar in
+                    ZStack(alignment: .bottomLeading) {
+                        profilePath(samples, size: bar.size)
+                        ForEach(samples) { sample in
+                            if let obstacle = sample.obstacle {
+                                Text(obstacle)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .position(x: profileX(sample, samples: samples, width: bar.size.width), y: 10)
+                            }
+                        }
+                        if let profileIndex, samples.indices.contains(profileIndex) {
+                            Rectangle()
+                                .fill(Color.white)
+                                .frame(width: 2, height: bar.size.height)
+                                .position(x: profileX(samples[profileIndex], samples: samples, width: bar.size.width), y: bar.size.height / 2)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let fraction = min(1, max(0, value.location.x / max(bar.size.width, 1)))
+                                profileIndex = Int((fraction * Double(samples.count - 1)).rounded())
+                            }
+                    )
+                }
+                .frame(height: 72)
+                .background(Color.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                if let profileIndex, samples.indices.contains(profileIndex) {
+                    let sample = samples[profileIndex]
+                    Text(profileReadout(sample))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundColor(.white)
+                } else {
+                    Text("Drag the profile to scrub elevation, grade, and obstacles.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    private var trailReportBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Report Trail Status")
+                .font(.caption.bold())
+                .foregroundColor(.orange)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(TrailReportStatus.allCases) { status in
+                        Button(status.rawValue) { logReport(status) }
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(Color.white.opacity(0.1))
+                            .foregroundColor(.white)
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            if let latest = reports.first(where: { $0.trailID == activeTrail.id }) {
+                HStack {
+                    Text(latest.status)
+                        .font(.caption.bold())
+                    Text(latest.createdAt, style: .time)
+                    Text(latest.queuedOffline ? "queued offline" : "saved on device")
+                }
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private var plotterCard: some View {
+        let fit = customRouteFit
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Custom Route")
+                    .font(.caption.bold())
+                    .foregroundColor(.cyan)
+                Spacer()
+                Button("Clear") { plotPoints = [] }
+                    .font(.caption2.bold())
+            }
+            Toggle("Straight-Line Backcountry Spur", isOn: $straightSpur)
+                .font(.caption.bold())
+            Text(String(format: "%.1f mi • %d waypoints • %@", customRouteMiles, plotPoints.count, fit.verdict.rawValue))
+                .font(.caption.bold())
+                .foregroundColor(fit.verdict == .noGo ? .red : (fit.verdict == .caution ? .orange : .green))
+            if let note = fit.notes.first {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+            ShareLink(item: currentGPX) {
+                Label("Export / Share GPX 1.1", systemImage: "square.and.arrow.up")
+                    .font(.caption.bold())
+            }
+            .disabled(plotPoints.count < 2)
+            Button("Copy GPX 1.1") {
+                UIPasteboard.general.string = currentGPX
+                copiedToken = "gpx"
+            }
+            .font(.caption.bold())
+            .disabled(plotPoints.count < 2)
+            Button("Import sample GPX") { importGPX(GPXExchange.sample) }
+                .font(.caption.bold())
+            TextField("Paste GPX 1.1", text: $gpxDraft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(2...4)
+            Button("Import pasted GPX") { importGPX(gpxDraft) }
+                .font(.caption.bold())
+                .disabled(gpxDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func opacitySlider(_ title: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.caption.bold())
+                    .lineLimit(2)
+                Spacer()
+                Text("\(Int((value.wrappedValue * 100).rounded()))%")
+                    .font(.caption.monospacedDigit().bold())
+                    .foregroundColor(.cyan)
+            }
+            Slider(value: value, in: 0...1)
+                .tint(.cyan)
+        }
+    }
+
+    private func railButton(_ system: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.body.bold())
+                .frame(width: 44, height: 44)
+                .background(active ? Color.cyan : Color.black.opacity(0.78))
+                .foregroundColor(active ? .black : .white)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func gloveButton(_ title: String, system: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: system)
+                    .font(.title3.bold())
+                Text(title)
+                    .font(.caption2.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, minHeight: 68)
+            .background(Color.black.opacity(0.78))
+            .foregroundColor(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func profilePath(_ samples: [RideSample], size: CGSize) -> some View {
+        let elevations = samples.map { Double($0.elevationFt) }
+        let low = elevations.min() ?? 0
+        let high = max((elevations.max() ?? 1), low + 1)
+        return Path { path in
+            for (index, sample) in samples.enumerated() {
+                let x = profileX(sample, samples: samples, width: size.width)
+                let y = size.height - 8 - CGFloat((Double(sample.elevationFt) - low) / (high - low)) * (size.height - 20)
+                if index == 0 {
+                    path.move(to: CGPoint(x: x, y: y))
+                } else {
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+        }
+        .stroke(Color.cyan, lineWidth: 2)
+    }
+
+    private func profileX(_ sample: RideSample, samples: [RideSample], width: CGFloat) -> CGFloat {
+        guard let last = samples.last, last.mile > 0 else { return width / 2 }
+        return CGFloat(sample.mile / last.mile) * width
+    }
+
+    private func profileReadout(_ sample: RideSample) -> String {
+        var text = String(format: "Mile %.1f • %d ft • %.0f%% grade", sample.mile, sample.elevationFt, sample.gradePct)
+        if let obstacle = sample.obstacle {
+            text += " • \(obstacle)"
+        }
+        return text
+    }
+
+    private var nextTurnLine: String {
+        guard let route = activeRoute, !route.displaySteps.isEmpty else { return "Next turn • no active route" }
+        let index = min(activeStepIndex, route.displaySteps.count - 1)
+        let step = route.displaySteps[index]
+        return "Next turn • \(step.instruction)"
+    }
+
+    private var currentGPX: String {
+        let waypoints = plotPoints.enumerated().map { index, point in
+            GPXWaypoint(
+                id: UUID(),
+                name: "Waypoint \(index + 1)",
+                latitude: point.latitude,
+                longitude: point.longitude,
+                elevationMeters: 0,
+                slopeDegrees: 0,
+                starlinkSkyPct: 0,
+                sym: "Flag"
+            )
+        }
+        return GPXTrackManager().exportGPXString(
+            trailName: "TrailForge \(activeTrail.name)",
+            waypoints: waypoints,
+            track: plottedLine
+        )
+    }
+
+    private func toggleDashLock() {
+        dashMode = dashMode == "on" ? "off" : "on"
+    }
+
+    private func cycleCameraMode() {
+        followHeading.toggle()
+        if followHeading {
+            pushCamera(.userLocation(followsHeading: true, fallback: .automatic))
+        } else {
+            followRoute = false
+            pushCamera(.userLocation(followsHeading: false, fallback: .automatic))
+        }
+    }
+
+    private func recenterGPS() {
+        followHeading = false
+        followRoute = false
+        showingRouteOverview = false
+        pushCamera(.userLocation(followsHeading: false, fallback: .automatic))
+    }
+
+    private func togglePlotter() {
+        plotMode.toggle()
+        if plotMode, detent == .peek {
+            detent = .half
+        }
+    }
+
+    private func addPlotPoint(_ coordinate: CLLocationCoordinate2D) {
+        let snapped: CLLocationCoordinate2D
+        if straightSpur {
+            snapped = coordinate
+        } else if let nearest = closestCoordinate(on: activeTrail.coordinates, to: coordinate),
+                  meters(from: nearest, to: coordinate) < 500 {
+            snapped = nearest
+        } else {
+            snapped = coordinate
+        }
+        plotPoints.append(snapped)
+    }
+
+    private func cappedPlot(_ line: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        line.count > 220 ? simplifyCoordinates(line, maxPoints: 220, minMeters: 12) : line
+    }
+
+    private func importGPX(_ xml: String) {
+        let coordinates = GPXExchange.coordinates(in: xml)
+        guard !coordinates.isEmpty else { return }
+        plotPoints = coordinates
+        plotMode = true
+        if detent == .peek { detent = .half }
+    }
+
+    private func logReport(_ status: TrailReportStatus) {
+        reports.insert(TrailConditionReport(
+            id: UUID().uuidString,
+            trailID: activeTrail.id,
+            status: status.rawValue,
+            createdAt: Date(),
+            queuedOffline: offlineFirst
+        ), at: 0)
+        CockpitStore.saveReports(Array(reports.prefix(40)))
+    }
+
+    private func downloadCorridor() {
+        guard !downloadRunning else { return }
+        downloadRunning = true
+        downloadProgress = 0
+        let tier = offlineTier
+        let megabytes = tier.contains("Max") ? 94 : 28
+        let trail = activeTrail
+        let vertices = min(220, activeRoute?.selected.road.count ?? trail.coordinates.count)
+        let packName = activeRoute == nil ? trail.name : "\(trail.name) route"
+        Task {
+            for step in 1...12 {
+                try? await Task.sleep(nanoseconds: 70_000_000)
+                downloadProgress = Double(step) / 12
+            }
+            var packs = CockpitStore.loadPacks()
+            packs.insert(OfflineCorridorPack(
+                id: "\(trail.id)-\(Int(Date().timeIntervalSince1970))",
+                name: packName,
+                trailID: trail.id,
+                tier: tier,
+                nominalMegabytes: megabytes,
+                savedAt: Date(),
+                vertexCount: max(vertices, 2)
+            ), at: 0)
+            CockpitStore.savePacks(packs)
+            CockpitStore.saveParcels(parcelService.parcels)
+            offlinePacks = packs
+            downloadRunning = false
+        }
+    }
+
+    private func removePack(_ id: String) {
+        offlinePacks.removeAll { $0.id == id }
+        CockpitStore.savePacks(offlinePacks)
+    }
+
+    private func refreshHazards(around coordinate: CLLocationCoordinate2D) {
+        guard hazardOverlayOpacity > 0.02, !offlineFirst else { return }
+        if let lastHazardFetch, meters(from: lastHazardFetch, to: coordinate) < 2_000 { return }
+        lastHazardFetch = coordinate
+        Task {
+            remoteHazards = Array(await TrailHazards.fetchRemote(near: coordinate).prefix(8))
         }
     }
 
@@ -1476,6 +2259,16 @@ private struct StableRouteMap: View, Equatable {
     var parcels: [PropertyParcel]
     var selectedParcelID: String?
     var parcelInspectEnabled: Bool
+    var basemap: BasemapChoice
+    var parcelOpacity: Double
+    var trailOpacity: Double
+    var campSlopeOpacity: Double
+    var hazardOpacity: Double
+    var starlinkOpacity: Double
+    var hazards: [MapHazard]
+    var plotLine: [CLLocationCoordinate2D]
+    var plotMarkers: [CLLocationCoordinate2D]
+    var scrub: CLLocationCoordinate2D?
     var onCameraEnd: (MKCoordinateRegion) -> Void
     var onSpot: (CampSpot) -> Void
     var onInspect: (CLLocationCoordinate2D) -> Void
@@ -1504,6 +2297,45 @@ private struct StableRouteMap: View, Equatable {
     private var mapBody: some View {
         Map(position: $cameraPosition) {
             UserAnnotation()
+            if campSlopeOpacity > 0.02 {
+                ForEach(Array(camps.prefix(12))) { spot in
+                    MapCircle(center: spot.coordinate, radius: 140)
+                        .foregroundStyle(Color.green.opacity(0.28 * campSlopeOpacity))
+                }
+            }
+            if starlinkOpacity > 0.02 {
+                ForEach(Array(camps.prefix(12))) { spot in
+                    MapCircle(center: spot.coordinate, radius: 220)
+                        .foregroundStyle(Color.cyan.opacity(0.22 * starlinkOpacity * Double(spot.starlinkPct) / 100))
+                }
+            }
+            if hazardOpacity > 0.02 {
+                ForEach(hazards) { hazard in
+                    hazardOverlay(hazard)
+                }
+            }
+            if plotLine.count >= 2 {
+                MapPolyline(coordinates: plotLine)
+                    .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [7, 5]))
+            }
+            ForEach(plotMarkers.indices, id: \.self) { index in
+                Annotation("", coordinate: plotMarkers[index]) {
+                    Text("\(index + 1)")
+                        .font(.caption2.bold())
+                        .frame(width: 22, height: 22)
+                        .background(Color.white)
+                        .foregroundColor(.black)
+                        .clipShape(Circle())
+                }
+            }
+            if let scrub {
+                Annotation("", coordinate: scrub) {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 14, height: 14)
+                        .overlay(Circle().stroke(Color.cyan, lineWidth: 3))
+                }
+            }
             ForEach(parcels) { parcel in
                 parcelOverlay(parcel)
             }
@@ -1511,9 +2343,9 @@ private struct StableRouteMap: View, Equatable {
                 routeStroke(route)
             }
             if routingActive {
-                if selectedTrailLine.count >= 2 {
+                if selectedTrailLine.count >= 2, trailOpacity > 0.02 {
                     MapPolyline(coordinates: selectedTrailLine)
-                        .stroke(trailColors[selectedTrailID] ?? Color.green, lineWidth: 3.5)
+                        .stroke((trailColors[selectedTrailID] ?? Color.green).opacity(trailOpacity), lineWidth: 3.5)
                 }
                 if let trail = trails.first {
                     Annotation(trail.trailhead.name, coordinate: trail.trailhead.coordinate) {
@@ -1527,9 +2359,9 @@ private struct StableRouteMap: View, Equatable {
                 }
             } else {
                 ForEach(trails) { trail in
-                    if trail.coordinates.count >= 2 {
+                    if trail.coordinates.count >= 2, trailOpacity > 0.02 {
                         MapPolyline(coordinates: trail.coordinates)
-                            .stroke(trailColors[trail.id] ?? Color.orange, lineWidth: trail.id == selectedTrailID ? 6.0 : 3.5)
+                            .stroke((trailColors[trail.id] ?? Color.orange).opacity(trailOpacity), lineWidth: trail.id == selectedTrailID ? 6.0 : 3.5)
                     }
                     Annotation(trail.trailhead.name, coordinate: trail.trailhead.coordinate) {
                         trailheadButton(trail.trailhead)
@@ -1542,7 +2374,7 @@ private struct StableRouteMap: View, Equatable {
                 }
             }
         }
-        .mapStyle(.hybrid(elevation: .realistic))
+        .mapStyle(basemapStyle)
         .mapControls {
             MapUserLocationButton()
             MapCompass()
@@ -1595,10 +2427,35 @@ private struct StableRouteMap: View, Equatable {
             base = Color(red: 1.0, green: 0.72, blue: 0.18)
             restingOpacity = 0.10
         }
+        let scale = max(0.0, min(parcelOpacity, 1.0))
         if selected {
-            return (Color.cyan, 0.24, Color.cyan, 2.6)
+            return (Color.cyan, 0.24 * scale, Color.cyan, 2.6)
         }
-        return (base, restingOpacity, base, 1.6)
+        return (base, restingOpacity * scale, base.opacity(scale), CGFloat(max(1.0, 1.6 * scale)))
+    }
+
+    private var basemapStyle: MapStyle {
+        switch basemap {
+        case .hybrid:
+            return .hybrid(elevation: .realistic)
+        case .standard:
+            return .standard(elevation: .realistic)
+        case .imagery:
+            return .imagery(elevation: .realistic)
+        }
+    }
+
+    @MapContentBuilder
+    private func hazardOverlay(_ hazard: MapHazard) -> some MapContent {
+        if hazard.coordinates.count >= 4 {
+            MapPolygon(coordinates: hazard.coordinates)
+                .foregroundStyle(Color.red.opacity(0.18 * hazardOpacity))
+            MapPolyline(coordinates: hazard.coordinates)
+                .stroke(Color.red.opacity(hazardOpacity), lineWidth: 1.5)
+        } else {
+            MapCircle(center: hazard.point, radius: hazard.radiusMeters)
+                .foregroundStyle(Color.orange.opacity(0.28 * hazardOpacity))
+        }
     }
 
     @MapContentBuilder
