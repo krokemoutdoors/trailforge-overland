@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 import StoreKit
 import UIKit
+import AVFoundation
 
 enum CockpitMode: String, CaseIterable {
     case drive = "1. Go Drive"
@@ -14,6 +15,7 @@ struct NavStep: Identifiable {
     let instruction: String
     let distanceMeters: Double
     let systemImage: String
+    var maneuver: CLLocationCoordinate2D? = nil
 }
 
 struct NavOption: Identifiable {
@@ -48,7 +50,8 @@ struct ActiveCampRoute {
                 id: 10_000,
                 instruction: "Proceed on overland spur to \(destination.name)",
                 distanceMeters: spurMeters,
-                systemImage: "point.topleft.down.to.point.bottomright.curvepath"
+                systemImage: "point.topleft.down.to.point.bottomright.curvepath",
+                maneuver: destination.coordinate
             ))
         }
         return steps
@@ -81,6 +84,12 @@ struct MainCockpitView: View {
     @State private var isRouting = false
     @State private var routeGeneration = 0
     @State private var lastReroute = Date.distantPast
+    @State private var isVoiceGuidanceEnabled = true
+    @State private var activeStepIndex = 0
+    @State private var announcedApproachStep: Int?
+    @State private var announcedTurnStep: Int?
+    @State private var announcedArrival = false
+    @StateObject private var voiceGuide = VoiceNavigationAnnouncer()
 
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -208,18 +217,30 @@ struct MainCockpitView: View {
 
                 VStack {
                     HStack {
-                        VStack(alignment: .leading, spacing: 8) {
-                            mapButton("Center on My GPS", systemImage: "location.fill") {
-                                followRoute = false
-                                cameraPosition = .userLocation(fallback: .automatic)
+                        if activeRoute == nil {
+                            VStack(alignment: .leading, spacing: 8) {
+                                mapButton("Center on My GPS", systemImage: "location.fill") {
+                                    followRoute = false
+                                    cameraPosition = .userLocation(fallback: .automatic)
+                                }
+                                mapButton("Near My GPS", systemImage: "location.circle.fill") {
+                                    selectNearMe()
+                                }
+                                mapButton(telemetry.isScanningTrails ? "Scanning…" : "Scan Area for All USA 4x4 Trails", systemImage: "binoculars.fill") {
+                                    scanMapCenter()
+                                }
+                                .disabled(telemetry.isScanningTrails)
                             }
-                            mapButton("Near My GPS", systemImage: "location.circle.fill") {
-                                selectNearMe()
+                        } else {
+                            HStack(spacing: 6) {
+                                miniMapButton("location.fill") {
+                                    followRoute = false
+                                    cameraPosition = .userLocation(fallback: .automatic)
+                                }
+                                miniMapButton("location.circle.fill") { selectNearMe() }
+                                miniMapButton(telemetry.isScanningTrails ? "hourglass" : "binoculars.fill") { scanMapCenter() }
+                                    .disabled(telemetry.isScanningTrails)
                             }
-                            mapButton(telemetry.isScanningTrails ? "Scanning…" : "Scan Area for All USA 4x4 Trails", systemImage: "binoculars.fill") {
-                                scanMapCenter()
-                            }
-                            .disabled(telemetry.isScanningTrails)
                         }
                         Spacer()
                     }
@@ -300,6 +321,9 @@ struct MainCockpitView: View {
         .onChange(of: locationTracker.userCoordinate?.latitude) { _, _ in
             handleLiveGPS()
         }
+        .onChange(of: locationTracker.userCoordinate?.longitude) { _, _ in
+            handleLiveGPS()
+        }
         .onChange(of: selectedTrailID) { _, _ in
             if skipNextFocus {
                 skipNextFocus = false
@@ -374,12 +398,24 @@ struct MainCockpitView: View {
                         .font(.headline)
                         .foregroundColor(.white)
                         .lineLimit(2)
+                        .onTapGesture {
+                            voiceGuide.speak(cue.text, enabled: true)
+                        }
                     Text(route.destination.kind == .trailhead ? route.destination.name : String(format: "%@ • %.1f° • %d%% Starlink", route.destination.name, route.destination.slopeDeg, route.destination.starlinkPct))
                         .font(.caption)
                         .foregroundColor(.cyan)
                         .lineLimit(1)
                 }
                 Spacer()
+                Button {
+                    isVoiceGuidanceEnabled.toggle()
+                    if !isVoiceGuidanceEnabled { voiceGuide.stop() }
+                } label: {
+                    Image(systemName: isVoiceGuidanceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.title3)
+                        .foregroundColor(isVoiceGuidanceEnabled ? .cyan : .white.opacity(0.7))
+                }
+                .accessibilityLabel(isVoiceGuidanceEnabled ? "Mute voice guidance" : "Unmute voice guidance")
                 Button {
                     showAllSteps.toggle()
                 } label: {
@@ -452,7 +488,7 @@ struct MainCockpitView: View {
                 Button {
                     startFollow()
                 } label: {
-                    Label(followRoute ? "Follow GPS" : "Start Turn-by-Turn", systemImage: "location.north.line.fill")
+                    Label("Follow GPS", systemImage: "location.north.line.fill")
                         .font(.caption.bold())
                 }
                 .buttonStyle(.borderedProminent)
@@ -585,25 +621,31 @@ struct MainCockpitView: View {
 
     @MapContentBuilder
     private func routeOverlay(_ route: ActiveCampRoute) -> some MapContent {
+        let casing = Color(red: 0.04, green: 0.20, blue: 0.48).opacity(0.65)
+        let primary = Color(red: 0.12, green: 0.68, blue: 1.0)
+        ForEach(route.options) { option in
+            if option.id != route.selectedIndex, option.road.count >= 2 {
+                MapPolyline(coordinates: option.road)
+                    .stroke(primary.opacity(0.55), lineWidth: 2.2)
+            }
+        }
         let road = route.selected.road
         if road.count >= 2 {
             MapPolyline(coordinates: road)
-                .stroke(Color.blue.opacity(0.45), lineWidth: 14)
+                .stroke(casing, lineWidth: 5.0)
             MapPolyline(coordinates: road)
-                .stroke(Color.cyan, lineWidth: 6)
+                .stroke(primary, lineWidth: 3.2)
         }
         if route.spur.count >= 2 {
             MapPolyline(coordinates: route.spur)
-                .stroke(Color.green, lineWidth: 8)
-            MapPolyline(coordinates: route.spur)
-                .stroke(Color.orange, style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [8, 6]))
+                .stroke(Color.orange, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [5, 4]))
         }
-        if let start = road.first {
+        if !route.originWasGPS, let start = road.first {
             Annotation("Start", coordinate: start) {
-                Image(systemName: "smallcircle.filled.circle")
-                    .font(.title3)
-                    .foregroundColor(.green)
-                    .background(Circle().fill(Color.white).padding(4))
+                Circle()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: 8, height: 8)
+                    .overlay(Circle().stroke(Color.green, lineWidth: 1))
             }
         }
         Annotation("Destination", coordinate: route.destination.coordinate) {
@@ -762,12 +804,17 @@ struct MainCockpitView: View {
             from: origin,
             to: spot,
             trailCoordinates: trail.coordinates,
+            trailhead: trail.trailhead.coordinate,
             originWasGPS: originWasGPS
         )
         guard generation == routeGeneration else { return }
         isRouting = false
         activeRoute = built
         showAllSteps = false
+        activeStepIndex = 0
+        announcedApproachStep = nil
+        announcedTurnStep = nil
+        announcedArrival = false
         if spot.trailID != selectedTrailID {
             skipNextFocus = true
             selectedTrailID = spot.trailID
@@ -775,12 +822,19 @@ struct MainCockpitView: View {
         if refit {
             followRoute = false
             frame(built)
+            announceRouteStart(built)
+            skipStepsAlreadyReached()
         } else if followRoute {
-            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+            followUserCamera()
+            skipStepsAlreadyReached()
+            if let route = activeRoute {
+                speakCurrentStep(route)
+            }
         }
     }
 
     private func handleLiveGPS() {
+        refreshTurnProgress()
         guard let route = activeRoute, let user = locationTracker.userCoordinate else { return }
         if !route.originWasGPS {
             var updated = route
@@ -798,14 +852,34 @@ struct MainCockpitView: View {
     private func selectAlternate(_ index: Int) {
         guard var route = activeRoute, route.options.contains(where: { $0.id == index }) else { return }
         route.selectedIndex = index
-        route.spur = overlandSpur(from: route.selected.road, to: route.destination.coordinate)
+        route.spur = cappedSpur(from: route.selected.road, to: route.destination.coordinate)
         activeRoute = route
+        activeStepIndex = 0
+        announcedApproachStep = nil
+        announcedTurnStep = nil
+        announcedArrival = false
+        announceRouteStart(route)
+        skipStepsAlreadyReached()
         if !followRoute { frame(route) }
     }
 
     private func startFollow() {
         followRoute = true
-        cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+        followUserCamera()
+        if let route = activeRoute {
+            announceRouteStart(route)
+        }
+    }
+
+    private func followUserCamera() {
+        let center = locationTracker.userCoordinate ?? mapCenter
+        cameraPosition = .userLocation(
+            followsHeading: true,
+            fallback: .region(MKCoordinateRegion(
+                center: center,
+                span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
+            ))
+        )
     }
 
     private func showOverview() {
@@ -819,6 +893,11 @@ struct MainCockpitView: View {
         followRoute = false
         showAllSteps = false
         isRouting = false
+        activeStepIndex = 0
+        announcedApproachStep = nil
+        announcedTurnStep = nil
+        announcedArrival = false
+        voiceGuide.stop()
     }
 
     private func frame(_ route: ActiveCampRoute) {
@@ -842,22 +921,23 @@ struct MainCockpitView: View {
 
     private func nextCue(_ route: ActiveCampRoute) -> (text: String, icon: String) {
         let steps = route.displaySteps
-        guard let user = locationTracker.userCoordinate else {
+        guard !steps.isEmpty else {
             return ("Head toward \(route.destination.name)", "arrow.up")
         }
-        let traveled = traveledMeters(user: user, along: route.roadAndSpur)
-        var cursor = 0.0
-        for step in steps {
-            cursor += step.distanceMeters
-            if cursor > traveled + 20 {
-                let remaining = max(0, cursor - traveled)
-                if step.id == 10_000 {
-                    return ("Proceed \(formatDistance(remaining)) on overland spur to \(route.destination.name)", step.systemImage)
-                }
-                return ("In \(formatDistance(remaining)) • \(step.instruction)", step.systemImage)
-            }
+        let index = min(activeStepIndex, steps.count - 1)
+        let step = steps[index]
+        guard let user = locationTracker.userCoordinate else {
+            return (step.instruction, step.systemImage)
         }
-        return ("Arriving at \(route.destination.name)", "flag.checkered")
+        let target = step.maneuver ?? route.destination.coordinate
+        let away = meters(from: user, to: target)
+        if meters(from: user, to: route.destination.coordinate) <= 50 {
+            return ("Arriving at \(route.destination.name)", "flag.checkered")
+        }
+        if step.id == 10_000 {
+            return ("Proceed \(formatDistance(away)) on overland spur to \(route.destination.name)", step.systemImage)
+        }
+        return ("In \(formatDistance(away)) • \(step.instruction)", step.systemImage)
     }
 
     private func remainingMeters(_ route: ActiveCampRoute) -> Double {
@@ -904,6 +984,91 @@ struct MainCockpitView: View {
         }
     }
 
+    private func refreshTurnProgress() {
+        guard let route = activeRoute, let user = locationTracker.userCoordinate else { return }
+        let steps = route.displaySteps
+        guard !steps.isEmpty else { return }
+        let index = min(activeStepIndex, steps.count - 1)
+        let destinationDistance = meters(from: user, to: route.destination.coordinate)
+        if destinationDistance <= 50 {
+            if !announcedArrival {
+                announcedArrival = true
+                let arrival: String
+                if route.destination.kind == .pad {
+                    arrival = String(format: "You have arrived at %@. Slope is %.1f degrees.", route.destination.name, route.destination.slopeDeg)
+                } else {
+                    arrival = "You have arrived at \(route.destination.name)."
+                }
+                voiceGuide.speak(arrival, enabled: isVoiceGuidanceEnabled)
+            }
+            return
+        }
+        let step = steps[index]
+        guard let maneuver = step.maneuver else { return }
+        let away = meters(from: user, to: maneuver)
+        if away <= 35, announcedTurnStep != step.id {
+            announcedTurnStep = step.id
+            announcedApproachStep = step.id
+            var phrase = step.instruction
+            if index + 1 < steps.count {
+                let upcoming = steps[index + 1]
+                phrase += ". Then in \(spokenDistance(upcoming.distanceMeters)), \(upcoming.instruction)"
+            }
+            voiceGuide.speak(phrase, enabled: isVoiceGuidanceEnabled)
+            if index + 1 < steps.count {
+                activeStepIndex = index + 1
+            }
+            return
+        }
+        if away <= 320, away > 80, announcedApproachStep != step.id {
+            announcedApproachStep = step.id
+            voiceGuide.speak("In point two miles, \(step.instruction)", enabled: isVoiceGuidanceEnabled)
+        }
+    }
+
+    private func announceRouteStart(_ route: ActiveCampRoute) {
+        let first = route.displaySteps.first?.instruction ?? "Follow the route"
+        var text = "Route to \(route.destination.name), \(spokenDuration(route.selected.expectedTravelTime)). \(first)."
+        if route.displaySteps.count > 1 {
+            text += " Then \(route.displaySteps[1].instruction)."
+        }
+        voiceGuide.speak(text, enabled: isVoiceGuidanceEnabled)
+    }
+
+    private func speakCurrentStep(_ route: ActiveCampRoute) {
+        let steps = route.displaySteps
+        guard !steps.isEmpty else { return }
+        let step = steps[min(activeStepIndex, steps.count - 1)]
+        voiceGuide.speak(step.instruction, enabled: isVoiceGuidanceEnabled)
+    }
+
+    /// Steps whose maneuver is already under the vehicle (a depart pin) are marked
+    /// announced so the next GPS tick does not repeat them.
+    private func skipStepsAlreadyReached() {
+        guard let route = activeRoute, let user = locationTracker.userCoordinate else { return }
+        let steps = route.displaySteps
+        guard !steps.isEmpty else { return }
+        var index = 0
+        while index < steps.count - 1 {
+            guard let maneuver = steps[index].maneuver else { break }
+            if meters(from: user, to: maneuver) > 35 { break }
+            announcedTurnStep = steps[index].id
+            announcedApproachStep = steps[index].id
+            index += 1
+        }
+        activeStepIndex = index
+    }
+
+    private func miniMapButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.caption.bold())
+                .padding(8)
+                .background(.ultraThinMaterial)
+                .clipShape(Circle())
+        }
+    }
+
     private func mapButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
@@ -924,71 +1089,269 @@ private enum CampRouteBuilder {
         from origin: CLLocationCoordinate2D,
         to spot: CampSpot,
         trailCoordinates: [CLLocationCoordinate2D],
+        trailhead: CLLocationCoordinate2D,
         originWasGPS: Bool
     ) async -> ActiveCampRoute {
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: spot.coordinate))
-        request.transportType = .automobile
-        request.requestsAlternateRoutes = true
-        let directions = MKDirections(request: request)
-        if let response = try? await directions.calculate(), !response.routes.isEmpty {
-            let options = response.routes.enumerated().map { index, route in
-                navOption(index: index, route: route)
-            }
-            let road = options[0].road
-            return ActiveCampRoute(
-                destination: spot,
-                options: options,
-                selectedIndex: 0,
-                spur: overlandSpur(from: road, to: spot.coordinate),
-                originWasGPS: originWasGPS
-            )
+        let entry = closestCoordinate(on: trailCoordinates, to: origin) ?? trailhead
+        let direct = await appleRoutes(from: origin, to: spot.coordinate)
+        let directHits = direct.filter { endsNear($0.road, spot.coordinate, within: 3_218) }
+        if !directHits.isEmpty {
+            return pack(directHits, spot: spot, originWasGPS: originWasGPS)
         }
-        let road = backcountryRoad(from: origin, to: spot.coordinate, trail: trailCoordinates)
-        let distance = polylineMeters(road)
-        let option = NavOption(
-            id: 0,
-            title: "Trail approach",
-            expectedTravelTime: (distance / 1609.344) / 15.0 * 3600,
-            distanceMeters: distance,
-            road: road,
-            steps: [
-                NavStep(id: 0, instruction: "Follow the trail toward \(spot.name)", distanceMeters: distance, systemImage: "arrow.up")
-            ]
-        )
+
+        var entryTargets = [entry]
+        if meters(from: entry, to: trailhead) > 400 {
+            entryTargets.append(trailhead)
+        }
+        for target in entryTargets {
+            let roads = await appleRoutes(from: origin, to: target)
+            let hits = roads.filter { endsNear($0.road, target, within: 3_218) }
+            if !hits.isEmpty {
+                let stitched = hits.enumerated().map { index, option in
+                    stitchTrail(option, index: index, trail: trailCoordinates, destination: spot.coordinate, name: spot.name)
+                }
+                return pack(stitched, spot: spot, originWasGPS: originWasGPS)
+            }
+        }
+
+        if let osrmPad = await osrmRoutes(from: origin, to: spot.coordinate) {
+            let nearPad = osrmPad.filter { endsNear($0.road, spot.coordinate, within: 4_828) }
+            if !nearPad.isEmpty {
+                let prepared = nearPad.enumerated().map { index, option in
+                    stitchTrail(option, index: index, trail: trailCoordinates, destination: spot.coordinate, name: spot.name)
+                }
+                return pack(prepared, spot: spot, originWasGPS: originWasGPS)
+            }
+        }
+
+        if meters(from: entry, to: spot.coordinate) > 200,
+           let osrmEntry = await osrmRoutes(from: origin, to: entry) {
+            let nearEntry = osrmEntry.filter { endsNear($0.road, entry, within: 3_218) }
+            if !nearEntry.isEmpty {
+                let stitched = nearEntry.enumerated().map { index, option in
+                    stitchTrail(option, index: index, trail: trailCoordinates, destination: spot.coordinate, name: spot.name)
+                }
+                return pack(stitched, spot: spot, originWasGPS: originWasGPS)
+            }
+        }
+
+        if let stepped = await steppedAppleRoute(from: origin, toward: entry, trail: trailCoordinates, spot: spot) {
+            return pack([stepped], spot: spot, originWasGPS: originWasGPS)
+        }
+
         return ActiveCampRoute(
             destination: spot,
-            options: [option],
+            options: [NavOption(
+                id: 0,
+                title: "No road route",
+                expectedTravelTime: 0,
+                distanceMeters: 0,
+                road: [],
+                steps: [NavStep(id: 0, instruction: "No drivable road route yet. Check the signal and try again.", distanceMeters: 0, systemImage: "exclamationmark.triangle")]
+            )],
             selectedIndex: 0,
-            spur: overlandSpur(from: road, to: spot.coordinate),
+            spur: [],
             originWasGPS: originWasGPS
         )
     }
 
-    private static func navOption(index: Int, route: MKRoute) -> NavOption {
+    private static func pack(_ options: [NavOption], spot: CampSpot, originWasGPS: Bool) -> ActiveCampRoute {
+        let renumbered = options.enumerated().map { index, option in
+            NavOption(id: index, title: option.title, expectedTravelTime: option.expectedTravelTime, distanceMeters: polylineMeters(option.road), road: option.road, steps: option.steps)
+        }
+        let road = renumbered.first?.road ?? []
+        return ActiveCampRoute(
+            destination: spot,
+            options: renumbered,
+            selectedIndex: 0,
+            spur: cappedSpur(from: road, to: spot.coordinate),
+            originWasGPS: originWasGPS
+        )
+    }
+
+    private static func appleRoutes(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) async -> [NavOption] {
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination))
+        request.transportType = .automobile
+        request.requestsAlternateRoutes = true
+        let directions = MKDirections(request: request)
+        guard let response = try? await directions.calculate() else { return [] }
+        return response.routes.enumerated().compactMap { index, route in
+            let road = coordinates(of: route.polyline)
+            guard isDrivableRoad(road, startingNear: origin) else { return nil }
+            return navOption(index: index, route: route, road: road)
+        }
+    }
+
+    private static func navOption(index: Int, route: MKRoute, road: [CLLocationCoordinate2D]) -> NavOption {
         var steps: [NavStep] = []
         for step in route.steps {
             let instruction = step.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !instruction.isEmpty else { continue }
+            let maneuver = coordinates(of: step.polyline).last
             steps.append(NavStep(
                 id: steps.count,
                 instruction: instruction,
                 distanceMeters: step.distance,
-                systemImage: maneuverIcon(instruction)
+                systemImage: maneuverIcon(instruction),
+                maneuver: maneuver
             ))
         }
         if steps.isEmpty {
-            steps.append(NavStep(id: 0, instruction: "Continue to the trail", distanceMeters: route.distance, systemImage: "arrow.up"))
+            steps.append(NavStep(id: 0, instruction: "Continue on the road", distanceMeters: route.distance, systemImage: "arrow.up", maneuver: road.last))
         }
         return NavOption(
             id: index,
             title: "Route \(index + 1)",
             expectedTravelTime: route.expectedTravelTime,
             distanceMeters: route.distance,
-            road: coordinates(of: route.polyline),
+            road: road,
             steps: steps
         )
+    }
+
+    private static func osrmRoutes(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) async -> [NavOption]? {
+        let urlString = "https://router.project-osrm.org/route/v1/driving/\(origin.longitude),\(origin.latitude);\(destination.longitude),\(destination.latitude)?overview=full&geometries=geojson&steps=true&alternatives=true"
+        guard let url = URL(string: urlString) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (root["code"] as? String) == "Ok",
+              let routes = root["routes"] as? [[String: Any]] else { return nil }
+        let options = routes.enumerated().compactMap { index, route -> NavOption? in
+            parseOSRM(route, index: index, startingNear: origin)
+        }
+        return options.isEmpty ? nil : options
+    }
+
+    private static func parseOSRM(_ route: [String: Any], index: Int, startingNear origin: CLLocationCoordinate2D) -> NavOption? {
+        guard let geometry = route["geometry"] as? [String: Any] else { return nil }
+        let road = downsample(parseCoordinates(geometry["coordinates"]), limit: 700)
+        guard isDrivableRoad(road, startingNear: origin) else { return nil }
+        let distance = (route["distance"] as? NSNumber)?.doubleValue ?? polylineMeters(road)
+        let duration = (route["duration"] as? NSNumber)?.doubleValue ?? (distance / 1609.344) / 35.0 * 3600
+        var steps: [NavStep] = []
+        let legs = route["legs"] as? [[String: Any]] ?? []
+        for leg in legs {
+            let rawSteps = leg["steps"] as? [[String: Any]] ?? []
+            for raw in rawSteps {
+                guard let maneuver = raw["maneuver"] as? [String: Any] else { continue }
+                let type = maneuver["type"] as? String ?? "continue"
+                if type == "arrive" { continue }
+                let modifier = maneuver["modifier"] as? String
+                let name = (raw["name"] as? String) ?? ""
+                let instruction = osrmInstruction(type: type, modifier: modifier, name: name)
+                let location = parseCoordinatePair(maneuver["location"])
+                let stepDistance = (raw["distance"] as? NSNumber)?.doubleValue ?? 0
+                steps.append(NavStep(
+                    id: steps.count,
+                    instruction: instruction,
+                    distanceMeters: stepDistance,
+                    systemImage: maneuverIcon(instruction),
+                    maneuver: location
+                ))
+            }
+        }
+        if steps.isEmpty {
+            steps.append(NavStep(id: 0, instruction: "Continue on the road", distanceMeters: distance, systemImage: "arrow.up", maneuver: road.last))
+        }
+        return NavOption(
+            id: index,
+            title: "Route \(index + 1)",
+            expectedTravelTime: duration,
+            distanceMeters: distance,
+            road: road,
+            steps: steps
+        )
+    }
+
+    private static func steppedAppleRoute(
+        from origin: CLLocationCoordinate2D,
+        toward entry: CLLocationCoordinate2D,
+        trail: [CLLocationCoordinate2D],
+        spot: CampSpot
+    ) async -> NavOption? {
+        var best: NavOption?
+        var bestGap = Double.greatestFiniteMagnitude
+        for fraction in [0.75, 0.50, 0.25] {
+            let point = interpolate(origin, entry, fraction)
+            let roads = await appleRoutes(from: origin, to: point)
+            for option in roads where endsNear(option.road, point, within: 3_218) {
+                guard let end = option.road.last else { continue }
+                let gap = min(meters(from: end, to: entry), meters(from: end, to: spot.coordinate))
+                if gap < bestGap {
+                    bestGap = gap
+                    best = stitchTrail(option, index: 0, trail: trail, destination: spot.coordinate, name: spot.name)
+                }
+            }
+        }
+        return best
+    }
+
+    private static func stitchTrail(_ option: NavOption, index: Int, trail: [CLLocationCoordinate2D], destination: CLLocationCoordinate2D, name: String) -> NavOption {
+        var road = option.road
+        var steps = option.steps
+        if let end = road.last, meters(from: end, to: destination) > 80 {
+            let slice = trailSlice(from: end, to: destination, trail: trail)
+            if let first = slice.first, slice.count >= 2, meters(from: end, to: first) <= 3_218 {
+                let joined = joinRoads(road, slice)
+                let trailDistance = polylineMeters(slice)
+                steps.append(NavStep(
+                    id: steps.count,
+                    instruction: "Continue on the trail toward \(name)",
+                    distanceMeters: trailDistance,
+                    systemImage: "point.topleft.down.to.point.bottomright.curvepath",
+                    maneuver: slice.last
+                ))
+                road = joined
+            }
+        }
+        let duration = option.expectedTravelTime + (polylineMeters(road) - option.distanceMeters) / 1609.344 / 12.0 * 3600
+        return NavOption(
+            id: index,
+            title: option.title,
+            expectedTravelTime: max(option.expectedTravelTime, duration),
+            distanceMeters: polylineMeters(road),
+            road: road,
+            steps: steps
+        )
+    }
+}
+
+@MainActor
+final class VoiceNavigationAnnouncer: ObservableObject {
+    private let synthesizer = AVSpeechSynthesizer()
+    private var prepared = false
+
+    func speak(_ text: String, enabled: Bool) {
+        guard enabled else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        prepare()
+        synthesizer.stopSpeaking(at: .immediate)
+        let utterance = AVSpeechUtterance(string: trimmed)
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        synthesizer.speak(utterance)
+    }
+
+    func stop() {
+        synthesizer.stopSpeaking(at: .immediate)
+    }
+
+    private func prepare() {
+        guard !prepared else { return }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+            try session.setActive(true)
+        } catch {
+            try? session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers])
+            try? session.setActive(true)
+        }
+        prepared = true
     }
 }
 
@@ -1000,25 +1363,144 @@ private func coordinates(of polyline: MKPolyline) -> [CLLocationCoordinate2D] {
     return coords
 }
 
-private func overlandSpur(from road: [CLLocationCoordinate2D], to destination: CLLocationCoordinate2D) -> [CLLocationCoordinate2D] {
-    guard let last = road.last else { return [destination] }
-    if meters(from: last, to: destination) < 30 {
-        return [last, destination]
-    }
+private func cappedSpur(from road: [CLLocationCoordinate2D], to destination: CLLocationCoordinate2D) -> [CLLocationCoordinate2D] {
+    guard let last = road.last else { return [] }
+    let gap = meters(from: last, to: destination)
+    if gap < 30 || gap > 3_218 { return [] }
     return [last, destination]
 }
 
-private func backcountryRoad(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D, trail: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
-    guard trail.count >= 2 else { return [origin, destination] }
-    let start = nearestVertex(origin, on: trail)
-    let end = nearestVertex(destination, on: trail)
-    let slice: [CLLocationCoordinate2D]
-    if start <= end {
-        slice = Array(trail[start...end])
-    } else {
-        slice = Array(trail[end...start].reversed())
+private func isDrivableRoad(_ road: [CLLocationCoordinate2D], startingNear origin: CLLocationCoordinate2D) -> Bool {
+    guard road.count > 2, let first = road.first else { return false }
+    guard meters(from: first, to: origin) < 5_000 else { return false }
+    return !isStraightCrowLine(road)
+}
+
+private func isStraightCrowLine(_ road: [CLLocationCoordinate2D]) -> Bool {
+    guard let first = road.first, let last = road.last, road.count >= 2 else { return true }
+    let direct = meters(from: first, to: last)
+    if direct < 800 { return false }
+    if road.count <= 3, direct > 1_500 { return true }
+    let path = polylineMeters(road)
+    return path < direct * 1.08 && direct > 3_000 && road.count < 12
+}
+
+private func endsNear(_ road: [CLLocationCoordinate2D], _ target: CLLocationCoordinate2D, within limit: Double) -> Bool {
+    guard let last = road.last else { return false }
+    return meters(from: last, to: target) <= limit
+}
+
+private func closestCoordinate(on trail: [CLLocationCoordinate2D], to point: CLLocationCoordinate2D) -> CLLocationCoordinate2D? {
+    guard !trail.isEmpty else { return nil }
+    return trail[nearestVertex(point, on: trail)]
+}
+
+private func interpolate(_ start: CLLocationCoordinate2D, _ end: CLLocationCoordinate2D, _ fraction: Double) -> CLLocationCoordinate2D {
+    let t = min(1, max(0, fraction))
+    return CLLocationCoordinate2D(
+        latitude: start.latitude + (end.latitude - start.latitude) * t,
+        longitude: start.longitude + (end.longitude - start.longitude) * t
+    )
+}
+
+private func trailSlice(from startPoint: CLLocationCoordinate2D, to endPoint: CLLocationCoordinate2D, trail: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+    guard trail.count >= 2 else { return [] }
+    let start = nearestVertex(startPoint, on: trail)
+    let end = nearestVertex(endPoint, on: trail)
+    if start == end { return [] }
+    if start < end { return Array(trail[start...end]) }
+    return Array(trail[end...start].reversed())
+}
+
+private func joinRoads(_ road: [CLLocationCoordinate2D], _ extra: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+    guard let last = road.last, let first = extra.first else { return road }
+    let gap = meters(from: last, to: first)
+    if gap > 3_218 { return road }
+    if gap < 40 { return road + extra.dropFirst() }
+    return road + extra
+}
+
+private func parseCoordinates(_ raw: Any?) -> [CLLocationCoordinate2D] {
+    guard let pairs = raw as? [Any] else { return [] }
+    return pairs.compactMap { parseCoordinatePair($0) }
+}
+
+private func parseCoordinatePair(_ raw: Any?) -> CLLocationCoordinate2D? {
+    guard let pair = raw as? [Any], pair.count >= 2 else { return nil }
+    guard let lat = (pair[1] as? NSNumber)?.doubleValue,
+          let lon = (pair[0] as? NSNumber)?.doubleValue else { return nil }
+    guard abs(lat) <= 90, abs(lon) <= 180 else { return nil }
+    return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+}
+
+private func osrmInstruction(type: String, modifier: String?, name: String) -> String {
+    let road = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch type {
+    case "depart":
+        return road.isEmpty ? "Follow the road" : "Follow \(road)"
+    case "merge", "on ramp":
+        return road.isEmpty ? "Merge" : "Merge onto \(road)"
+    case "off ramp":
+        return road.isEmpty ? "Take the exit" : "Take the exit onto \(road)"
+    case "fork":
+        let keepRight = modifier == "right" || modifier == "slight right" || modifier == "sharp right"
+        let action = keepRight ? "Keep right" : "Keep left"
+        return road.isEmpty ? action : "\(action) onto \(road)"
+    case "roundabout", "rotary", "exit roundabout", "roundabout turn":
+        return road.isEmpty ? "Enter the roundabout" : "Enter the roundabout onto \(road)"
+    case "turn", "end of road":
+        return turnPhrase(modifier: modifier, road: road)
+    default:
+        return road.isEmpty ? "Continue" : "Continue onto \(road)"
     }
-    return [origin] + slice
+}
+
+private func turnPhrase(modifier: String?, road: String) -> String {
+    let action: String
+    switch modifier {
+    case "uturn": action = "Make a U-turn"
+    case "sharp right": action = "Turn sharp right"
+    case "right": action = "Turn right"
+    case "slight right": action = "Turn slight right"
+    case "sharp left": action = "Turn sharp left"
+    case "left": action = "Turn left"
+    case "slight left": action = "Turn slight left"
+    case "straight": action = "Continue straight"
+    default: action = "Continue"
+    }
+    return road.isEmpty ? action : "\(action) onto \(road)"
+}
+
+private func downsample(_ coordinates: [CLLocationCoordinate2D], limit: Int) -> [CLLocationCoordinate2D] {
+    guard coordinates.count > limit, limit >= 2 else { return coordinates }
+    let step = Double(coordinates.count - 1) / Double(limit - 1)
+    return (0..<limit).map { index in
+        coordinates[min(coordinates.count - 1, Int((Double(index) * step).rounded()))]
+    }
+}
+
+private func spokenDuration(_ seconds: TimeInterval) -> String {
+    let minutes = max(1, Int((seconds / 60).rounded()))
+    if minutes < 60 {
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    }
+    let hours = minutes / 60
+    let remainder = minutes % 60
+    let hourWord = hours == 1 ? "1 hour" : "\(hours) hours"
+    if remainder == 0 { return hourWord }
+    let minuteWord = remainder == 1 ? "1 minute" : "\(remainder) minutes"
+    return "\(hourWord) \(minuteWord)"
+}
+
+private func spokenDistance(_ metersValue: Double) -> String {
+    let miles = metersValue / 1609.344
+    if miles < 0.1 {
+        let feet = max(1, Int((metersValue * 3.28084).rounded()))
+        return feet == 1 ? "1 foot" : "\(feet) feet"
+    }
+    if abs(miles - 1) < 0.05 { return "1 mile" }
+    if miles < 10 { return String(format: "%.1f miles", miles) }
+    return String(format: "%.0f miles", miles)
 }
 
 private func nearestVertex(_ point: CLLocationCoordinate2D, on trail: [CLLocationCoordinate2D]) -> Int {

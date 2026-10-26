@@ -127,12 +127,16 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
     @Published var altitudeFt: Int = 0
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var hasCenteredOnUserOnce: Bool = false
+    @Published var headingDegrees: Double = 0
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.distanceFilter = 2
+        manager.distanceFilter = kCLDistanceFilterNone
+        manager.activityType = .automotiveNavigation
+        manager.headingFilter = 1
+        manager.pausesLocationUpdatesAutomatically = false
     }
 
     func start() {
@@ -161,6 +165,13 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
         )
         Task { @MainActor in
             self.apply(fix)
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        let degrees = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        Task { @MainActor in
+            self.headingDegrees = degrees
         }
     }
 
