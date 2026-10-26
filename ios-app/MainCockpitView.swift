@@ -99,7 +99,6 @@ struct MainCockpitView: View {
     @State private var offlineSaved: Bool = true
     @State private var showProPaywall: Bool = false
     @State private var mapCenter = CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352)
-    @State private var lastTrailScanCenter: CLLocationCoordinate2D?
     @State private var skipNextFocus = false
     @State private var activeRoute: ActiveCampRoute?
     @State private var followRoute = false
@@ -250,8 +249,7 @@ struct MainCockpitView: View {
     private var mapCampSpots: [CampSpot] {
         let pads = mapTrails.flatMap(\.campSpots)
         let origin = mapCenter
-        let inView = pads.filter { coordinateInView($0.coordinate) || $0.trailID == selectedTrailID }
-        let sorted = inView.sorted { miles(from: origin, to: $0.coordinate) < miles(from: origin, to: $1.coordinate) }
+        let sorted = pads.sorted { miles(from: origin, to: $0.coordinate) < miles(from: origin, to: $1.coordinate) }
         return Array(sorted.prefix(80))
     }
 
@@ -304,6 +302,7 @@ struct MainCockpitView: View {
         hasher.combine(activeRoute?.spur.count)
         hasher.combine(selectedTrailID)
         hasher.combine(mapTrails.map(\.id).joined(separator: ","))
+        hasher.combine(pertinentCruxPins.map(\.id).joined(separator: ","))
         hasher.combine(selectedTrailDraw.count)
         hasher.combine(routeStartedFromGPS)
         hasher.combine(Int(rigStore.profile.tireInches))
@@ -392,6 +391,7 @@ struct MainCockpitView: View {
         var line: [CLLocationCoordinate2D] = []
         for index in 1..<plotPoints.count {
             let segment = resolvedPlotSegment(from: plotPoints[index - 1], to: plotPoints[index], segmentIndex: index - 1)
+            guard segment.count >= 2 else { continue }
             if line.isEmpty {
                 line.append(contentsOf: segment)
             } else {
@@ -406,7 +406,7 @@ struct MainCockpitView: View {
         if freehand { return [start, end] }
         let key = plotSegmentKey(start, end)
         if let cached = plotSegmentRoutes[key], cached.count >= 2 { return cached }
-        return [start, end]
+        return []
     }
 
     private var mapHazards: [MapHazard] {
@@ -1133,6 +1133,15 @@ struct MainCockpitView: View {
             }
         }
         let origin = mapCenter
+        if pool.count < 12 {
+            let extras = (USATrailAtlas.all + telemetry.discoveredTrails)
+                .filter { trail in !trail.isBDR && !pool.contains(where: { $0.id == trail.id }) }
+                .sorted { miles(from: origin, to: $0.centerCoordinate) < miles(from: origin, to: $1.centerCoordinate) }
+            for trail in extras {
+                if pool.count >= 12 { break }
+                pool.append(trail)
+            }
+        }
         pool.sort { miles(from: origin, to: $0.centerCoordinate) < miles(from: origin, to: $1.centerCoordinate) }
         var chosen = Array(pool.prefix(80))
         if !chosen.contains(where: { $0.id == activeID }),
@@ -1155,8 +1164,8 @@ struct MainCockpitView: View {
 
     private func coordinateInView(_ coordinate: CLLocationCoordinate2D) -> Bool {
         let region = visibleRegion
-        let latHalf = max(region.span.latitudeDelta, 0.08) * 0.7
-        let lonHalf = max(region.span.longitudeDelta, 0.08) * 0.7
+        let latHalf = max(region.span.latitudeDelta, 0.25) * 1.15
+        let lonHalf = max(region.span.longitudeDelta, 0.25) * 1.15
         let lat = region.center.latitude
         let lon = region.center.longitude
         return coordinate.latitude >= lat - latHalf && coordinate.latitude <= lat + latHalf
@@ -1165,9 +1174,27 @@ struct MainCockpitView: View {
 
     private func refreshTrails(around center: CLLocationCoordinate2D) {
         guard !offlineFirst else { return }
-        if let last = lastTrailScanCenter, meters(from: last, to: center) < 2_500 { return }
-        lastTrailScanCenter = center
+        telemetry.cancelScheduledTrailRefresh()
         Task { await telemetry.fetchTrailsInMapRegion(center: center) }
+    }
+
+    private func routeOrigin(toward destination: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        let view = mapCenter
+        if let gps = locationTracker.userCoordinate {
+            let fromView = meters(from: gps, to: view)
+            let fromDestination = meters(from: gps, to: destination)
+            if fromView <= 500_000 || fromDestination <= 500_000 {
+                return gps
+            }
+        }
+        return view
+    }
+
+    private func allowsTrailStitch(_ spot: CampSpot) -> Bool {
+        if spot.id.hasPrefix("place-") || spot.id.hasPrefix("pin-") || spot.id.hasPrefix("parcel-") {
+            return false
+        }
+        return spot.kind == .pad || spot.kind == .trailhead
     }
 
     private func focus(on trail: OverlandTrail) {
@@ -1238,14 +1265,19 @@ struct MainCockpitView: View {
             selectedCampSpot = nil
         }
         let trail = trail(for: spot) ?? activeTrail
-        let origin = locationTracker.userCoordinate ?? trail.trailhead.coordinate
+        let origin = routeOrigin(toward: spot.coordinate)
+        let stitchTrail = allowsTrailStitch(spot)
+        if activeRoute?.destination.id != spot.id {
+            activeRoute = nil
+        }
         isRouting = true
         let built = await CampRouteBuilder.make(
             from: origin,
             to: spot,
-            trailCoordinates: trail.coordinates,
-            trailhead: trail.trailhead.coordinate,
-            originWasGPS: originWasGPS
+            trailCoordinates: stitchTrail ? trail.coordinates : [],
+            trailhead: stitchTrail ? trail.trailhead.coordinate : spot.coordinate,
+            originWasGPS: originWasGPS,
+            spurLimit: stitchTrail ? 3_218 : 250
         )
         guard generation == routeGeneration else { return }
         isRouting = false
@@ -1266,14 +1298,23 @@ struct MainCockpitView: View {
             isRouteConfirmed = false
             followRoute = false
             detent = .peek
-            frame(built)
+            if built.selected.road.count >= 2 {
+                frame(built)
+            }
             return
         }
         isRouteConfirmed = true
         if refit {
             followRoute = false
-            frame(built)
-            announceRouteStart(built)
+            if built.selected.road.count >= 2 {
+                frame(built)
+                announceRouteStart(built)
+            } else {
+                pushCamera(regionCamera(
+                    center: spot.coordinate,
+                    span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
+                ))
+            }
             skipStepsAlreadyReached()
         } else if followRoute {
             followUserCamera()
@@ -1312,7 +1353,7 @@ struct MainCockpitView: View {
 
     private func announceNearbyCrux() {
         guard isRouteConfirmed, activeRoute != nil, isVoiceGuidanceEnabled, let user = locationTracker.userCoordinate else { return }
-        for pin in CruxCatalog.pins(for: activeTrail) where !announcedCrux.contains(pin.id) {
+        for pin in pertinentCruxPins where !announcedCrux.contains(pin.id) {
             let distance = meters(from: user, to: pin.coordinate)
             if distance <= 241 {
                 announcedCrux.insert(pin.id)
@@ -2065,6 +2106,7 @@ struct MainCockpitView: View {
             routingActive: activeRoute != nil,
             selectedTrailID: selectedTrailID,
             trails: mapTrails,
+            cruxPins: pertinentCruxPins,
             trailColors: visibleTrailColors,
             selectedTrailLine: selectedTrailDraw,
             camps: mapCamps,
@@ -2702,12 +2744,40 @@ struct MainCockpitView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var pertinentCruxPins: [CruxPin] {
+        var seenTrails = Set<String>()
+        var seenPins = Set<String>()
+        var pins: [CruxPin] = []
+        for trail in mapTrails + USATrailAtlas.all + telemetry.discoveredTrails {
+            guard seenTrails.insert(trail.id).inserted, trailIsNearContext(trail) else { continue }
+            for pin in CruxCatalog.pins(for: trail) where cruxPinIsPertinent(pin) {
+                if seenPins.insert(pin.id).inserted {
+                    pins.append(pin)
+                }
+            }
+        }
+        return pins
+    }
+
+    private func trailIsNearContext(_ trail: OverlandTrail) -> Bool {
+        if trailInView(trail) { return true }
+        if meters(from: mapCenter, to: trail.centerCoordinate) <= 40_000 { return true }
+        if let gps = locationTracker.userCoordinate, meters(from: gps, to: trail.centerCoordinate) <= 40_000 { return true }
+        return false
+    }
+
+    private func cruxPinIsPertinent(_ pin: CruxPin) -> Bool {
+        if coordinateInView(pin.coordinate) { return true }
+        if meters(from: mapCenter, to: pin.coordinate) <= 40_000 { return true }
+        if let gps = locationTracker.userCoordinate, meters(from: gps, to: pin.coordinate) <= 40_000 { return true }
+        return false
+    }
+
+    @ViewBuilder
     private var cruxList: some View {
-        let pins = CruxCatalog.pins(for: activeTrail)
-        return VStack(alignment: .leading, spacing: 4) {
-            if pins.isEmpty {
-                EmptyView()
-            } else {
+        let pins = pertinentCruxPins
+        if !pins.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Crux Obstacles")
                     .font(.caption.bold())
                     .foregroundColor(.orange)
@@ -2722,8 +2792,8 @@ struct MainCockpitView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var tripShareRow: some View {
@@ -3693,11 +3763,13 @@ struct MainCockpitView: View {
                     cache[key] = slice
                     continue
                 }
-                if let existing = plotSegmentRoutes[key], existing.count >= 3 {
+                if let existing = plotSegmentRoutes[key], existing.count >= 3, !isStraightCrowLine(existing) {
                     cache[key] = existing
                     continue
                 }
-                cache[key] = slice.count >= 2 ? slice : [start, end]
+                if slice.count >= 2 {
+                    cache[key] = slice
+                }
                 pending.append((key, start, end))
             }
         }
@@ -3708,7 +3780,7 @@ struct MainCockpitView: View {
                 if token != plotRouteFetchToken { return }
                 let road = await plotRoadGeometry(from: item.start, to: item.end)
                 if token != plotRouteFetchToken { return }
-                guard let road, road.count >= 2 else { continue }
+                guard let road, road.count >= 2, !isStraightCrowLine(road) else { continue }
                 var updated = plotSegmentRoutes
                 updated[item.key] = road
                 plotSegmentRoutes = updated
@@ -3870,6 +3942,9 @@ struct MainCockpitView: View {
         visibleRegion = region
         if moved > 40 {
             mapCenter = region.center
+        }
+        if !offlineFirst {
+            telemetry.scheduleTrailRefresh(around: region.center)
         }
     }
 
@@ -4226,6 +4301,7 @@ private struct StableRouteMap: View, Equatable {
     var routingActive: Bool
     var selectedTrailID: String
     var trails: [OverlandTrail]
+    var cruxPins: [CruxPin]
     var trailColors: [String: Color]
     var selectedTrailLine: [CLLocationCoordinate2D]
     var camps: [CampSpot]
@@ -4305,18 +4381,16 @@ private struct StableRouteMap: View, Equatable {
                     hazardOverlay(hazard)
                 }
             }
-            if let trail = trails.first(where: { $0.id == selectedTrailID }) {
-                ForEach(CruxCatalog.pins(for: trail)) { pin in
-                    Annotation("", coordinate: pin.coordinate) {
-                        Text(pin.title)
-                            .font(.system(size: 9, weight: .bold))
-                            .lineLimit(1)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Color.black.opacity(0.78))
-                            .foregroundColor(.orange)
-                            .clipShape(Capsule())
-                    }
+            ForEach(cruxPins) { pin in
+                Annotation("", coordinate: pin.coordinate) {
+                    Text(pin.title)
+                        .font(.system(size: 9, weight: .bold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.78))
+                        .foregroundColor(.orange)
+                        .clipShape(Capsule())
                 }
             }
             if plotLine.count >= 2 {
@@ -4626,13 +4700,27 @@ private enum CampRouteBuilder {
         to spot: CampSpot,
         trailCoordinates: [CLLocationCoordinate2D],
         trailhead: CLLocationCoordinate2D,
-        originWasGPS: Bool
+        originWasGPS: Bool,
+        spurLimit: Double = 3_218
     ) async -> ActiveCampRoute {
-        let entry = closestCoordinate(on: trailCoordinates, to: origin) ?? trailhead
+        let stitch = !trailCoordinates.isEmpty
         let direct = await appleRoutes(from: origin, to: spot.coordinate)
+        if !stitch {
+            if !direct.isEmpty {
+                let near = direct.filter { endsNear($0.road, spot.coordinate, within: 4_828) }
+                return pack(near.isEmpty ? direct : near, spot: spot, originWasGPS: originWasGPS, spurLimit: spurLimit)
+            }
+            if let osrmPad = await osrmRoutes(from: origin, to: spot.coordinate) {
+                let nearPad = osrmPad.filter { endsNear($0.road, spot.coordinate, within: 4_828) }
+                return pack(nearPad.isEmpty ? osrmPad : nearPad, spot: spot, originWasGPS: originWasGPS, spurLimit: spurLimit)
+            }
+            return missingRoad(spot: spot, originWasGPS: originWasGPS)
+        }
+
+        let entry = closestCoordinate(on: trailCoordinates, to: origin) ?? trailhead
         let directHits = direct.filter { endsNear($0.road, spot.coordinate, within: 3_218) }
         if !directHits.isEmpty {
-            return pack(directHits, spot: spot, originWasGPS: originWasGPS)
+            return pack(directHits, spot: spot, originWasGPS: originWasGPS, spurLimit: spurLimit)
         }
 
         var entryTargets = [entry]
@@ -4646,7 +4734,7 @@ private enum CampRouteBuilder {
                 let stitched = hits.enumerated().map { index, option in
                     stitchTrail(option, index: index, trail: trailCoordinates, destination: spot.coordinate, name: spot.name)
                 }
-                return pack(stitched, spot: spot, originWasGPS: originWasGPS)
+                return pack(stitched, spot: spot, originWasGPS: originWasGPS, spurLimit: spurLimit)
             }
         }
 
@@ -4656,7 +4744,7 @@ private enum CampRouteBuilder {
                 let prepared = nearPad.enumerated().map { index, option in
                     stitchTrail(option, index: index, trail: trailCoordinates, destination: spot.coordinate, name: spot.name)
                 }
-                return pack(prepared, spot: spot, originWasGPS: originWasGPS)
+                return pack(prepared, spot: spot, originWasGPS: originWasGPS, spurLimit: spurLimit)
             }
         }
 
@@ -4667,15 +4755,19 @@ private enum CampRouteBuilder {
                 let stitched = nearEntry.enumerated().map { index, option in
                     stitchTrail(option, index: index, trail: trailCoordinates, destination: spot.coordinate, name: spot.name)
                 }
-                return pack(stitched, spot: spot, originWasGPS: originWasGPS)
+                return pack(stitched, spot: spot, originWasGPS: originWasGPS, spurLimit: spurLimit)
             }
         }
 
         if let stepped = await steppedAppleRoute(from: origin, toward: entry, trail: trailCoordinates, spot: spot) {
-            return pack([stepped], spot: spot, originWasGPS: originWasGPS)
+            return pack([stepped], spot: spot, originWasGPS: originWasGPS, spurLimit: spurLimit)
         }
 
-        return ActiveCampRoute(
+        return missingRoad(spot: spot, originWasGPS: originWasGPS)
+    }
+
+    private static func missingRoad(spot: CampSpot, originWasGPS: Bool) -> ActiveCampRoute {
+        ActiveCampRoute(
             destination: spot,
             options: [NavOption(
                 id: 0,
@@ -4691,7 +4783,7 @@ private enum CampRouteBuilder {
         )
     }
 
-    private static func pack(_ options: [NavOption], spot: CampSpot, originWasGPS: Bool) -> ActiveCampRoute {
+    private static func pack(_ options: [NavOption], spot: CampSpot, originWasGPS: Bool, spurLimit: Double) -> ActiveCampRoute {
         let renumbered = options.enumerated().map { index, option in
             let pins = option.steps.compactMap(\.maneuver)
             let rawDistance = option.distanceMeters > 1 ? option.distanceMeters : polylineMeters(option.road)
@@ -4710,7 +4802,7 @@ private enum CampRouteBuilder {
             destination: spot,
             options: renumbered,
             selectedIndex: 0,
-            spur: simplifyCoordinates(cappedSpur(from: road, to: spot.coordinate), maxPoints: 40, minMeters: 18),
+            spur: simplifyCoordinates(cappedSpur(from: road, to: spot.coordinate, limit: spurLimit), maxPoints: 40, minMeters: 18),
             originWasGPS: originWasGPS
         )
     }
@@ -4758,18 +4850,19 @@ private enum CampRouteBuilder {
     }
 
     private static func osrmRoutes(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) async -> [NavOption]? {
-        let urlString = "https://router.project-osrm.org/route/v1/driving/\(origin.longitude),\(origin.latitude);\(destination.longitude),\(destination.latitude)?overview=full&geometries=geojson&steps=true&alternatives=true"
-        guard let url = URL(string: urlString) else { return nil }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (root["code"] as? String) == "Ok",
-              let routes = root["routes"] as? [[String: Any]] else { return nil }
-        let options = routes.enumerated().compactMap { index, route -> NavOption? in
-            parseOSRM(route, index: index, startingNear: origin)
+        for url in drivingRouteURLs(from: origin, to: destination, steps: true) {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 20
+            guard let (data, _) = try? await URLSession.shared.data(for: request),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (root["code"] as? String) == "Ok",
+                  let routes = root["routes"] as? [[String: Any]] else { continue }
+            let options = routes.enumerated().compactMap { index, route -> NavOption? in
+                parseOSRM(route, index: index, startingNear: origin)
+            }
+            if !options.isEmpty { return options }
         }
-        return options.isEmpty ? nil : options
+        return nil
     }
 
     private static func parseOSRM(_ route: [String: Any], index: Int, startingNear origin: CLLocationCoordinate2D) -> NavOption? {
@@ -5109,11 +5202,22 @@ private func perpendicularMeters(_ point: CLLocationCoordinate2D, _ start: CLLoc
     return abs((px - ax) * dy - (py - ay) * dx) / length
 }
 
-private func cappedSpur(from road: [CLLocationCoordinate2D], to destination: CLLocationCoordinate2D) -> [CLLocationCoordinate2D] {
+private func cappedSpur(from road: [CLLocationCoordinate2D], to destination: CLLocationCoordinate2D, limit: Double = 3_218) -> [CLLocationCoordinate2D] {
     guard let last = road.last else { return [] }
     let gap = meters(from: last, to: destination)
-    if gap < 30 || gap > 3_218 { return [] }
+    if gap < 30 || gap > limit { return [] }
     return [last, destination]
+}
+
+private func drivingRouteURLs(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D, steps: Bool) -> [URL] {
+    let query = steps
+        ? "overview=full&geometries=geojson&steps=true&alternatives=true"
+        : "overview=full&geometries=geojson&steps=true"
+    let path = "\(origin.longitude),\(origin.latitude);\(destination.longitude),\(destination.latitude)?\(query)"
+    return [
+        "https://router.project-osrm.org/route/v1/driving/",
+        "https://routing.openstreetmap.de/routed-car/route/v1/driving/"
+    ].compactMap { URL(string: $0 + path) }
 }
 
 private func isDrivableRoad(_ road: [CLLocationCoordinate2D], startingNear origin: CLLocationCoordinate2D) -> Bool {
@@ -5256,19 +5360,24 @@ private func plotRoadGeometry(from origin: CLLocationCoordinate2D, to destinatio
     if let response = try? await MKDirections(request: request).calculate(),
        let route = response.routes.first {
         let road = coordinates(of: route.polyline)
-        if road.count >= 2 { return road }
+        if road.count >= 2, !isStraightCrowLine(road), let first = road.first, meters(from: first, to: origin) < 5_000 {
+            return road
+        }
     }
-    let urlString = "https://router.project-osrm.org/route/v1/driving/\(origin.longitude),\(origin.latitude);\(destination.longitude),\(destination.latitude)?overview=full&geometries=geojson"
-    guard let url = URL(string: urlString) else { return nil }
-    var urlRequest = URLRequest(url: url)
-    urlRequest.timeoutInterval = 20
-    guard let (data, _) = try? await URLSession.shared.data(for: urlRequest),
-          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          (root["code"] as? String) == "Ok",
-          let routes = root["routes"] as? [[String: Any]],
-          let geometry = routes.first?["geometry"] as? [String: Any] else { return nil }
-    let road = parseCoordinates(geometry["coordinates"])
-    return road.count >= 2 ? road : nil
+    for url in drivingRouteURLs(from: origin, to: destination, steps: true) {
+        var urlRequest = URLRequest(url: url)
+        urlRequest.timeoutInterval = 20
+        guard let (data, _) = try? await URLSession.shared.data(for: urlRequest),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (root["code"] as? String) == "Ok",
+              let routes = root["routes"] as? [[String: Any]],
+              let geometry = routes.first?["geometry"] as? [String: Any] else { continue }
+        let road = parseCoordinates(geometry["coordinates"])
+        if road.count >= 2, !isStraightCrowLine(road), let first = road.first, meters(from: first, to: origin) < 5_000 {
+            return road
+        }
+    }
+    return nil
 }
 
 private func trailSlice(from startPoint: CLLocationCoordinate2D, to endPoint: CLLocationCoordinate2D, trail: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {

@@ -30,6 +30,26 @@ final class LiveTelemetryService: ObservableObject {
     @Published var scanStatus: String = ""
     private var trailScanGeneration = 0
     private var trailScanAnchor: CLLocationCoordinate2D?
+    private var trailScanDebounce: Task<Void, Never>?
+    private var scanAnchors: [CLLocationCoordinate2D] = []
+
+    init() {
+        discoveredTrails = CockpitStore.loadDiscoveredTrails()
+    }
+
+    func scheduleTrailRefresh(around center: CLLocationCoordinate2D) {
+        trailScanDebounce?.cancel()
+        trailScanDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            await fetchTrailsInMapRegion(center: center)
+        }
+    }
+
+    func cancelScheduledTrailRefresh() {
+        trailScanDebounce?.cancel()
+        trailScanDebounce = nil
+    }
 
     /// Fetches real-time river crossing flow (00060 = Discharge CFS, 00065 = Gage Height ft) from USGS NWIS
     func fetchUSGSStreamflow(siteCodes: [String] = ["09010500", "09180500", "10261500"]) async {
@@ -384,28 +404,42 @@ enum USStateLocator {
 }
 
 extension LiveTelemetryService {
-    func fetchTrailsInMapRegion(center: CLLocationCoordinate2D, radiusMeters: Int = 25000) async {
-        if isScanningTrails, let anchor = trailScanAnchor {
-            let moved = CLLocation(latitude: anchor.latitude, longitude: anchor.longitude)
-                .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
-            if moved < 2_500 { return }
-        }
+    func fetchTrailsInMapRegion(center: CLLocationCoordinate2D, radiusMeters: Int = 18_000) async {
+        if scanAnchors.contains(where: { moved($0, center) < 1_500 }) { return }
+        if isScanningTrails, let anchor = trailScanAnchor, moved(anchor, center) < 1_500 { return }
         trailScanGeneration += 1
         let generation = trailScanGeneration
         trailScanAnchor = center
         isScanningTrails = true
         scanStatus = "Scanning USA 4x4 trails…"
-        defer {
-            if generation == trailScanGeneration {
-                isScanningTrails = false
+
+        await withTaskGroup(of: [OverlandTrail].self) { group in
+            group.addTask {
+                await Self.fetchOverpassTrails(center: center)
+            }
+            group.addTask {
+                await Self.fetchUSFSRoads(center: center, radiusMeters: radiusMeters)
+            }
+            for await trails in group {
+                guard generation == trailScanGeneration else { continue }
+                absorbDiscovered(trails, generation: generation, center: center)
             }
         }
-
-        async let overpass = Self.fetchOverpassTrails(center: center, radiusMeters: radiusMeters)
-        async let usfs = Self.fetchUSFSRoads(center: center, radiusMeters: radiusMeters)
-        let loaded = await overpass + usfs
         guard generation == trailScanGeneration else { return }
+        isScanningTrails = false
+        if !scanAnchors.contains(where: { moved($0, center) < 200 }) {
+            scanAnchors.append(center)
+            if scanAnchors.count > 40 { scanAnchors.removeFirst(scanAnchors.count - 40) }
+        }
+        if discoveredTrails.isEmpty {
+            scanStatus = "No public 4x4 tracks returned for this area."
+        } else {
+            scanStatus = "\(discoveredTrails.count) local USA trails"
+        }
+    }
 
+    private func absorbDiscovered(_ loaded: [OverlandTrail], generation: Int, center: CLLocationCoordinate2D) {
+        guard generation == trailScanGeneration, !loaded.isEmpty else { return }
         var byID: [String: OverlandTrail] = [:]
         for trail in discoveredTrails {
             byID[trail.id] = trail
@@ -424,43 +458,95 @@ extension LiveTelemetryService {
             merged = Array(merged.prefix(200))
         }
         discoveredTrails = merged
-        if merged.isEmpty {
-            scanStatus = "No public 4x4 tracks returned for this area."
-        } else {
-            scanStatus = "\(merged.count) local USA trails"
-        }
+        scanStatus = "\(merged.count) local USA trails"
+        CockpitStore.saveDiscoveredTrails(merged)
     }
 
-    private static func fetchOverpassTrails(center: CLLocationCoordinate2D, radiusMeters: Int) async -> [OverlandTrail] {
-        let lat = center.latitude
-        let lon = center.longitude
-        let gradeRadius = radiusMeters
-        let fourRadius = radiusMeters + 10_000
-        let dirtRadius = max(5_000, radiusMeters - 5_000)
+    private func moved(_ start: CLLocationCoordinate2D, _ end: CLLocationCoordinate2D) -> CLLocationDistance {
+        CLLocation(latitude: start.latitude, longitude: start.longitude)
+            .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
+    }
+
+    private static func fetchOverpassTrails(center: CLLocationCoordinate2D) async -> [OverlandTrail] {
+        let south = center.latitude - 0.09
+        let north = center.latitude + 0.09
+        let west = center.longitude - 0.11
+        let east = center.longitude + 0.11
+        let box = "\(south),\(west),\(north),\(east)"
         let query = """
-        [out:json][timeout:25];
+        [out:json][timeout:10];
         (
-          way["highway"~"track|path"]["tracktype"~"grade2|grade3|grade4|grade5"](around:\(gradeRadius),\(lat),\(lon));
-          way["highway"="track"]["4wd_only"="yes"](around:\(fourRadius),\(lat),\(lon));
-          way["highway"="unclassified"]["surface"~"unpaved|gravel|dirt|sand|rock"](around:\(dirtRadius),\(lat),\(lon));
+          way["highway"~"track|path"]["tracktype"~"grade2|grade3|grade4|grade5"](\(box));
+          way["highway"="track"]["4wd_only"="yes"](\(box));
+          way["highway"="unclassified"]["surface"~"unpaved|gravel|dirt|sand|rock"](\(box));
+          node["tourism"~"camp_site|camp_pitch"](\(box));
         );
-        out geom 80;
+        out geom 60;
         """
-        guard let url = URL(string: "https://overpass-api.de/api/interpreter") else { return [] }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 40
-        request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.httpBody = query.data(using: .utf8)
-        do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let elements = root["elements"] as? [[String: Any]] else { return [] }
-            return elements.compactMap(parseOverpassWay)
-        } catch {
-            print("Overpass trail fetch error: \(error)")
-            return []
+        guard let data = await postOverpass(query),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let elements = root["elements"] as? [[String: Any]] else { return [] }
+        return elements.compactMap(parseOverpassElement)
+    }
+
+    private static func postOverpass(_ query: String) async -> Data? {
+        let urls = [
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.kumi.systems/api/interpreter"
+        ]
+        for raw in urls {
+            guard let url = URL(string: raw) else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 14
+            request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+            request.httpBody = query.data(using: .utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  http.statusCode == 200,
+                  !data.isEmpty else { continue }
+            return data
         }
+        return nil
+    }
+
+    private static func parseOverpassElement(_ element: [String: Any]) -> OverlandTrail? {
+        if (element["type"] as? String) == "node" {
+            return parseCampNode(element)
+        }
+        return parseOverpassWay(element)
+    }
+
+    private static func parseCampNode(_ element: [String: Any]) -> OverlandTrail? {
+        guard let nodeID = (element["id"] as? NSNumber)?.stringValue ?? element["id"] as? String,
+              let lat = element["lat"] as? Double,
+              let lon = element["lon"] as? Double else { return nil }
+        let tags = stringMap(element["tags"])
+        let name = tags["name"] ?? tags["ref"] ?? "Camp"
+        let seed = TrailGeometry.seed(for: "osm-camp-\(nodeID)")
+        let slope = min(2.4, 1.1 + Double(abs(seed) % 10) * 0.1)
+        let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        return OverlandTrail(
+            id: "osm-camp-\(nodeID)",
+            name: name,
+            region: "Camp",
+            agency: tags["operator"] ?? "OpenStreetMap",
+            distanceMi: 0.1,
+            peakElevFt: 0,
+            reqClearanceIn: 8.6,
+            minCanopyFt: 12.5,
+            waterCrossingIn: 0,
+            reqLocker: false,
+            gateStatus: "CHECK",
+            snotelSnowIn: 0,
+            usgsFlowCfs: 0,
+            state: USStateLocator.code(latitude: lat, longitude: lon, tagged: tags["addr:state"] ?? tags["is_in:state"]),
+            centerLat: lat,
+            centerLon: lon,
+            coordinates: [coordinate],
+            flatCamps: [(name: name, lat: lat, lon: lon, slopeDeg: slope, starlinkPct: 82 + abs(seed) % 17)],
+            legalStatus: "osm"
+        )
     }
 
     private static func parseOverpassWay(_ element: [String: Any]) -> OverlandTrail? {
@@ -494,7 +580,7 @@ extension LiveTelemetryService {
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: coordinates,
-            flatCamps: padsAlong(coordinates, seed: seed),
+            flatCamps: padsAlong(coordinates, seed: seed, title: name),
             legalStatus: "osm"
         )
     }
@@ -517,7 +603,7 @@ extension LiveTelemetryService {
         ]
         guard let url = components?.url else { return [] }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 40
+        request.timeoutInterval = 12
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
             guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -564,22 +650,32 @@ extension LiveTelemetryService {
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: sampled,
-            flatCamps: padsAlong(sampled, seed: TrailGeometry.seed(for: "usfs-\(identifier)")),
+            flatCamps: padsAlong(sampled, seed: TrailGeometry.seed(for: "usfs-\(identifier)"), title: name.hasPrefix("FS") || name.hasPrefix("FR") ? name : "FS \(name)"),
             legalStatus: "mvum"
         )
     }
 
-    private static func padsAlong(_ coordinates: [CLLocationCoordinate2D], seed: Int) -> [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] {
-        guard let point = coordinates.dropFirst().dropLast().first ?? coordinates.first else { return [] }
-        let slope = min(2.7, 1.2 + Double(abs(seed) % 12) * 0.12)
-        guard slope < 3 else { return [] }
-        return [(
-            name: "Flat Pad",
-            lat: point.latitude,
-            lon: point.longitude,
-            slopeDeg: slope,
-            starlinkPct: 82 + abs(seed) % 17
-        )]
+    private static func padsAlong(_ coordinates: [CLLocationCoordinate2D], seed: Int, title: String) -> [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] {
+        guard coordinates.count >= 2 else { return [] }
+        let slopeA = min(2.7, 1.2 + Double(abs(seed) % 12) * 0.12)
+        let indexes = coordinates.count >= 4
+            ? [coordinates.count / 3, (coordinates.count * 2) / 3]
+            : [min(coordinates.count - 1, max(1, coordinates.count / 3))]
+        var pads: [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] = []
+        for (padIndex, index) in indexes.enumerated() {
+            let point = coordinates[index]
+            let slope = padIndex == 0 ? slopeA : min(2.8, slopeA + 0.4)
+            guard slope < 3 else { continue }
+            let label = coordinates.count >= 4 ? (padIndex == 0 ? "\(title) Pad A" : "\(title) Pad B") : "\(title) Flat Pad"
+            pads.append((
+                name: label,
+                lat: point.latitude,
+                lon: point.longitude,
+                slopeDeg: (slope * 10).rounded() / 10,
+                starlinkPct: 82 + abs(seed + padIndex * 3) % 17
+            ))
+        }
+        return pads
     }
 
     private static func clearanceEstimate(tracktype: String?, surface: String?, fourWheelOnly: Bool) -> (clearance: Double, canopy: Double, water: Int, locker: Bool) {
