@@ -58,6 +58,12 @@ struct OverlandTrail: Identifiable {
     var centerLon: Double = 0
     var coordinates: [CLLocationCoordinate2D] = []
     var flatCamps: [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] = []
+    var isBDR: Bool = false
+    var alsoStates: [String] = []
+
+    func containsState(_ code: String) -> Bool {
+        state == code || alsoStates.contains(code)
+    }
 
     var centerCoordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)

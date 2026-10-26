@@ -100,6 +100,9 @@ struct MainCockpitView: View {
     @State private var copiedToken: String?
     @StateObject private var voiceGuide = VoiceNavigationAnnouncer()
     @StateObject private var cameraGate = CameraGate()
+    @StateObject private var parcelService = ParcelBoundaryService()
+    @State private var showParcelLayer = true
+    @State private var parcelsCollapsedForFollow = false
 
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -111,7 +114,7 @@ struct MainCockpitView: View {
     private var pickerTrails: [OverlandTrail] {
         let query = trailQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         func matchesQuery(_ trail: OverlandTrail) -> Bool {
-            query.isEmpty || [trail.name, trail.region, trail.state, trail.agency].contains {
+            query.isEmpty || [trail.name, trail.region, trail.state, trail.alsoStates.joined(separator: " "), trail.agency].contains {
                 $0.localizedCaseInsensitiveContains(query)
             }
         }
@@ -120,8 +123,10 @@ struct MainCockpitView: View {
             switch regionFilter {
             case "all", "near":
                 return true
+            case "bdr":
+                return trail.isBDR
             default:
-                return trail.state == regionFilter
+                return trail.containsState(regionFilter)
             }
         }
         var seen = Set<String>()
@@ -156,8 +161,18 @@ struct MainCockpitView: View {
         showingRouteOverview && !followRoute && activeRoute != nil
     }
 
+    private var drawnParcels: [PropertyParcel] {
+        if followRoute && !showParcelLayer {
+            if let selected = parcelService.selected { return [selected] }
+            return []
+        }
+        guard showParcelLayer else { return [] }
+        return Array(parcelService.parcels.prefix(18))
+    }
+
     private var targetCoordinate: CLLocationCoordinate2D? {
         if let route = activeRoute { return route.destination.coordinate }
+        if let parcel = parcelService.selected { return parcel.centerCoordinate }
         if let camp = selectedCampSpot { return camp.coordinate }
         let trail = activeTrail
         if trail.trailhead.lat != 0 || trail.trailhead.lon != 0 {
@@ -194,6 +209,9 @@ struct MainCockpitView: View {
             hasher.combine(pickerTrails.map(\.id).joined(separator: ","))
             hasher.combine(telemetry.discoveredTrails.count)
         }
+        hasher.combine(showParcelLayer)
+        hasher.combine(parcelService.selectedID)
+        hasher.combine(drawnParcels.map(\.id).joined(separator: ","))
         return hasher.finalize()
     }
 
@@ -211,6 +229,7 @@ struct MainCockpitView: View {
         switch regionFilter {
         case "near": return "Near Me"
         case "all": return "All USA"
+        case "bdr": return "BDR"
         default: return regionFilter
         }
     }
@@ -238,11 +257,22 @@ struct MainCockpitView: View {
                     selectedTrailLine: selectedTrailDraw,
                     camps: mapCamps,
                     route: activeRoute,
+                    parcels: drawnParcels,
+                    selectedParcelID: parcelService.selectedID,
+                    parcelInspectEnabled: showParcelLayer,
                     onCameraEnd: { region in
                         handleCameraEnd(region)
                     },
                     onSpot: { spot in
                         Task { await beginRoute(to: spot) }
+                    },
+                    onInspect: { coordinate in
+                        inspectParcels(at: coordinate)
+                    },
+                    onSelectParcel: { id in
+                        if let parcel = parcelService.parcels.first(where: { $0.id == id }) {
+                            parcelService.select(parcel)
+                        }
                     }
                 )
                 .equatable()
@@ -263,6 +293,15 @@ struct MainCockpitView: View {
                                     scanMapCenter()
                                 }
                                 .disabled(telemetry.isScanningTrails)
+                                mapButton(parcelLayerTitle, systemImage: showParcelLayer ? "square.split.2x2.fill" : "square.dashed") {
+                                    toggleParcelLayer()
+                                }
+                                if showParcelLayer {
+                                    mapButton(parcelService.isLoading ? "Scanning parcels…" : "Scan Parcels Here", systemImage: "map.fill") {
+                                        scanParcelsHere()
+                                    }
+                                    .disabled(parcelService.isLoading)
+                                }
                             }
                         } else {
                             HStack(spacing: 6) {
@@ -274,6 +313,11 @@ struct MainCockpitView: View {
                                 miniMapButton("location.circle.fill") { selectNearMe() }
                                 miniMapButton(telemetry.isScanningTrails ? "hourglass" : "binoculars.fill") { scanMapCenter() }
                                     .disabled(telemetry.isScanningTrails)
+                                miniMapButton(showParcelLayer ? "square.split.2x2.fill" : "square.dashed") { toggleParcelLayer() }
+                                if showParcelLayer {
+                                    miniMapButton("map.fill") { scanParcelsHere() }
+                                        .disabled(parcelService.isLoading)
+                                }
                             }
                         }
                         Spacer()
@@ -317,6 +361,9 @@ struct MainCockpitView: View {
             }
 
             VStack(spacing: 10) {
+                if let parcel = parcelService.selected {
+                    propertyCard(parcel)
+                }
                 Picker("Mode", selection: $mode) {
                     ForEach(CockpitMode.allCases, id: \.self) { item in
                         Text(item.rawValue).tag(item)
@@ -344,10 +391,12 @@ struct MainCockpitView: View {
             motionManager.startUpdates()
             locationTracker.start()
             refreshSelectedTrailDraw()
+            parcelService.refresh(around: locationTracker.userCoordinate ?? mapCenter, force: true)
         }
         .onChange(of: locationTracker.hasCenteredOnUserOnce) { _, centered in
             guard centered, let coordinate = locationTracker.userCoordinate else { return }
             mapCenter = coordinate
+            parcelService.refresh(around: coordinate, force: true)
             if activeRoute == nil, regionFilter == "near" {
                 applyFilterSelection(scanIfNear: true)
             } else if activeRoute == nil {
@@ -371,6 +420,17 @@ struct MainCockpitView: View {
         }
         .onChange(of: regionFilter) { _, _ in
             applyFilterSelection(scanIfNear: true)
+        }
+        .onChange(of: followRoute) { _, following in
+            if following {
+                if showParcelLayer {
+                    showParcelLayer = false
+                    parcelsCollapsedForFollow = true
+                }
+            } else if parcelsCollapsedForFollow {
+                showParcelLayer = true
+                parcelsCollapsedForFollow = false
+            }
         }
         .onChange(of: trailQuery) { _, _ in
             guard !pickerTrails.contains(where: { $0.id == selectedTrailID }), let first = pickerTrails.first else { return }
@@ -571,6 +631,7 @@ struct MainCockpitView: View {
                 HStack(spacing: 6) {
                     filterPill("Near Me", tag: "near")
                     filterPill("All USA", tag: "all")
+                    filterPill("BDR Routes", tag: "bdr")
                     ForEach(USATrailAtlas.states, id: \.self) { state in
                         filterPill(state, tag: state)
                     }
@@ -786,11 +847,19 @@ struct MainCockpitView: View {
     }
 
     private func focus(on trail: OverlandTrail) {
-        guard trail.centerLat != 0 || trail.centerLon != 0 else { return }
+        let points = trail.coordinates
+        guard let first = points.first else { return }
+        let minLat = points.reduce(first.latitude) { min($0, $1.latitude) }
+        let maxLat = points.reduce(first.latitude) { max($0, $1.latitude) }
+        let minLon = points.reduce(first.longitude) { min($0, $1.longitude) }
+        let maxLon = points.reduce(first.longitude) { max($0, $1.longitude) }
+        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
+        let latDelta = max(0.22, (maxLat - minLat) * 1.25)
+        let lonDelta = max(0.22, (maxLon - minLon) * 1.25)
         withAnimation {
             pushCamera(.region(MKCoordinateRegion(
-                center: trail.centerCoordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.22, longitudeDelta: 0.22)
+                center: center,
+                span: MKCoordinateSpan(latitudeDelta: latDelta, longitudeDelta: lonDelta)
             )))
         }
     }
@@ -1110,6 +1179,7 @@ struct MainCockpitView: View {
     private func handleCameraEnd(_ region: MKCoordinateRegion) {
         let span = max(region.span.latitudeDelta, region.span.longitudeDelta)
         let center = region.center
+        parcelService.refresh(around: center)
         if meters(from: mapCenter, to: center) > 40 {
             mapCenter = center
         }
@@ -1239,6 +1309,131 @@ struct MainCockpitView: View {
         }
     }
 
+    private var parcelLayerTitle: String {
+        if parcelService.isLoading { return "Scanning parcels…" }
+        return showParcelLayer ? "Parcels / Owners" : "Parcels Off"
+    }
+
+    private func toggleParcelLayer() {
+        showParcelLayer.toggle()
+        parcelsCollapsedForFollow = false
+        if showParcelLayer {
+            parcelService.refresh(around: locationTracker.userCoordinate ?? mapCenter)
+        }
+    }
+
+    private func scanParcelsHere() {
+        showParcelLayer = true
+        parcelsCollapsedForFollow = false
+        parcelService.refresh(around: locationTracker.userCoordinate ?? mapCenter, force: true)
+    }
+
+    private func inspectParcels(at coordinate: CLLocationCoordinate2D) {
+        if let parcel = drawnParcels.first(where: { $0.contains(coordinate) }) ?? parcelService.parcel(at: coordinate) {
+            parcelService.select(parcel)
+            return
+        }
+        parcelService.refresh(around: coordinate, force: true)
+    }
+
+    private func routeToLot(_ parcel: PropertyParcel) {
+        let spot = CampSpot(
+            id: "parcel-\(parcel.id)",
+            trailID: activeTrail.id,
+            name: parcel.pinLabel,
+            lat: parcel.centerLat,
+            lon: parcel.centerLon,
+            slopeDeg: 0,
+            starlinkPct: 0,
+            kind: .trailhead
+        )
+        Task { await beginRoute(to: spot) }
+    }
+
+    private func propertyCard(_ parcel: PropertyParcel) -> some View {
+        let badge = parcelBadgeColor(parcel)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(parcel.accessBadge)
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(badge.opacity(0.22))
+                    .foregroundColor(badge)
+                    .clipShape(Capsule())
+                Spacer()
+                Button("Route to Lot") { routeToLot(parcel) }
+                    .font(.caption.bold())
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+            }
+            Text(parcel.ownerName)
+                .font(.subheadline.bold())
+                .foregroundColor(.white)
+                .lineLimit(2)
+            Text(parcel.apnLotNumber)
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(2)
+            Text(String(format: "%.1f acres • %@", parcel.acreage, parcel.zoningOrUse))
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(2)
+            Text("\(parcel.subdivisionOrTract) • \(parcel.countyAndState)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(2)
+            if parcel.ownershipType == .privateParcel {
+                Text(parcel.assessedValueOrStatus)
+                    .font(.caption2)
+                    .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.18))
+                    .lineLimit(2)
+            } else if !parcel.assessedValueOrStatus.isEmpty {
+                Text(parcel.assessedValueOrStatus)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+            Button {
+                copyCoordinate(parcel.centerCoordinate, token: "parcel-\(parcel.id)")
+            } label: {
+                HStack {
+                    Text(formatCoordinate(parcel.centerCoordinate))
+                        .font(.caption2.monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Spacer()
+                    Text(copiedToken == "parcel-\(parcel.id)" ? "Copied" : "Copy")
+                        .font(.caption2.bold())
+                }
+                .foregroundColor(.cyan)
+            }
+            .buttonStyle(.plain)
+            if !parcelService.status.isEmpty {
+                Text(parcelService.status)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func parcelBadgeColor(_ parcel: PropertyParcel) -> Color {
+        switch parcel.ownershipType {
+        case .privateParcel:
+            return Color(red: 1.0, green: 0.72, blue: 0.18)
+        case .publicUSFS:
+            return Color(red: 0.10, green: 0.65, blue: 0.35)
+        case .publicBLM:
+            return Color(red: 0.95, green: 0.75, blue: 0.15)
+        case .publicStateDNR, .publicNPS:
+            return Color(red: 0.35, green: 0.70, blue: 0.95)
+        }
+    }
+
     private func mapButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
@@ -1278,8 +1473,13 @@ private struct StableRouteMap: View, Equatable {
     var selectedTrailLine: [CLLocationCoordinate2D]
     var camps: [CampSpot]
     var route: ActiveCampRoute?
+    var parcels: [PropertyParcel]
+    var selectedParcelID: String?
+    var parcelInspectEnabled: Bool
     var onCameraEnd: (MKCoordinateRegion) -> Void
     var onSpot: (CampSpot) -> Void
+    var onInspect: (CLLocationCoordinate2D) -> Void
+    var onSelectParcel: (String) -> Void
 
     static func == (lhs: StableRouteMap, rhs: StableRouteMap) -> Bool {
         lhs.sceneToken == rhs.sceneToken
@@ -1290,8 +1490,23 @@ private struct StableRouteMap: View, Equatable {
     }
 
     var body: some View {
+        MapReader { proxy in
+            mapBody
+                .simultaneousGesture(
+                    SpatialTapGesture().onEnded { value in
+                        guard parcelInspectEnabled, let coordinate = proxy.convert(value.location, from: .local) else { return }
+                        onInspect(coordinate)
+                    }
+                )
+        }
+    }
+
+    private var mapBody: some View {
         Map(position: $cameraPosition) {
             UserAnnotation()
+            ForEach(parcels) { parcel in
+                parcelOverlay(parcel)
+            }
             if let route {
                 routeStroke(route)
             }
@@ -1336,6 +1551,54 @@ private struct StableRouteMap: View, Equatable {
         .onMapCameraChange(frequency: .onEnd) { context in
             onCameraEnd(context.region)
         }
+    }
+
+    @MapContentBuilder
+    private func parcelOverlay(_ parcel: PropertyParcel) -> some MapContent {
+        let style = parcelStyle(parcel)
+        MapPolygon(coordinates: parcel.boundaryCoordinates)
+            .foregroundStyle(style.fill.opacity(style.fillOpacity))
+        MapPolyline(coordinates: parcel.boundaryCoordinates)
+            .stroke(style.stroke, lineWidth: style.lineWidth)
+        Annotation("", coordinate: parcel.centerCoordinate) {
+            Button {
+                onSelectParcel(parcel.id)
+            } label: {
+                Text(parcel.pinLabel)
+                    .font(.caption2.bold())
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.72))
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func parcelStyle(_ parcel: PropertyParcel) -> (fill: Color, fillOpacity: Double, stroke: Color, lineWidth: CGFloat) {
+        let selected = parcel.id == selectedParcelID
+        let base: Color
+        let restingOpacity: Double
+        switch parcel.ownershipType {
+        case .publicUSFS:
+            base = Color(red: 0.05, green: 0.62, blue: 0.32)
+            restingOpacity = 0.10
+        case .publicBLM:
+            base = Color(red: 0.95, green: 0.75, blue: 0.12)
+            restingOpacity = 0.12
+        case .publicStateDNR, .publicNPS:
+            base = Color(red: 0.35, green: 0.70, blue: 0.95)
+            restingOpacity = 0.10
+        case .privateParcel:
+            base = Color(red: 1.0, green: 0.72, blue: 0.18)
+            restingOpacity = 0.10
+        }
+        if selected {
+            return (Color.cyan, 0.24, Color.cyan, 2.6)
+        }
+        return (base, restingOpacity, base, 1.6)
     }
 
     @MapContentBuilder
