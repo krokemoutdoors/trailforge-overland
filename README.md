@@ -53,7 +53,7 @@ Listing copy, keywords, and review notes are in `APP_STORE_CONNECT_LISTING.md`, 
 ## Repository layout
 
 ```
-ios-app/                  SwiftUI app, XcodeGen project.yml, StoreKit config
+ios-app/                  SwiftUI app, committed Xcode project, XcodeGen spec, StoreKit config
 web-landing/              Privacy policy and support page (GitHub Pages)
 appstore_assets/          1024 icon and 1290×2796 App Store screenshots
 sample_gpx/               Imogene Pass GPX 1.1 track and camp waypoints
@@ -66,18 +66,26 @@ Privacy: GPS, gyroscope, and the rig profile stay on device (`NSPrivacyTracking`
 
 ## Build
 
-Generate the Xcode project from `ios-app/project.yml` (bundle prefix `com.edwardshin`, display name TrailForge Overland, version 1.0.0). XcodeGen writes the location, Bluetooth, and local-network usage strings into the target.
+The Xcode project is committed at `ios-app/TrailForgeOverland.xcodeproj` (shared scheme `TrailForgeOverland`). Bundle ID `com.edwardshin.trailforge`, display name TrailForge Overland, version 1.0.0, deployment target iOS 17. `ios-app/Info.plist` holds the location, Bluetooth, and local-network usage strings. The app icon is `ios-app/Assets.xcassets/AppIcon.appiconset`, which references the 1024×1024 icon.
+
+`ios-app/project.yml` is the XcodeGen spec for the same target. If XcodeGen is installed, `xcodegen generate` rewrites the project from that spec. The committed project is what Codemagic and Xcode open when XcodeGen is not installed.
 
 ### On a Mac
+
+```bash
+cd ios-app
+open TrailForgeOverland.xcodeproj
+```
+
+Optional refresh from the spec:
 
 ```bash
 brew install xcodegen
 cd ios-app
 xcodegen generate
-open TrailForgeOverland.xcodeproj
 ```
 
-Open the project in Xcode 16 or later. Enable In-App Purchase, Background Modes (location updates), and Multipeer Connectivity, then archive with **Product > Archive** for App Store Connect. The StoreKit configuration file can drive local purchase tests before the products exist in App Store Connect.
+Open the project in Xcode 16 or later. The shared scheme points at `TrailForgeProducts.storekit` for local StoreKit tests. Archive with **Product > Archive** when an Apple Developer team is available.
 
 ### GitHub Actions
 
@@ -91,15 +99,11 @@ Open the project in Xcode 16 or later. Enable In-App Purchase, Background Modes 
 
 ### Codemagic
 
-`codemagic.yaml` defines the `ios-appstore-release` workflow:
+`codemagic.yaml` defines two workflows. Both use the committed `ios-app/TrailForgeOverland.xcodeproj`. If `xcodegen` is already on the machine, the first script runs `xcodegen generate` before building.
 
-- Runner: `mac_mini_m2`, Xcode `latest`, 30-minute cap.
-- Signing: App Store distribution for `com.edwardshin.trailforge`, integration name `Codemagic_AppStoreConnect`.
-- Scripts: install XcodeGen and generate the project, apply profiles with `xcode-project use-profiles`, then `xcode-project build-ipa` for scheme `TrailForgeOverland`.
-- Artifact: `ios-app/build/ios/ipa/*.ipa`.
-- Publishing: upload to TestFlight (`submit_to_testflight: true`). App Store review submission stays off.
+`ios-simulator-verify` is the workflow to run before Apple Developer enrollment. It has no `integrations` block and no `ios_signing` block. On a `mac_mini_m2` with Xcode `latest`, it builds an unsigned simulator app (`generic/platform=iOS Simulator`, `CODE_SIGNING_ALLOWED=NO`).
 
-Connect the App Store Connect integration in Codemagic before the first cloud build. The workflow reads `BUNDLE_ID`, `XCODE_PROJECT`, and `XCODE_SCHEME` from the environment block.
+`ios-appstore-release` is the TestFlight workflow for after enrollment. It references the App Store Connect integration `TrailForge_ASC` (the name to create in Codemagic), signs `com.edwardshin.trailforge` for App Store distribution, builds an IPA with `xcode-project build-ipa`, and submits to TestFlight. App Store review submission stays off.
 
 ### App Store Connect API
 

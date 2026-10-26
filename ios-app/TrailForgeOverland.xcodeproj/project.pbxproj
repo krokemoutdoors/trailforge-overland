@@ -1,0 +1,384 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A20000000000000000000001 /* ClinometerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* ClinometerManager.swift */; };
+		A20000000000000000000002 /* ConvoyMeshManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000002 /* ConvoyMeshManager.swift */; };
+		A20000000000000000000003 /* GPXTrackManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000003 /* GPXTrackManager.swift */; };
+		A20000000000000000000004 /* LiveTelemetryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000004 /* LiveTelemetryService.swift */; };
+		A20000000000000000000005 /* MainCockpitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000005 /* MainCockpitView.swift */; };
+		A20000000000000000000006 /* RigFitEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000006 /* RigFitEngine.swift */; };
+		A20000000000000000000007 /* StoreKitPaywall.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000007 /* StoreKitPaywall.swift */; };
+		A20000000000000000000008 /* TrailForgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000008 /* TrailForgeApp.swift */; };
+		A20000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000009 /* PrivacyInfo.xcprivacy */; };
+		A2000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A3000000000000000000000A /* Assets.xcassets */; };
+		A20000000000000000000011 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000011 /* SwiftUI.framework */; };
+		A20000000000000000000012 /* MapKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000012 /* MapKit.framework */; };
+		A20000000000000000000013 /* CoreLocation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000013 /* CoreLocation.framework */; };
+		A20000000000000000000014 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000014 /* CoreMotion.framework */; };
+		A20000000000000000000015 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000015 /* StoreKit.framework */; };
+		A20000000000000000000016 /* MultipeerConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000016 /* MultipeerConnectivity.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A30000000000000000000001 /* ClinometerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClinometerManager.swift; sourceTree = "<group>"; };
+		A30000000000000000000002 /* ConvoyMeshManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvoyMeshManager.swift; sourceTree = "<group>"; };
+		A30000000000000000000003 /* GPXTrackManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPXTrackManager.swift; sourceTree = "<group>"; };
+		A30000000000000000000004 /* LiveTelemetryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTelemetryService.swift; sourceTree = "<group>"; };
+		A30000000000000000000005 /* MainCockpitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainCockpitView.swift; sourceTree = "<group>"; };
+		A30000000000000000000006 /* RigFitEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RigFitEngine.swift; sourceTree = "<group>"; };
+		A30000000000000000000007 /* StoreKitPaywall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitPaywall.swift; sourceTree = "<group>"; };
+		A30000000000000000000008 /* TrailForgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailForgeApp.swift; sourceTree = "<group>"; };
+		A30000000000000000000009 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A3000000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A3000000000000000000000B /* TrailForgeProducts.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = TrailForgeProducts.storekit; sourceTree = "<group>"; };
+		A3000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000003 /* TrailForgeOverland.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrailForgeOverland.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A30000000000000000000011 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		A30000000000000000000012 /* MapKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = System/Library/Frameworks/MapKit.framework; sourceTree = SDKROOT; };
+		A30000000000000000000013 /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
+		A30000000000000000000014 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
+		A30000000000000000000015 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
+		A30000000000000000000016 /* MultipeerConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MultipeerConnectivity.framework; path = System/Library/Frameworks/MultipeerConnectivity.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A20000000000000000000011 /* SwiftUI.framework in Frameworks */,
+				A20000000000000000000012 /* MapKit.framework in Frameworks */,
+				A20000000000000000000013 /* CoreLocation.framework in Frameworks */,
+				A20000000000000000000014 /* CoreMotion.framework in Frameworks */,
+				A20000000000000000000015 /* StoreKit.framework in Frameworks */,
+				A20000000000000000000016 /* MultipeerConnectivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000004 = {
+			isa = PBXGroup;
+			children = (
+				A3000000000000000000000A /* Assets.xcassets */,
+				A30000000000000000000001 /* ClinometerManager.swift */,
+				A30000000000000000000002 /* ConvoyMeshManager.swift */,
+				A30000000000000000000003 /* GPXTrackManager.swift */,
+				A30000000000000000000004 /* LiveTelemetryService.swift */,
+				A30000000000000000000005 /* MainCockpitView.swift */,
+				A30000000000000000000006 /* RigFitEngine.swift */,
+				A30000000000000000000007 /* StoreKitPaywall.swift */,
+				A30000000000000000000008 /* TrailForgeApp.swift */,
+				A3000000000000000000000C /* Info.plist */,
+				A30000000000000000000009 /* PrivacyInfo.xcprivacy */,
+				A3000000000000000000000B /* TrailForgeProducts.storekit */,
+				A10000000000000000000006 /* Frameworks */,
+				A10000000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000006 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A30000000000000000000011 /* SwiftUI.framework */,
+				A30000000000000000000012 /* MapKit.framework */,
+				A30000000000000000000013 /* CoreLocation.framework */,
+				A30000000000000000000014 /* CoreMotion.framework */,
+				A30000000000000000000015 /* StoreKit.framework */,
+				A30000000000000000000016 /* MultipeerConnectivity.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000003 /* TrailForgeOverland.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000001 /* TrailForgeOverland */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000000000A /* Build configuration list for PBXNativeTarget "TrailForgeOverland" */;
+			buildPhases = (
+				A10000000000000000000007 /* Sources */,
+				A10000000000000000000008 /* Frameworks */,
+				A10000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TrailForgeOverland;
+			productName = TrailForgeOverland;
+			productReference = A10000000000000000000003 /* TrailForgeOverland.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A10000000000000000000001 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = A1000000000000000000000B /* Build configuration list for PBXProject "TrailForgeOverland" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000004;
+			productRefGroup = A10000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000001 /* TrailForgeOverland */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A2000000000000000000000A /* Assets.xcassets in Resources */,
+				A20000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A20000000000000000000001 /* ClinometerManager.swift in Sources */,
+				A20000000000000000000002 /* ConvoyMeshManager.swift in Sources */,
+				A20000000000000000000003 /* GPXTrackManager.swift in Sources */,
+				A20000000000000000000004 /* LiveTelemetryService.swift in Sources */,
+				A20000000000000000000005 /* MainCockpitView.swift in Sources */,
+				A20000000000000000000006 /* RigFitEngine.swift in Sources */,
+				A20000000000000000000007 /* StoreKitPaywall.swift in Sources */,
+				A20000000000000000000008 /* TrailForgeApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1000000000000000000000C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO;
+			CLANG_ANALYZER_NONNULL = YES;
+			CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+			CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+			CLANG_CXX_LIBRARY = "libc++";
+			CLANG_ENABLE_MODULES = YES;
+			CLANG_ENABLE_OBJC_ARC = YES;
+			CLANG_ENABLE_OBJC_WEAK = YES;
+			CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+			CLANG_WARN_BOOL_CONVERSION = YES;
+			CLANG_WARN_COMMA = YES;
+			CLANG_WARN_CONSTANT_CONVERSION = YES;
+			CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+			CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+			CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+			CLANG_WARN_EMPTY_BODY = YES;
+			CLANG_WARN_ENUM_CONVERSION = YES;
+			CLANG_WARN_INFINITE_RECURSION = YES;
+			CLANG_WARN_INT_CONVERSION = YES;
+			CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+			CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+			CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+			CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+			CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+			CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+			CLANG_WARN_STRICT_PROTOTYPES = YES;
+			CLANG_WARN_SUSPICIOUS_MOVE = YES;
+			CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+			CLANG_WARN_UNREACHABLE_CODE = YES;
+			CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+			COPY_PHASE_STRIP = NO;
+			ENABLE_STRICT_OBJC_MSGSEND = YES;
+			GCC_C_LANGUAGE_STANDARD = gnu11;
+			GCC_NO_COMMON_BLOCKS = YES;
+			GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+			GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+			GCC_WARN_UNDECLARED_SELECTOR = YES;
+			GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+			GCC_WARN_UNUSED_FUNCTION = YES;
+			GCC_WARN_UNUSED_VARIABLE = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			MTL_FAST_MATH = YES;
+			SDKROOT = iphoneos;
+			SWIFT_VERSION = 5.0;
+			DEBUG_INFORMATION_FORMAT = dwarf;
+			ENABLE_TESTABILITY = YES;
+			GCC_DYNAMIC_NO_PIC = NO;
+			GCC_OPTIMIZATION_LEVEL = 0;
+			GCC_PREPROCESSOR_DEFINITIONS = (
+				"$(inherited)",
+				"DEBUG=1",
+			);
+			MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+			ONLY_ACTIVE_ARCH = YES;
+			SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A1000000000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO;
+			CLANG_ANALYZER_NONNULL = YES;
+			CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+			CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+			CLANG_CXX_LIBRARY = "libc++";
+			CLANG_ENABLE_MODULES = YES;
+			CLANG_ENABLE_OBJC_ARC = YES;
+			CLANG_ENABLE_OBJC_WEAK = YES;
+			CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+			CLANG_WARN_BOOL_CONVERSION = YES;
+			CLANG_WARN_COMMA = YES;
+			CLANG_WARN_CONSTANT_CONVERSION = YES;
+			CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+			CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+			CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+			CLANG_WARN_EMPTY_BODY = YES;
+			CLANG_WARN_ENUM_CONVERSION = YES;
+			CLANG_WARN_INFINITE_RECURSION = YES;
+			CLANG_WARN_INT_CONVERSION = YES;
+			CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+			CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+			CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+			CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+			CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+			CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+			CLANG_WARN_STRICT_PROTOTYPES = YES;
+			CLANG_WARN_SUSPICIOUS_MOVE = YES;
+			CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+			CLANG_WARN_UNREACHABLE_CODE = YES;
+			CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+			COPY_PHASE_STRIP = NO;
+			ENABLE_STRICT_OBJC_MSGSEND = YES;
+			GCC_C_LANGUAGE_STANDARD = gnu11;
+			GCC_NO_COMMON_BLOCKS = YES;
+			GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+			GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+			GCC_WARN_UNDECLARED_SELECTOR = YES;
+			GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+			GCC_WARN_UNUSED_FUNCTION = YES;
+			GCC_WARN_UNUSED_VARIABLE = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			MTL_FAST_MATH = YES;
+			SDKROOT = iphoneos;
+			SWIFT_VERSION = 5.0;
+			DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+			ENABLE_NS_ASSERTIONS = NO;
+			MTL_ENABLE_DEBUG_INFO = NO;
+			SWIFT_COMPILATION_MODE = wholemodule;
+			SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		A1000000000000000000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+			CODE_SIGN_IDENTITY = "iPhone Developer";
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 1;
+			ENABLE_PREVIEWS = YES;
+			GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			LD_RUNPATH_SEARCH_PATHS = (
+				"$(inherited)",
+				"@executable_path/Frameworks",
+			);
+			MARKETING_VERSION = 1.0.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.edwardshin.trailforge;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SDKROOT = iphoneos;
+			SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+			SWIFT_EMIT_LOC_STRINGS = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A1000000000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+			CODE_SIGN_IDENTITY = "iPhone Developer";
+			CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 1;
+			ENABLE_PREVIEWS = YES;
+			GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			LD_RUNPATH_SEARCH_PATHS = (
+				"$(inherited)",
+				"@executable_path/Frameworks",
+			);
+			MARKETING_VERSION = 1.0.0;
+			PRODUCT_BUNDLE_IDENTIFIER = com.edwardshin.trailforge;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SDKROOT = iphoneos;
+			SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+			SWIFT_EMIT_LOC_STRINGS = YES;
+			SWIFT_VERSION = 5.0;
+			TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000000000000000000000B /* Build configuration list for PBXProject "TrailForgeOverland" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000000C /* Debug */,
+				A1000000000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A1000000000000000000000A /* Build configuration list for PBXNativeTarget "TrailForgeOverland" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000000E /* Debug */,
+				A1000000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000002 /* Project object */;
+}

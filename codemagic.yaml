@@ -1,10 +1,51 @@
 workflows:
+  ios-simulator-verify:
+    name: TrailForge Overland — Simulator verification
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      vars:
+        BUNDLE_ID: "com.edwardshin.trailforge"
+        XCODE_PROJECT: "TrailForgeOverland.xcodeproj"
+        XCODE_SCHEME: "TrailForgeOverland"
+      xcode: latest
+    scripts:
+      - name: Use committed Xcode project
+        script: |
+          cd ios-app
+          if command -v xcodegen >/dev/null 2>&1; then
+            echo "xcodegen is installed; regenerating TrailForgeOverland.xcodeproj from project.yml"
+            xcodegen generate
+          else
+            echo "xcodegen is not installed; using the committed TrailForgeOverland.xcodeproj"
+          fi
+          test -f "$XCODE_PROJECT/project.pbxproj"
+          test -f "$XCODE_PROJECT/xcshareddata/xcschemes/$XCODE_SCHEME.xcscheme"
+      - name: Build an unsigned iOS Simulator app
+        script: |
+          cd ios-app
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+    artifacts:
+      - ios-app/build/DerivedData/**/Build/**/*.app
+      - /tmp/xcodebuild_logs/*.log
+
   ios-appstore-release:
     name: TrailForge Overland — Cloud iOS Build & TestFlight Upload
-    max_build_duration: 30
+    max_build_duration: 60
     instance_type: mac_mini_m2
+    # Create an App Store Connect API key in Codemagic named TrailForge_ASC
+    # after Apple Developer enrollment, then start this workflow.
     integrations:
-      app_store_connect:Codemagic_AppStoreConnect
+      app_store_connect: TrailForge_ASC
     environment:
       ios_signing:
         distribution_type: app_store
@@ -15,11 +56,17 @@ workflows:
         XCODE_SCHEME: "TrailForgeOverland"
       xcode: latest
     scripts:
-      - name: Generate Xcode Project via XcodeGen
+      - name: Use committed Xcode project
         script: |
           cd ios-app
-          brew install xcodegen
-          xcodegen generate
+          if command -v xcodegen >/dev/null 2>&1; then
+            echo "xcodegen is installed; regenerating TrailForgeOverland.xcodeproj from project.yml"
+            xcodegen generate
+          else
+            echo "xcodegen is not installed; using the committed TrailForgeOverland.xcodeproj"
+          fi
+          test -f "$XCODE_PROJECT/project.pbxproj"
+          test -f "$XCODE_PROJECT/xcshareddata/xcschemes/$XCODE_SCHEME.xcscheme"
       - name: Set up code signing settings on Xcode project
         script: |
           cd ios-app
@@ -32,6 +79,7 @@ workflows:
             --scheme "$XCODE_SCHEME"
     artifacts:
       - ios-app/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
     publishing:
       app_store_connect:
         auth: integration
