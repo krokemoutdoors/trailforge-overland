@@ -85,6 +85,67 @@
     .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 7px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; }
     .clin-pill.warn { color: var(--red); }
     #dock { flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--line); }
+    #detents { display: flex; gap: 6px; padding: 8px 10px 0; }
+    #detents button { flex: 1; border: 0; border-radius: 999px; background: #13202e; color: #d5e2ee; font-size: 12px; font-weight: 800; min-height: 36px; padding: 8px 6px; }
+    #detents button.on { background: var(--cyan); color: #041018; }
+    #app[data-detent="peek"]:not([data-dash="1"]) #dock { max-height: 18dvh; overflow: auto; }
+    #app[data-detent="peek"]:not([data-dash="1"]) #detents { padding: 4px 8px 0; }
+    #app[data-detent="peek"]:not([data-dash="1"]) #detents button { min-height: 28px; padding: 4px 6px; font-size: 11px; }
+    #app[data-detent="peek"]:not([data-dash="1"]) .route-stats { display: none; }
+    #app[data-detent="peek"]:not([data-dash="1"]) .actions { flex-wrap: nowrap; overflow-x: auto; padding: 4px 8px 6px; }
+    #app[data-detent="peek"]:not([data-dash="1"]) .actions button { flex: 0 0 auto; padding: 6px 8px; }
+    #app[data-detent="peek"]:not([data-dash="1"]) #top .steps { display: none; }
+    #app[data-detent="peek"]:not([data-dash="1"]) .nav { padding: 4px 10px; }
+    #app[data-detent="peek"]:not([data-dash="1"]) .fit { padding: 4px 10px; }
+    #app[data-detent="peek"]:not([data-dash="1"]) .man, #app[data-detent="peek"]:not([data-dash="1"]) .man svg { width: 32px; height: 32px; }
+    #app[data-detent="peek"]:not([data-dash="1"]) .nav-dist { font-size: 16px; }
+    #app[data-detent="peek"] #sheet { display: none; }
+    #app[data-detent="full"] #dock { max-height: 82dvh; }
+    #app[data-detent="full"] #stage { flex: 0 0 18dvh; min-height: 120px; }
+    #app[data-detent="full"] #sheet { max-height: 70dvh; }
+    #rail { position: absolute; z-index: 560; right: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 8px; }
+    #rail button { width: 48px; height: 48px; min-width: 48px; min-height: 48px; border: 0; border-radius: 14px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 20px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+    #rail button.on { background: var(--cyan); color: #041018; }
+    #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 64px; width: min(340px, calc(100% - 80px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
+    #layerDrawer[hidden] { display: none; }
+    .drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .drawer-head button { border: 0; background: transparent; color: white; font-size: 16px; }
+    .drawer-label { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.06em; margin: 8px 0 4px; }
+    #layerDrawer .seg { flex-direction: column; }
+    #layerDrawer .seg button { text-align: left; border-radius: 10px; }
+    #layerDrawer .field { margin-top: 6px; }
+    .pack { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; background: #13202e; border-radius: 10px; padding: 8px; margin-top: 6px; }
+    .pack small { grid-column: 1; color: var(--muted); font-size: 10px; }
+    .pack button { grid-column: 2; grid-row: 1 / span 2; border: 0; border-radius: 999px; background: #163044; color: white; font-size: 11px; font-weight: 800; padding: 6px 8px; }
+    .profile { background: #101c2b; border-radius: 12px; padding: 8px; margin: 8px 0; }
+    .profile-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 12px; }
+    .profile-top span, .obs-key { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    #elevChart { width: 100%; height: 92px; display: block; touch-action: none; margin-top: 6px; border-radius: 8px; }
+    .reports { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .reports > span { flex: 1 0 100%; color: var(--cyan); font-size: 11px; font-weight: 800; }
+    .reports button { border: 0; border-radius: 999px; background: #163044; color: white; font-size: 11px; font-weight: 800; padding: 7px 10px; }
+    .reports button.on { background: var(--cyan); color: #041018; }
+    #dashHud { display: none; }
+    #app[data-dash="1"] #dashHud { display: block; }
+    #dashHud .corner { position: absolute; z-index: 570; max-width: 46%; background: rgba(7, 16, 24, 0.9); border: 1px solid rgba(62, 203, 255, 0.35); border-radius: 12px; padding: 8px 10px; }
+    #dashHud .tl { top: 8px; left: 8px; } #dashHud .tr { top: 8px; right: 64px; }
+    #dashHud .bl { bottom: 8px; left: 8px; } #dashHud .br { bottom: 8px; right: 64px; }
+    #dashHud span { display: block; color: #7dd3fc; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; }
+    #dashHud b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+    #dashHud small { display: block; color: #d5e4f0; font-size: 11px; }
+    #dashHud button.corner { text-align: left; color: inherit; }
+    #app[data-dash="1"] { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr); grid-template-rows: auto minmax(0, 1fr); }
+    #app[data-dash="1"] #top { grid-column: 1 / -1; }
+    #app[data-dash="1"] #stage { grid-column: 1; grid-row: 2; min-height: 0; max-height: none; flex: unset; }
+    #app[data-dash="1"] #dock { grid-column: 2; grid-row: 2; max-height: none; overflow: auto; border-top: 0; border-left: 1px solid var(--line); }
+    #app[data-dash="1"] #sheet { display: block !important; max-height: none; }
+    #app[data-dash="1"] .modes button, #app[data-dash="1"] .actions button, #app[data-dash="1"] .reports button, #app[data-dash="1"] #detents button { min-height: 48px; font-size: 14px; }
+    #app[data-dash="1"] #rail button { width: 56px; height: 56px; font-size: 22px; }
+    #app[data-dash="1"] .coords, #app[data-dash="1"] .clin-pill, #app[data-dash="1"] .hud-read { display: none; }
+    #app[data-dash="1"] .hud-left { top: 78px; }
+    #app[data-dash="1"] .legend { bottom: 78px; }
+    .scrub-pin, .hazard-pin { background: transparent; border: 0; }
+    .scrub-pin span, .hazard-pin span { display: inline-block; background: white; color: #041018; font-size: 11px; font-weight: 800; padding: 3px 6px; border-radius: 999px; border: 2px solid #3ecbff; white-space: nowrap; }
     .route-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 8px 10px 0; }
     .route-stats div { background: rgba(62, 203, 255, 0.08); border-radius: 10px; text-align: center; padding: 6px 2px; }
     .route-stats b { display: block; color: var(--cyan); font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -97,8 +158,8 @@
     .actions .primary.on { background: var(--green); color: #04140c; }
     .actions .end { background: #c43434; }
     #sheet { max-height: 42dvh; overflow: auto; padding: 8px 10px 12px; }
-    #app[data-mode="rig"] #stage { flex: 0 0 22dvh; }
-    #app[data-mode="rig"] #sheet { max-height: 66dvh; }
+    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]):not([data-detent="full"]) #stage { flex: 0 0 22dvh; }
+    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]):not([data-detent="full"]) #sheet { max-height: 66dvh; }
     .modes { padding-bottom: 8px; }
     .modes button { flex: 1; background: #13202e; color: #d5e2ee; font-size: 12px; padding: 9px 4px; }
     .modes button.on { background: var(--cyan); color: #041018; }
@@ -197,8 +258,65 @@
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
       <div class="clin-pill" id="clinPill">Roll 0° / Pitch 0° · Air Down —</div>
       <div class="lot-card" id="lotCard" hidden></div>
+      <nav id="rail" aria-label="Map tools">
+        <button type="button" data-act="recenter" title="Recenter / Heading" aria-label="Recenter / Heading">⌖</button>
+        <button type="button" data-act="layers" title="Layers &amp; Opacity Drawer" aria-label="Layers and Opacity Drawer">▦</button>
+        <button type="button" data-act="plot" title="Custom Route Plotter" aria-label="Custom Route Plotter">✎</button>
+        <button type="button" data-act="corridor" title="5-Mile Corridor Offline Download" aria-label="5-Mile Corridor Offline Download">↓</button>
+      </nav>
+      <aside id="layerDrawer" hidden>
+        <div class="drawer-head"><b id="drawerTitle">Layers &amp; Opacity</b><button type="button" data-act="close-drawer" aria-label="Close drawer">✕</button></div>
+        <section data-panel="layers">
+          <div class="drawer-label">BASEMAP</div>
+          <div class="seg" id="basemapSeg">
+            <button type="button" data-act="basemap" data-id="hybrid">Hybrid Satellite+Topo</button>
+            <button type="button" data-act="basemap" data-id="topo">USGS Topo</button>
+            <button type="button" data-act="basemap" data-id="satellite">High-Res Satellite</button>
+            <button type="button" data-act="basemap" data-id="dark">Dark Overland</button>
+          </div>
+          <div class="drawer-label">OVERLAYS</div>
+          <label class="field"><span>Parcels &amp; Landowners <b data-read="parcels">100%</b></span><input type="range" min="0" max="100" step="1" value="100" data-overlay="parcels" aria-label="Parcels and Landowners opacity" /></label>
+          <label class="field"><span>USFS/BLM Corridors <b data-read="corridors">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="corridors" aria-label="USFS and BLM corridor opacity" /></label>
+          <label class="field"><span>&lt;3° LIDAR Slope Shading <b data-read="slope">55%</b></span><input type="range" min="0" max="100" step="1" value="55" data-overlay="slope" aria-label="Slope shading opacity" /></label>
+          <label class="field"><span>Wildfires &amp; Stream Gauges <b data-read="hazards">80%</b></span><input type="range" min="0" max="100" step="1" value="80" data-overlay="hazards" aria-label="Wildfire and stream gauge opacity" /></label>
+        </section>
+        <section data-panel="corridor" hidden>
+          <div class="drawer-label">5-MILE BUFFER</div>
+          <div class="sub">Standard Topo or Max Satellite, saved on this device along the selected trail, BDR, or active GPS route.</div>
+          <div class="seg" style="margin-top:8px">
+            <button type="button" data-act="pack-kind" data-id="topo">Standard Topo</button>
+            <button type="button" data-act="pack-kind" data-id="satellite">Max Satellite</button>
+          </div>
+          <div class="actions"><button type="button" class="primary" data-act="download-corridor">Download 5-Mile Route Corridor</button></div>
+          <div class="status" id="packStatus"></div>
+          <div id="packList"></div>
+        </section>
+        <section data-panel="plot" hidden>
+          <div class="drawer-label">TAP THE MAP</div>
+          <div class="sub">Points snap to a nearby trail. Rig-Fit updates as you plot.</div>
+          <div class="route-stats" style="padding-left:0;padding-right:0"><div><b id="plotCount">0 points</b><span>plotted</span></div><div><b id="plotFit">—</b><span>rig-fit</span></div></div>
+          <div class="actions">
+            <button type="button" class="primary" data-act="export-gpx">Export GPX</button>
+            <button type="button" data-act="import-gpx">Import GPX</button>
+            <button type="button" class="end" data-act="clear-plot">Clear</button>
+          </div>
+          <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml,text/xml" hidden />
+        </section>
+      </aside>
+      <div id="dashHud">
+        <div class="corner tl" id="dashTurn"><span>NEXT TURN</span><b>—</b></div>
+        <div class="corner tr" id="dashTilt"><span>ROLL / PITCH</span><b>0° / 0°</b></div>
+        <div class="corner bl" id="dashGps"><span>MY GPS</span><b>—</b></div>
+        <button type="button" class="corner br" id="dashTarget" data-act="copy-target" aria-label="Copy target coordinates"><span>TARGET</span><b>—</b></button>
+      </div>
     </div>
     <footer id="dock">
+      <div id="detents">
+        <button type="button" data-act="detent" data-id="peek">Map Peek</button>
+        <button type="button" data-act="detent" data-id="split">Split</button>
+        <button type="button" data-act="detent" data-id="full">Full</button>
+        <button type="button" id="dashBtn" data-act="dash">In-Dash</button>
+      </div>
       <div id="routebar"></div>
       <div id="sheet"></div>
     </footer>
