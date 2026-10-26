@@ -88,6 +88,7 @@ struct MainCockpitView: View {
 
     @State private var mode: CockpitMode = .drive
     @State private var selectedTrailID: String = "imogene"
+    @State private var showTrailMenu = false
     @State private var trailQuery: String = ""
     @State private var placeHits: [PlaceHit] = []
     @State private var placeSearchGeneration = 0
@@ -218,17 +219,24 @@ struct MainCockpitView: View {
     }
 
     private var activeTrail: OverlandTrail {
-        pickerTrails.first(where: { $0.id == selectedTrailID })
-            ?? pickerTrails.first
-            ?? USATrailAtlas.all[0]
-    }
-
-    private var mapCampSpots: [CampSpot] {
-        pickerTrails.flatMap(\.campSpots)
+        let catalog = USATrailAtlas.all + telemetry.discoveredTrails
+        if let selected = catalog.first(where: { $0.id == selectedTrailID }) {
+            return selected
+        }
+        if let visible = pickerTrails.first(where: { !$0.isBDR }) {
+            return visible
+        }
+        return catalog.first(where: { !$0.isBDR }) ?? catalog[0]
     }
 
     private var mapTrails: [OverlandTrail] {
-        activeRoute == nil ? pickerTrails : [activeTrail]
+        guard activeRoute == nil else { return [activeTrail] }
+        let activeID = selectedTrailID
+        return pickerTrails.filter { !$0.isBDR || $0.id == activeID }
+    }
+
+    private var mapCampSpots: [CampSpot] {
+        mapTrails.flatMap(\.campSpots)
     }
 
     private var mapCamps: [CampSpot] {
@@ -279,6 +287,7 @@ struct MainCockpitView: View {
         hasher.combine(activeRoute?.options.count)
         hasher.combine(activeRoute?.spur.count)
         hasher.combine(selectedTrailID)
+        hasher.combine(mapTrails.map(\.id).joined(separator: ","))
         hasher.combine(selectedTrailDraw.count)
         hasher.combine(routeStartedFromGPS)
         hasher.combine(Int(rigStore.profile.tireInches))
@@ -543,7 +552,10 @@ struct MainCockpitView: View {
                 }
             }
             .onChange(of: trailQuery) { _, newValue in
-                if !pickerTrails.contains(where: { $0.id == selectedTrailID }), let first = pickerTrails.first {
+                if regionFilter == "bdr" {
+                    showTrailMenu = true
+                } else if !pickerTrails.contains(where: { $0.id == selectedTrailID }),
+                          let first = pickerTrails.first(where: { !$0.isBDR }) {
                     selectedTrailID = first.id
                 }
                 schedulePlaceSearch(newValue)
@@ -551,8 +563,9 @@ struct MainCockpitView: View {
             .onChange(of: telemetry.isScanningTrails) { _, scanning in
                 guard !scanning else { return }
                 refreshSelectedTrailDraw()
-                guard regionFilter == "near", activeRoute == nil, !followRoute, let first = pickerTrails.first else { return }
-                if selectedTrailID != first.id {
+                guard regionFilter == "near", activeRoute == nil, !followRoute else { return }
+                if pickerTrails.contains(where: { $0.id == selectedTrailID && $0.isBDR }) { return }
+                if let first = pickerTrails.first(where: { !$0.isBDR }), selectedTrailID != first.id {
                     selectedTrailID = first.id
                 }
             }
@@ -852,18 +865,8 @@ struct MainCockpitView: View {
                     }
                 }
             }
-            Menu {
-                if pickerTrails.isEmpty {
-                    Button("No matching routes") {}
-                        .disabled(true)
-                }
-                ForEach(pickerTrails) { trail in
-                    Button {
-                        selectedTrailID = trail.id
-                    } label: {
-                        Text(routeMenuLabel(trail))
-                    }
-                }
+            Button {
+                showTrailMenu.toggle()
             } label: {
                 HStack {
                     Text("\(filterTitle) • \(pickerTrails.count) \(pickerTrails.count == 1 ? "Route" : "Routes") ▾")
@@ -876,11 +879,39 @@ struct MainCockpitView: View {
                 .foregroundColor(.cyan)
                 .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
+            if showTrailMenu {
+                VStack(spacing: 0) {
+                    if pickerTrails.isEmpty {
+                        Text("No matching routes")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    ForEach(pickerTrails) { trail in
+                        Button {
+                            selectTrail(trail)
+                        } label: {
+                            Text(routeMenuLabel(trail))
+                                .font(.caption.bold())
+                                .foregroundColor(trail.id == selectedTrailID ? .black : .white)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(trail.id == selectedTrailID ? Color.cyan : Color.white.opacity(0.06))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(pickerTrails) { trail in
                         Button {
-                            selectedTrailID = trail.id
+                            selectTrail(trail)
                         } label: {
                             Text(routePillLabel(trail))
                                 .font(.caption2.bold())
@@ -1086,14 +1117,28 @@ struct MainCockpitView: View {
         }
     }
 
+    private func selectTrail(_ trail: OverlandTrail) {
+        selectedTrailID = trail.id
+        showTrailMenu = false
+    }
+
     private func applyFilterSelection(scanIfNear: Bool) {
-        if let first = pickerTrails.first {
-            if selectedTrailID != first.id {
-                if followRoute { skipNextFocus = true }
-                selectedTrailID = first.id
-            } else if !followRoute {
-                focus(on: first)
+        if regionFilter == "bdr" {
+            showTrailMenu = true
+            if detent == .peek { detent = .half }
+            if let selected = pickerTrails.first(where: { $0.id == selectedTrailID && $0.isBDR }), !followRoute {
+                focus(on: selected)
             }
+        } else if pickerTrails.contains(where: { $0.id == selectedTrailID }) {
+            if !followRoute, let selected = pickerTrails.first(where: { $0.id == selectedTrailID }) {
+                focus(on: selected)
+            }
+        } else if let first = pickerTrails.first(where: { !$0.isBDR }) {
+            if followRoute { skipNextFocus = true }
+            selectedTrailID = first.id
+        } else {
+            showTrailMenu = true
+            if detent == .peek { detent = .half }
         }
         guard scanIfNear, regionFilter == "near" else { return }
         let center = locationTracker.userCoordinate ?? mapCenter
