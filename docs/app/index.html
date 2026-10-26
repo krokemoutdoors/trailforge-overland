@@ -74,7 +74,7 @@
     .lot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
     .lot-grid div { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 6px 8px; }
     .lot-grid span { display: block; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 0.04em; }
-    .lot-grid b { display: block; font-size: 12px; }
+    .lot-grid b { display: block; font-size: 12px; overflow-wrap: anywhere; }
     .lot-card .line, .lot-card .go { width: 100%; border: 0; border-radius: 999px; font-weight: 800; }
     .lot-card .line { text-align: left; background: rgba(7, 16, 24, 0.9); color: #e8f1f8; padding: 8px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
     .lot-card .go { margin-top: 8px; background: #1d6dff; color: white; padding: 9px 10px; font-size: 13px; }
@@ -85,8 +85,8 @@
     .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 7px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; }
     .clin-pill.warn { color: var(--red); }
     #dock { flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--line); }
-    #detents { display: flex; gap: 6px; padding: 8px 10px 0; }
-    #detents button { flex: 1; border: 0; border-radius: 999px; background: #13202e; color: #d5e2ee; font-size: 12px; font-weight: 800; min-height: 36px; padding: 8px 6px; }
+    #detents { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+    #detents button { flex: 1 1 auto; border: 0; border-radius: 999px; background: #13202e; color: #d5e2ee; font-size: 12px; font-weight: 800; min-height: 36px; padding: 8px 6px; }
     #detents button.on { background: var(--cyan); color: #041018; }
     #app[data-detent="peek"]:not([data-dash="1"]) #dock { max-height: 18dvh; overflow: auto; }
     #app[data-detent="peek"]:not([data-dash="1"]) #detents { padding: 4px 8px 0; }
@@ -130,6 +130,7 @@
     #dashHud .corner { position: absolute; z-index: 570; max-width: 46%; background: rgba(7, 16, 24, 0.9); border: 1px solid rgba(62, 203, 255, 0.35); border-radius: 12px; padding: 8px 10px; }
     #dashHud .tl { top: 8px; left: 8px; } #dashHud .tr { top: 8px; right: 64px; }
     #dashHud .bl { bottom: 8px; left: 8px; } #dashHud .br { bottom: 8px; right: 64px; }
+    #dashHud .bc { bottom: 8px; left: 50%; transform: translateX(-50%); max-width: 70%; text-align: center; }
     #dashHud span { display: block; color: #7dd3fc; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; }
     #dashHud b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
     #dashHud small { display: block; color: #d5e4f0; font-size: 11px; }
@@ -141,6 +142,9 @@
     #app[data-dash="1"] #sheet { display: block !important; max-height: none; }
     #app[data-dash="1"] .modes button, #app[data-dash="1"] .actions button, #app[data-dash="1"] .reports button, #app[data-dash="1"] #detents button { min-height: 48px; font-size: 14px; }
     #app[data-dash="1"] #rail button { width: 56px; height: 56px; font-size: 22px; }
+    #app[data-night="1"] #map { filter: sepia(1) saturate(4) hue-rotate(-40deg) brightness(0.55); }
+    #app[data-night="1"] .hud-read b, #app[data-night="1"] #dashHud b, #app[data-night="1"] .fit-title, #app[data-night="1"] .coords b { color: #ffb020; }
+    #app[data-night="1"] .clin-pill, #app[data-night="1"] #dashHud span { color: #ff8a3d; }
     #app[data-dash="1"] .coords, #app[data-dash="1"] .clin-pill, #app[data-dash="1"] .hud-read { display: none; }
     #app[data-dash="1"] .hud-left { top: 78px; }
     #app[data-dash="1"] .legend { bottom: 78px; }
@@ -220,7 +224,21 @@
     .camp-pin span { background: var(--green); color: #04140c; }
     .camp-pin.warn span { background: #ffe14a; color: #1c1602; }
     .flag-pin span { background: white; color: #124; }
-    .leaflet-control-attribution { font-size: 9px !important; background: rgba(7,16,24,.55) !important; color: #9fb3c8 !important; }
+    .leaflet-control-attribution { font-size: 10px !important; background: rgba(7,16,24,.72) !important; color: #d5e4f0 !important; max-width: min(78vw, 420px); white-space: normal !important; line-height: 1.35; }
+    .convoy { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; }
+    .convoy button { flex: 0 0 auto; border: 0; border-radius: 999px; background: #3b1d1d; color: white; font-size: 12px; font-weight: 800; min-height: 44px; padding: 8px 12px; }
+    .crux { font-size: 12px; font-weight: 800; padding: 4px 0; }
+    #convoyBanner { position: absolute; z-index: 680; top: 74px; left: 50%; transform: translateX(-50%); background: #7f1d1d; color: white; border-radius: 999px; padding: 8px 14px; font-weight: 800; font-size: 13px; max-width: 92%; }
+    #convoyBanner[hidden] { display: none; }
+    #hazardSheet { position: absolute; z-index: 670; left: 8px; right: 72px; bottom: 8px; background: rgba(8,16,28,.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
+    #hazardSheet[hidden] { display: none; }
+    #hazardSheet .seg { flex-wrap: wrap; }
+    #hazardSheet .seg button, #hazardSheet .photo { min-height: 48px; }
+    #hazardSheet .photo { display: inline-flex; align-items: center; border-radius: 999px; background: #163044; font-weight: 800; font-size: 13px; padding: 8px 12px; }
+    #qrModal { position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,.72); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    #qrModal[hidden] { display: none; }
+    .qr-card { background: #0c1520; border-radius: 16px; padding: 16px; text-align: center; width: min(320px, 100%); }
+    #qrCanvas { width: 220px; height: 220px; background: white; margin: 10px auto; display: block; }
     .leaflet-control-attribution a { color: #c5d7e6 !important; }
   </style>
   <script>
@@ -245,7 +263,7 @@
         <button type="button" data-act="center">Center on My GPS</button>
         <button type="button" data-act="near">Near My GPS</button>
         <button type="button" data-act="scan" id="scanBtn">Scan Area for All USA 4x4 Trails</button>
-        <button type="button" id="parcelToggle" data-act="parcels" class="on">Parcels &amp; Owners</button>
+        <button type="button" id="parcelToggle" data-act="parcels" class="on">Parcels</button>
       </div>
       <div class="hud-read">
         <div><b id="speedRead">—</b><span>mph</span></div>
@@ -263,7 +281,25 @@
         <button type="button" data-act="layers" title="Layers &amp; Opacity Drawer" aria-label="Layers and Opacity Drawer">▦</button>
         <button type="button" data-act="plot" title="Custom Route Plotter" aria-label="Custom Route Plotter">✎</button>
         <button type="button" data-act="corridor" title="5-Mile Corridor Offline Download" aria-label="5-Mile Corridor Offline Download">↓</button>
+        <button type="button" data-act="hazard" title="Drop Hazard Pin" aria-label="Drop Hazard Pin">📸</button>
       </nav>
+      <div id="convoyBanner" hidden></div>
+      <section id="hazardSheet" hidden>
+        <div class="drawer-head"><b>Drop Hazard Pin</b><button type="button" data-act="close-hazard" aria-label="Close hazard pin">✕</button></div>
+        <div class="sub" id="hazardWhere">At MY GPS</div>
+        <div class="seg" style="margin-top:8px">
+          <button type="button" data-act="drop-hazard" data-id="rock">🪨 Rock Ledge</button>
+          <button type="button" data-act="drop-hazard" data-id="ford">💧 Deep Ford</button>
+          <button type="button" data-act="drop-hazard" data-id="tree">🌲 Downed Tree</button>
+          <button type="button" data-act="drop-hazard" data-id="pad">⛺ Verified &lt;3° Pad</button>
+          <button type="button" data-act="drop-hazard" data-id="gate">🔒 Locked Gate</button>
+        </div>
+        <div class="actions">
+          <label class="photo">📸 Photo<input id="hazardPhoto" type="file" accept="image/*" capture="environment" hidden /></label>
+          <button type="button" data-act="hazard-voice">🎙️ Voice note</button>
+        </div>
+        <div class="sub" id="hazardNote"></div>
+      </section>
       <aside id="layerDrawer" hidden>
         <div class="drawer-head"><b id="drawerTitle">Layers &amp; Opacity</b><button type="button" data-act="close-drawer" aria-label="Close drawer">✕</button></div>
         <section data-panel="layers">
@@ -275,14 +311,14 @@
             <button type="button" data-act="basemap" data-id="dark">Dark Overland</button>
           </div>
           <div class="drawer-label">OVERLAYS</div>
-          <label class="field"><span>Parcels &amp; Landowners <b data-read="parcels">100%</b></span><input type="range" min="0" max="100" step="1" value="100" data-overlay="parcels" aria-label="Parcels and Landowners opacity" /></label>
+          <label class="field"><span>Parcels <b data-read="parcels">100%</b></span><input type="range" min="0" max="100" step="1" value="100" data-overlay="parcels" aria-label="Parcels opacity" /></label>
           <label class="field"><span>USFS/BLM Corridors <b data-read="corridors">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="corridors" aria-label="USFS and BLM corridor opacity" /></label>
           <label class="field"><span>&lt;3° LIDAR Slope Shading <b data-read="slope">55%</b></span><input type="range" min="0" max="100" step="1" value="55" data-overlay="slope" aria-label="Slope shading opacity" /></label>
           <label class="field"><span>Wildfires &amp; Stream Gauges <b data-read="hazards">80%</b></span><input type="range" min="0" max="100" step="1" value="80" data-overlay="hazards" aria-label="Wildfire and stream gauge opacity" /></label>
         </section>
         <section data-panel="corridor" hidden>
           <div class="drawer-label">5-MILE BUFFER</div>
-          <div class="sub">Standard Topo or Max Satellite, saved on this device along the selected trail, BDR, or active GPS route.</div>
+          <div class="sub">USGS National Map public-domain tiles only. Standard Topo or Max Satellite, saved on this device along the selected trail, backcountry corridor, or active GPS route.</div>
           <div class="seg" style="margin-top:8px">
             <button type="button" data-act="pack-kind" data-id="topo">Standard Topo</button>
             <button type="button" data-act="pack-kind" data-id="satellite">Max Satellite</button>
@@ -293,7 +329,11 @@
         </section>
         <section data-panel="plot" hidden>
           <div class="drawer-label">TAP THE MAP</div>
-          <div class="sub">Points snap to a nearby trail. Rig-Fit updates as you plot.</div>
+          <div class="sub">Snap to a nearby trail or freehand a wash bridge. Rig-Fit updates as you plot.</div>
+          <div class="seg" id="plotModeSeg" style="margin-top:8px">
+            <button type="button" data-act="plot-mode" data-id="snap" class="on">🧲 Snap to Trail</button>
+            <button type="button" data-act="plot-mode" data-id="freehand">✏️ Freehand / Wash Bridge</button>
+          </div>
           <div class="route-stats" style="padding-left:0;padding-right:0"><div><b id="plotCount">0 points</b><span>plotted</span></div><div><b id="plotFit">—</b><span>rig-fit</span></div></div>
           <div class="actions">
             <button type="button" class="primary" data-act="export-gpx">Export GPX</button>
@@ -308,6 +348,7 @@
         <div class="corner tr" id="dashTilt"><span>ROLL / PITCH</span><b>0° / 0°</b></div>
         <div class="corner bl" id="dashGps"><span>MY GPS</span><b>—</b></div>
         <button type="button" class="corner br" id="dashTarget" data-act="copy-target" aria-label="Copy target coordinates"><span>TARGET</span><b>—</b></button>
+        <button type="button" class="corner bc" id="dashHazard" data-act="hazard" aria-label="Drop hazard pin">📸 / 🎙️ Drop Hazard Pin</button>
       </div>
     </div>
     <footer id="dock">
@@ -316,14 +357,25 @@
         <button type="button" data-act="detent" data-id="split">Split</button>
         <button type="button" data-act="detent" data-id="full">Full</button>
         <button type="button" id="dashBtn" data-act="dash">In-Dash</button>
+        <button type="button" data-act="thermal">🌡️ Thermal</button>
+        <button type="button" data-act="night">🌙 Night</button>
       </div>
       <div id="routebar"></div>
       <div id="sheet"></div>
     </footer>
   </div>
   <div id="toast" hidden></div>
+  <div id="qrModal" hidden>
+    <div class="qr-card">
+      <b>Trip package</b>
+      <canvas id="qrCanvas" width="220" height="220"></canvas>
+      <div class="sub" id="qrCaption"></div>
+      <button type="button" data-act="close-qr">Close</button>
+    </div>
+  </div>
   <script src="leaflet.js"></script>
   <script src="atlas.js"></script>
+  <script src="qrcode.js"></script>
   <script src="cockpit.js"></script>
 </body>
 </html>

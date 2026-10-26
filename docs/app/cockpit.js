@@ -9,6 +9,13 @@
     { id: "com.edwardshin.trailforge.founders.lifetime", title: "Lifetime Founders Pass", price: "$59.99", note: "One-time unlock", founders: true },
     { id: "com.edwardshin.trailforge.pro.monthly", title: "Weekend Expedition", price: "$4.99/mo", note: "Monthly" }
   ];
+  const MAP_ATTRIB = "USGS National Map (Public Domain) • © OpenStreetMap contributors";
+  const CORRIDOR_NOTE = "Independent public-road overland corridor compiled from public USFS, BLM, and state highway data. Not affiliated with, endorsed by, or sponsored by Backcountry Discovery Routes®.";
+  const USGS_TILES = {
+    hybrid: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}",
+    satellite: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
+    topo: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}"
+  };
   const NAME_TO_CODE = {};
   ATLAS.states.forEach(function (box) { NAME_TO_CODE[box.name.toLowerCase()] = box.code; });
 
@@ -70,7 +77,16 @@
     packKind: localStorage.getItem("tf-pack-kind") === "satellite" ? "satellite" : "topo",
     packBusy: false,
     scrubIndex: null,
-    scrubTrailId: null
+    scrubTrailId: null,
+    plotMode: localStorage.getItem("tf-plot-mode") === "freehand" ? "freehand" : "snap",
+    thermal: localStorage.getItem("tf-thermal") === "1",
+    night: localStorage.getItem("tf-night") === "1",
+    dropped: loadDropped(),
+    spokenHazards: {},
+    convoy: "",
+    mvum: null,
+    lastAtt: 0,
+    parcelNote: ""
   };
 
   const pendingNet = new Map();
@@ -85,11 +101,18 @@
   let slopeLayer;
   let hazardLayer;
   let plotLayer;
+  let hazardPinLayer;
+  let smaLayer;
   let offlineLayer;
+  let hybridLayer;
   let imageryLayer;
   let topoLayer;
   let labelLayer;
   let darkLayer;
+  let osmLayer;
+  let identifyGen = 0;
+  let hazardPhoto = "";
+  let hazardNote = "";
   let scrubMarker;
   let toastTimer;
   let chromeTimer;
@@ -310,8 +333,14 @@
   function filterTitle() {
     if (state.filter === "near") return "Near Me";
     if (state.filter === "all") return "All USA";
-    if (state.filter === "bdr") return "BDR Routes";
+    if (state.filter === "bdr") return "Backcountry Corridors";
     return state.filter;
+  }
+
+  function corridorLabel(trail) {
+    if (!trail || !trail.bdr) return trail ? trail.name : "";
+    const code = trail.state || "US";
+    return code + " Backcountry Corridor (" + String(trail.id || "corridor").toUpperCase() + " Ref)";
   }
 
   function pickerTrails() {
@@ -321,7 +350,8 @@
       if (seen.has(trail.id)) return false;
       seen.add(trail.id);
       if (query) {
-        const hay = (trail.name + " " + trail.region + " " + trail.state + " " + (trail.states || []).join(" ") + " " + trail.agency).toLowerCase();
+        const corridorHay = trail.bdr ? " bdr wabdr backcountry corridor " + trail.id + " " : "";
+        const hay = (trail.name + " " + corridorHay + trail.region + " " + trail.state + " " + (trail.states || []).join(" ") + " " + trail.agency).toLowerCase();
         if (!hay.includes(query)) return false;
       }
       if (state.filter === "bdr") return !!trail.bdr;
@@ -478,7 +508,8 @@
         const binary = atob(payload || "");
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-        pending.resolve(new Blob([bytes], { type: "image/png" }));
+        const type = bytes.length > 2 && bytes[0] === 0xFF && bytes[1] === 0xD8 ? "image/jpeg" : "image/png";
+        pending.resolve(new Blob([bytes], { type: type }));
       } catch (error) {
         pending.reject(error);
       }
@@ -537,7 +568,7 @@
     const list = pickerTrails();
     const fit = trail ? evaluate(trail) : null;
     const color = !list.length || !fit ? "#8ea6bb" : fitColor(fit.verdict);
-    const title = !list.length || !trail ? "No routes for " + filterTitle() : fit.verdict + " · " + trail.name;
+    const title = !list.length || !trail ? "No routes for " + filterTitle() : fit.verdict + " · " + corridorLabel(trail);
     const detail = !list.length || !trail ? "Pick another state or tap Near Me." : bannerDetail(trail, fit);
     top.innerHTML = '<div class="fit"><div class="lamp" style="background:' + color + ";color:" + color + '"></div><div class="fit-copy"><div class="fit-title">' + esc(title) + '</div><div class="sub">' + esc(detail) + '</div></div><button type="button" class="pill-btn" data-act="offline">' + (state.offlineSaved ? "Offline" : "Save") + "</button></div>";
   }
@@ -570,22 +601,24 @@
   function driveHtml() {
     const list = pickerTrails();
     const countLabel = filterTitle() + " • " + list.length + (list.length === 1 ? " Route" : " Routes") + " ▾";
-    const chips = ['<button type="button" class="chip' + (state.filter === "near" ? " on" : "") + '" data-act="filter" data-id="near">Near Me</button>', '<button type="button" class="chip' + (state.filter === "all" ? " on" : "") + '" data-act="filter" data-id="all">All USA</button>', '<button type="button" class="chip' + (state.filter === "bdr" ? " on" : "") + '" data-act="filter" data-id="bdr">BDR Routes</button>'].concat(ATLAS.states.map(function (box) {
+    const chips = ['<button type="button" class="chip' + (state.filter === "near" ? " on" : "") + '" data-act="filter" data-id="near">Near Me</button>', '<button type="button" class="chip' + (state.filter === "all" ? " on" : "") + '" data-act="filter" data-id="all">All USA</button>', '<button type="button" class="chip' + (state.filter === "bdr" ? " on" : "") + '" data-act="filter" data-id="bdr">Backcountry Corridors</button>'].concat(ATLAS.states.map(function (box) {
       return '<button type="button" class="chip' + (state.filter === box.code ? " on" : "") + '" data-act="filter" data-id="' + box.code + '">' + box.code + "</button>";
     })).join("");
     const rows = list.map(function (trail) {
       const fit = evaluate(trail);
       const away = state.fix ? " · " + miles(state.fix, trail).toFixed(1) + " mi away" : "";
       const where = trail.states && trail.states.length > 1 ? trail.states.join("/") : trail.state;
-      return '<button type="button" class="row" data-act="pick" data-id="' + esc(trail.id) + '"><i class="dot" style="background:' + fitColor(fit.verdict) + '"></i><span class="meta"><b>' + esc(where + " · " + trail.name) + "</b><small>" + esc(trail.miles + " mi · " + num(trail.clearance) + '" · ' + shortFit(fit.verdict) + away) + "</small></span></button>";
+      return '<button type="button" class="row" data-act="pick" data-id="' + esc(trail.id) + '"><i class="dot" style="background:' + fitColor(fit.verdict) + '"></i><span class="meta"><b>' + esc(where + " · " + corridorLabel(trail)) + "</b><small>" + esc(trail.miles + " mi · " + num(trail.clearance) + '" · ' + shortFit(fit.verdict) + away) + "</small></span></button>";
     }).join("") || '<div class="row"><span class="meta"><b>No matching routes</b></span></div>';
     const pills = list.slice(0, 24).map(function (trail) {
-      const label = state.fix ? trail.name + " · " + Math.round(miles(state.fix, trail)) + " mi" : trail.name;
+      const shown = corridorLabel(trail);
+      const label = state.fix ? shown + " · " + Math.round(miles(state.fix, trail)) + " mi" : shown;
       return '<button type="button" class="trail-pill' + (trail.id === state.selectedId ? " on" : "") + '" data-act="pick" data-id="' + esc(trail.id) + '">' + esc(label) + "</button>";
     }).join("");
     const trail = selected();
     const telemetry = profileHtml(trail) + telemetryHtml(trail);
-    return '<input class="search" id="search" placeholder="Search trails or state" value="' + esc(state.query) + '" /><div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + "</div>" + telemetry;
+    const convoy = '<div class="convoy"><button type="button" data-act="convoy" data-id="🛑 Stopping Ahead">🛑 Stopping Ahead</button><button type="button" data-act="convoy" data-id="🛞 Airing Down">🛞 Airing Down</button><button type="button" data-act="convoy" data-id="🆘 Stuck — Need Winch/Strap">🆘 Stuck — Need Winch/Strap</button><button type="button" data-act="convoy" data-id="🔒 Gate Locked — Turn Around">🔒 Gate Locked — Turn Around</button></div>';
+    return '<input class="search" id="search" placeholder="Search trails or state" value="' + esc(state.query) + '" /><div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
   }
 
   function profileHtml(trail) {
@@ -595,7 +628,16 @@
       return '<button type="button" data-act="report" data-id="' + esc(status) + '" class="' + (latest && latest.status === status ? "on" : "") + '">' + esc(status) + "</button>";
     }).join("");
     const queued = latest ? "Queued on device: " + esc(latest.status) : "Reports stay on this device until you have a signal.";
-    return '<div class="profile"><div class="profile-top"><b>Elevation</b><span id="elevRead">—</span></div><canvas id="elevChart" height="92"></canvas><div class="obs-key">💧 Ford · 🪨 Ledge · ⛺ &lt;3° Pad</div><div class="reports"><span>Report Trail Status</span>' + pills + '</div><div class="sub">' + queued + "</div></div>";
+    const crux = cruxPins(trail).map(function (pin) {
+      return '<div class="crux">' + esc(pin.title) + "</div>";
+    }).join("");
+    const badge = mvumBadge(trail);
+    const ranger = nearestRanger(trail);
+    const rangerBtn = ranger
+      ? '<button type="button" data-act="call-ranger" data-id="' + esc(ranger.phone) + '">Call ' + esc(ranger.name) + "</button>"
+      : '<button type="button" data-act="ranger-page">Ranger district contacts</button>';
+    const disclaimer = trail.bdr ? '<div class="sub">' + esc(CORRIDOR_NOTE) + "</div>" : "";
+    return '<div class="profile"><div class="profile-top"><b>Elevation</b><span id="elevRead">—</span></div><canvas id="elevChart" height="92"></canvas><div class="obs-key">💧 Ford · 🪨 Ledge · ⛺ &lt;3° Pad</div>' + (crux ? '<div class="crux-list">' + crux + "</div>" : "") + (badge ? '<div class="sub mvum">' + esc(badge) + "</div>" : "") + '<div class="actions"><button type="button" data-act="share-trip">Share Trip Package (QR / Export)</button>' + rangerBtn + '</div>' + disclaimer + '<div class="reports"><span>Report Trail Status</span>' + pills + '</div><div class="sub">' + queued + "</div></div>";
   }
 
   function telemetryHtml(trail) {
@@ -616,7 +658,7 @@
       const trail = trailById(spot.trailID);
       return '<div class="pad"><div class="meta"><b>' + esc(spot.name) + "</b><small>" + spot.slope.toFixed(1) + "° Slope · " + spot.starlink + "% Starlink · " + esc(trail ? trail.name : "Trail") + '</small></div><button type="button" class="cta" data-act="route" data-id="' + esc(spot.id) + '">Route Here</button></div>';
     }).join("");
-    const chips = '<div class="chips"><button type="button" class="chip' + (state.filter === "near" ? " on" : "") + '" data-act="filter" data-id="near">Near Me</button><button type="button" class="chip' + (state.filter === "bdr" ? " on" : "") + '" data-act="filter" data-id="bdr">BDR Routes</button>' + ATLAS.states.map(function (box) {
+    const chips = '<div class="chips"><button type="button" class="chip' + (state.filter === "near" ? " on" : "") + '" data-act="filter" data-id="near">Near Me</button><button type="button" class="chip' + (state.filter === "bdr" ? " on" : "") + '" data-act="filter" data-id="bdr">Backcountry Corridors</button>' + ATLAS.states.map(function (box) {
       return '<button type="button" class="chip' + (state.filter === box.code ? " on" : "") + '" data-act="filter" data-id="' + box.code + '">' + box.code + "</button>";
     }).join("") + "</div>";
     return chips + '<div class="status">' + title + "</div>" + cards;
@@ -649,7 +691,7 @@
       const owned = state.billing.pro ? "Unlocked" : "Get";
       return '<div class="pass' + (item.founders ? " founders" : "") + '"><div class="meta"><b>' + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><b id="psiRead">' + psi.front + "F / " + psi.rear + 'R</b><span>Air-down PSI · ' + esc(state.surface) + '</span><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + "°</div></div></div>" + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.2.0 · build 8<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><b id="psiRead">' + psi.front + "F / " + psi.rear + 'R</b><span>Air-down PSI · ' + esc(state.surface) + '</span><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + "°</div></div></div>" + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.3.0 · build 9<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -785,10 +827,12 @@
       if (!trail.coordinates || trail.coordinates.length < 2) return;
       const fit = evaluate(trail);
       const selectedTrail = trail.id === state.selectedId;
+      const unverified = !!trail.live && (String(trail.id).indexOf("osm-") === 0 || /openstreetmap/i.test(trail.agency || ""));
       L.polyline(trail.coordinates, {
         color: "#071018",
         weight: selectedTrail ? 7 : 5,
         opacity: 0.85,
+        dashArray: unverified ? "8 8" : null,
         lineCap: "round",
         lineJoin: "round"
       }).addTo(trailLayer);
@@ -796,6 +840,7 @@
         color: fitColor(fit.verdict),
         weight: selectedTrail ? 4 : 3,
         opacity: 0.95,
+        dashArray: unverified ? "8 8" : null,
         lineCap: "round",
         lineJoin: "round"
       }).addTo(trailLayer);
@@ -820,8 +865,13 @@
           if (state.plotting) { onMapClick(event); return; }
           beginRoute(head);
         }).addTo(campLayer);
+        cruxPins(trail).forEach(function (pin) {
+          const icon = L.divIcon({ className: "hazard-pin", html: "<span>" + esc(pin.short) + "</span>", iconAnchor: [14, 12] });
+          L.marker([pin.lat, pin.lon], { icon: icon, zIndexOffset: 520 }).addTo(campLayer);
+        });
       }
     });
+    drawDropped();
     drawRoute();
     updatePuck();
     drawPlot();
@@ -1424,6 +1474,7 @@
     }
     if (state.follow) map.panTo([fix.lat, fix.lon]);
     maybeSpeakCues();
+    speakHazards();
     updateRouteProgress();
     handleLiveReroute();
     renderTop();
@@ -1440,6 +1491,8 @@
   function onAttitude(raw) {
     const data = typeof raw === "string" ? JSON.parse(raw) : raw;
     if (SHOT && state.attitudeLocked) return;
+    if (state.thermal && Date.now() - state.lastAtt < 500) return;
+    state.lastAtt = Date.now();
     const pitch = Number(data.pitch) || 0;
     const roll = Number(data.roll) || 0;
     state.pitch += (pitch - state.pitch) * 0.28;
@@ -1539,6 +1592,7 @@
       else focusTrail(picked, 11);
       renderAll();
       loadTelemetry();
+      refreshMvum(picked);
       return;
     }
     if (act === "mode") {
@@ -1604,6 +1658,7 @@
         state.parcel = null;
         state.parcelCells = [];
         if (parcelLayer) parcelLayer.clearLayers();
+        syncSmaTiles();
         renderLotCard();
       } else scheduleParcels();
       updateHud();
@@ -1706,9 +1761,50 @@
       return;
     }
     if (act === "drop-pack") { dropPack(button.dataset.id); return; }
+    if (act === "plot-mode") {
+      state.plotMode = button.dataset.id === "freehand" ? "freehand" : "snap";
+      localStorage.setItem("tf-plot-mode", state.plotMode);
+      renderDrawer();
+      toast(state.plotMode === "freehand" ? "Freehand / wash bridge" : "Snap to trail");
+      return;
+    }
+    if (act === "thermal") {
+      state.thermal = !state.thermal;
+      localStorage.setItem("tf-thermal", state.thermal ? "1" : "0");
+      applyBasemap();
+      applyChrome();
+      toast(state.thermal ? "Thermal saver on — USGS topo, slower sensors" : "Thermal saver off");
+      return;
+    }
+    if (act === "night") {
+      state.night = !state.night;
+      localStorage.setItem("tf-night", state.night ? "1" : "0");
+      applyChrome();
+      return;
+    }
+    if (act === "hazard") { openHazardSheet(); return; }
+    if (act === "close-hazard") { closeHazardSheet(); return; }
+    if (act === "hazard-voice") { captureHazardVoice(); return; }
+    if (act === "drop-hazard") { saveHazard(button.dataset.id); return; }
+    if (act === "share-trip") { shareTrip(); return; }
+    if (act === "close-qr") { closeQr(); return; }
+    if (act === "convoy") { setConvoy(button.dataset.id); return; }
+    if (act === "call-ranger") {
+      const phone = button.dataset.id || "";
+      if (phone.indexOf("+") === 0) window.location.href = "tel:" + phone;
+      return;
+    }
+    if (act === "ranger-page") {
+      openExternal("https://www.fs.usda.gov/r06/offices");
+      return;
+    }
   }
 
   function onBack() {
+    const qr = document.getElementById("qrModal");
+    if (qr && !qr.hidden) { closeQr(); return true; }
+    const hazard = document.getElementById("hazardSheet");
+    if (hazard && !hazard.hidden) { closeHazardSheet(); return true; }
     if (state.drawer) { state.drawer = null; renderDrawer(); applyChrome(); return true; }
     if (state.plotting) { state.plotting = false; drawPlot(); applyChrome(); return true; }
     if (state.parcel) { state.parcel = null; renderLotCard(); updateHud(); return true; }
@@ -1802,10 +1898,11 @@
   }
 
   const PARCEL_STYLE = {
-    private: { fill: "#e2b657", stroke: "#f6e2a4", badge: "PRIVATE PROPERTY" },
-    usfs: { fill: "#14915a", stroke: "#b7f5d4", badge: "USFS NATIONAL FOREST" },
+    private: { fill: "#e2b657", stroke: "#f6e2a4", badge: "PRIVATE LAND" },
+    usfs: { fill: "#14915a", stroke: "#b7f5d4", badge: "U.S. FOREST SERVICE" },
     blm: { fill: "#f5e642", stroke: "#fff3a1", badge: "BLM PUBLIC LAND" },
-    state: { fill: "#38bdf8", stroke: "#d7f3ff", badge: "STATE DNR / STATE TRUST" }
+    state: { fill: "#38bdf8", stroke: "#d7f3ff", badge: "STATE TRUST LAND" },
+    nps: { fill: "#34d399", stroke: "#d1fae5", badge: "NATIONAL PARK SERVICE" }
   };
 
   function scheduleParcels() {
@@ -1865,103 +1962,8 @@
     ];
   }
 
-  function parcelFrame() {
-    const center = map.getCenter();
-    const originLat = Math.floor(center.lat * 2) / 2;
-    const originLon = Math.floor(center.lng * 2) / 2;
-    const heading = regionBearing(center.lat, center.lng);
-    const zoom = map.getZoom();
-    let width = zoom >= 14 ? 190 : zoom >= 12 ? 340 : zoom >= 10 ? 720 : 1500;
-    let height = width * 0.66;
-    const bounds = map.getBounds();
-    const corners = [
-      [bounds.getSouth(), bounds.getWest()],
-      [bounds.getSouth(), bounds.getEast()],
-      [bounds.getNorth(), bounds.getWest()],
-      [bounds.getNorth(), bounds.getEast()]
-    ];
-    function span() {
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let minY = Infinity;
-      let maxY = -Infinity;
-      corners.forEach(function (corner) {
-        const local = localMeters(corner[0], corner[1], originLat, originLon, heading);
-        minX = Math.min(minX, local.x);
-        maxX = Math.max(maxX, local.x);
-        minY = Math.min(minY, local.y);
-        maxY = Math.max(maxY, local.y);
-      });
-      return { minX: minX, maxX: maxX, minY: minY, maxY: maxY };
-    }
-    let box = span();
-    let cols = Math.max(1, Math.ceil((box.maxX - box.minX) / width));
-    let rows = Math.max(1, Math.ceil((box.maxY - box.minY) / height));
-    while (cols * rows > 28) {
-      width *= 1.28;
-      height *= 1.28;
-      cols = Math.max(1, Math.ceil((box.maxX - box.minX) / width));
-      rows = Math.max(1, Math.ceil((box.maxY - box.minY) / height));
-    }
-    return { originLat: originLat, originLon: originLon, heading: heading, width: width, height: height, box: box };
-  }
-
-  function lotRecord(frame, col, row, county, place) {
-    const x0 = Math.floor(frame.box.minX / frame.width) * frame.width + col * frame.width;
-    const y0 = Math.floor(frame.box.minY / frame.height) * frame.height + row * frame.height;
-    const ring = [
-      worldPoint(x0, y0, frame.originLat, frame.originLon, frame.heading),
-      worldPoint(x0 + frame.width, y0, frame.originLat, frame.originLon, frame.heading),
-      worldPoint(x0 + frame.width, y0 + frame.height, frame.originLat, frame.originLon, frame.heading),
-      worldPoint(x0, y0 + frame.height, frame.originLat, frame.originLon, frame.heading)
-    ];
-    const lat = (ring[0][0] + ring[1][0] + ring[2][0] + ring[3][0]) / 4;
-    const lon = (ring[0][1] + ring[1][1] + ring[2][1] + ring[3][1]) / 4;
-    const seed = seedFor(col + ":" + row + ":" + frame.originLat.toFixed(1) + ":" + frame.originLon.toFixed(1));
-    const acres = (frame.width * frame.height) / 4046.8564224;
-    const lot = String((Math.abs(seed) % 48) + 1);
-    const apn = (1000 + (seed % 9000)) + "-" + (10 + (seed % 80)) + "-" + ("00" + lot).slice(-3);
-    const zoning = ["RR-5", "RA-10", "A-1", "FR-40", "R-1"][seed % 5];
-    const tractPlace = place || (county ? county.replace(/ County$/, "") : "Backcountry");
-    return {
-      id: "grid-" + frame.originLat.toFixed(1) + "-" + frame.originLon.toFixed(1) + "-" + col + "-" + row,
-      ring: ring,
-      lat: lat,
-      lon: lon,
-      acres: acres,
-      kind: "private",
-      owner: "Private landowner",
-      agency: (county || "County") + " Assessor",
-      apn: apn,
-      lot: lot,
-      tract: tractPlace + " Tract",
-      zoning: zoning,
-      source: "County assessor cadastral grid",
-      live: false
-    };
-  }
-
-  function buildParcelCells(county, place) {
-    if (!map) return [];
-    const frame = parcelFrame();
-    const bounds = map.getBounds();
-    const cols = Math.max(1, Math.ceil((frame.box.maxX - frame.box.minX) / frame.width));
-    const rows = Math.max(1, Math.ceil((frame.box.maxY - frame.box.minY) / frame.height));
-    const cells = [];
-    for (let col = 0; col < cols; col += 1) {
-      for (let row = 0; row < rows; row += 1) {
-        const lot = lotRecord(frame, col, row, county, place);
-        if (ringHitsBounds(lot.ring, bounds)) cells.push(lot);
-      }
-    }
-    return cells;
-  }
-
-  function ringHitsBounds(ring, bounds) {
-    return ring.some(function (point) { return bounds.contains([point[0], point[1]]); });
-  }
-
   function pointInRing(lat, lon, ring) {
+    if (!ring || ring.length < 3) return false;
     let inside = false;
     for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
       const yi = ring[index][0];
@@ -1977,20 +1979,17 @@
   function parcelAt(lat, lon) {
     const list = state.parcelCells || [];
     for (let index = list.length - 1; index >= 0; index -= 1) {
-      if (!list[index].hidden && pointInRing(lat, lon, list[index].ring)) return list[index];
+      if (list[index].ring && pointInRing(lat, lon, list[index].ring)) return list[index];
     }
     return null;
   }
 
-  function cellAt(lat, lon, county, place) {
-    if (!map) return null;
-    const frame = parcelFrame();
-    const local = localMeters(lat, lon, frame.originLat, frame.originLon, frame.heading);
-    const originX = Math.floor(frame.box.minX / frame.width) * frame.width;
-    const originY = Math.floor(frame.box.minY / frame.height) * frame.height;
-    const col = Math.floor((local.x - originX) / frame.width);
-    const row = Math.floor((local.y - originY) / frame.height);
-    return lotRecord(frame, col, row, county, place);
+  function publishedEntity(name) {
+    const text = String(name || "").trim();
+    if (!text || /private landowner/i.test(text)) return "";
+    if (/\b(usfs|blm|nps|dnr|forest|service|bureau|county|city|town|park|parks|district|inc\.?|llc|corp|company|trust|agency|department|weyerhaeuser|state|national|public|school)\b/i.test(text)) return text;
+    if (/^[A-Z][a-z.'-]+(?:\s+[A-Z][a-z.'-]+){1,2}$/.test(text)) return "";
+    return text;
   }
 
   function drawParcels() {
@@ -1999,26 +1998,28 @@
     const fade = Math.max(0, Math.min(100, Number(state.opacity.parcels) || 0)) / 100;
     if (!state.parcelsOn || fade <= 0) return;
     let labels = 0;
-    state.parcelCells.forEach(function (parcel) {
-      if (parcel.hidden) return;
+    (state.parcelCells || []).forEach(function (parcel) {
+      if (!parcel.ring || parcel.ring.length < 3) return;
       const style = PARCEL_STYLE[parcel.kind] || PARCEL_STYLE.private;
       L.polygon(parcel.ring, {
         color: style.stroke,
         weight: 1.6,
         fillColor: style.fill,
-        fillOpacity: (parcel.live ? 0.34 : 0.26) * fade,
+        fillOpacity: 0.34 * fade,
         interactive: true,
         bubblingMouseEvents: false
       }).on("click", function (event) {
         if (state.plotting) { onMapClick(event); return; }
         if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
         openParcel(parcel);
+        identifyParcel(parcel.lat, parcel.lon, parcel);
       }).addTo(parcelLayer);
-      if (labels < 16) {
+      if (labels < 12 && parcel.owner) {
         labels += 1;
+        const acres = Number.isFinite(parcel.acres) ? " · " + parcel.acres.toFixed(1) + " ac" : "";
         const icon = L.divIcon({
           className: "lot-label",
-          html: "<span>" + esc(shortOwner(parcel.owner)) + " · " + parcel.acres.toFixed(1) + " ac</span>",
+          html: "<span>" + esc(shortOwner(parcel.owner)) + acres + "</span>",
           iconSize: [150, 18],
           iconAnchor: [75, 9]
         });
@@ -2028,8 +2029,8 @@
   }
 
   function shortOwner(name) {
-    const text = String(name || "Owner");
-    return text.length > 22 ? text.slice(0, 21) + "…" : text;
+    const text = String(name || "");
+    return text.length > 28 ? text.slice(0, 27) + "…" : text;
   }
 
   function openParcel(parcel) {
@@ -2049,9 +2050,11 @@
     }
     const style = PARCEL_STYLE[parcel.kind] || PARCEL_STYLE.private;
     const coord = formatPair(parcel) || "—";
+    const acres = Number.isFinite(parcel.acres) ? parcel.acres.toFixed(1) + " ac" : "—";
+    const note = state.parcelNote ? '<div class="src">' + esc(state.parcelNote) + "</div>" : "";
     card.hidden = false;
-    card.className = "lot-card " + parcel.kind;
-    card.innerHTML = '<div class="lot-top"><span class="badge" style="background:' + style.fill + '">' + style.badge + '</span><button type="button" data-act="close-lot" aria-label="Close lot card">✕</button></div><b class="owner">' + esc(parcel.owner) + '</b><div class="sub">' + esc(parcel.agency) + '</div><div class="lot-grid"><div><span>APN / LOT</span><b>' + esc(parcel.apn) + " · Lot " + esc(parcel.lot) + '</b></div><div><span>TRACT</span><b>' + esc(parcel.tract) + '</b></div><div><span>ACRES</span><b>' + parcel.acres.toFixed(1) + ' ac</b></div><div><span>ZONING</span><b>' + esc(parcel.zoning) + '</b></div></div><button type="button" class="line" data-act="copy-lot">TARGET: ' + esc(coord) + '</button><button type="button" class="go" data-act="route-parcel">Route to Parcel</button><div class="src">' + esc(parcel.source) + "</div>";
+    card.className = "lot-card " + (parcel.kind || "private");
+    card.innerHTML = '<div class="lot-top"><span class="badge" style="background:' + style.fill + '">' + esc(parcel.badge || style.badge) + '</span><button type="button" data-act="close-lot" aria-label="Close lot card">✕</button></div><b class="owner">' + esc(parcel.owner || "Published parcel") + '</b><div class="sub">' + esc(parcel.agency || "") + '</div><div class="lot-grid"><div><span>ADDRESS</span><b>' + esc(parcel.address || "—") + '</b></div><div><span>COUNTY</span><b>' + esc(parcel.county || "—") + '</b></div><div><span>CENSUS BLOCK</span><b>' + esc(parcel.censusBlock || "—") + '</b></div><div><span>ACRES</span><b>' + esc(acres) + '</b></div><div><span>ZONING / LAND USE</span><b>' + esc(parcel.zoning || "—") + '</b></div><div><span>PARCEL ID</span><b>' + esc(parcel.parcelId || "Not published") + '</b></div></div><button type="button" class="line" data-act="copy-lot">TARGET: ' + esc(coord) + '</button><button type="button" class="go" data-act="route-parcel">Route to Parcel</button><div class="src">' + esc(parcel.source || "") + "</div>" + note;
   }
 
   function routeToParcel() {
@@ -2070,149 +2073,62 @@
     state.parcel = null;
     renderLotCard();
     beginRoute({
-      id: parcel.id,
+      id: parcel.id || "parcel",
       trailID: trail ? trail.id : state.selectedId,
-      name: parcel.owner + " lot " + parcel.lot,
+      name: parcel.owner || "Published parcel",
       lat: parcel.lat,
       lon: parcel.lon,
-      slope: 1.4,
-      starlink: 92,
+      slope: 0,
+      starlink: 0,
       kind: "parcel",
-      acres: parcel.acres,
-      zoning: parcel.zoning
+      acres: Number.isFinite(parcel.acres) ? parcel.acres : 0,
+      zoning: parcel.zoning || "—"
     });
   }
 
   function onParcelMapClick(event) {
-    if (!state.parcelsOn) return;
+    if (!state.parcelsOn || SHOT) return;
     const original = event.originalEvent;
     if (original && original.target && original.target.closest && original.target.closest(".leaflet-marker-icon, .camp-pin, .flag-pin")) return;
-    const hit = parcelAt(event.latlng.lat, event.latlng.lng) || cellAt(event.latlng.lat, event.latlng.lng, state.parcelCounty, state.parcelPlace);
+    const lat = event.latlng.lat;
+    const lon = event.latlng.lng;
+    const hit = parcelAt(lat, lon);
     if (hit) openParcel(hit);
+    identifyParcel(lat, lon, hit);
   }
 
-  function samplePoints() {
-    const points = [];
-    const center = map.getCenter();
-    points.push({ lat: center.lat, lon: center.lng });
-    if (state.fix) points.push({ lat: state.fix.lat, lon: state.fix.lon });
-    const aim = targetPoint();
-    if (aim) points.push({ lat: aim.lat, lon: aim.lon });
-    return points.filter(function (point, index, list) {
-      return list.findIndex(function (other) { return Math.abs(other.lat - point.lat) < 0.01 && Math.abs(other.lon - point.lon) < 0.01; }) === index;
-    }).slice(0, 3);
+  function ringCentroidLatLng(ring) {
+    let lat = 0;
+    let lon = 0;
+    ring.forEach(function (point) { lat += point[0]; lon += point[1]; });
+    return { lat: lat / ring.length, lon: lon / ring.length };
   }
 
-  function smaKind(code, name, adminState) {
-    if (code === "USFS") return { kind: "usfs", owner: name || "U.S. Forest Service", agency: "U.S. Forest Service", source: "BLM Surface Management Agency" };
-    if (code === "BLM") return { kind: "blm", owner: name || "Bureau of Land Management", agency: "Bureau of Land Management", source: "BLM Surface Management Agency" };
-    if (code === "ST") return { kind: "state", owner: name || ((adminState ? adminState + " " : "") + "DNR / State Trust"), agency: "State DNR / State Trust", source: "BLM Surface Management Agency" };
-    return null;
-  }
-
-  async function smaPoint(layer, point) {
-    const geometry = encodeURIComponent(JSON.stringify({ x: point.lon, y: point.lat, spatialReference: { wkid: 4326 } }));
-    const url = "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/" + layer + "/query?geometry=" + geometry + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=ADMIN_AGENCY_CODE,ADMIN_UNIT_NAME,ADMIN_ST&returnGeometry=false&f=json";
-    const text = await net(url);
-    const data = JSON.parse(text);
-    const attrs = (((data.features || [])[0] || {}).attributes) || null;
-    if (!attrs) return null;
-    const hit = smaKind(attrs.ADMIN_AGENCY_CODE, attrs.ADMIN_UNIT_NAME, attrs.ADMIN_ST);
-    return hit ? Object.assign({ lat: point.lat, lon: point.lon }, hit) : null;
-  }
-
-  async function forestName(point) {
-    const url = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query?geometry=" + point.lon + "," + point.lat + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=forestname&returnGeometry=false&f=json";
-    const text = await net(url);
-    const data = JSON.parse(text);
-    const attrs = (((data.features || [])[0] || {}).attributes) || {};
-    return attrs.forestname || attrs.FORESTNAME || "";
-  }
-
-  async function censusPlace(point) {
-    const url = "https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=" + point.lon + "&y=" + point.lat + "&benchmark=Public_AR_Current&vintage=Current_Current&format=json";
-    const text = await net(url);
-    const data = JSON.parse(text);
-    const geos = ((data.result || {}).geographies) || {};
-    const county = ((geos.Counties || [])[0] || {}).NAME || "";
-    const place = ((geos["Incorporated Places"] || [])[0] || {}).NAME || "";
-    return { county: county, place: place };
-  }
-
-  async function nominatimPlace(point) {
-    const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + point.lat + "&lon=" + point.lon + "&zoom=13&addressdetails=1";
-    const text = await net(url);
-    const data = JSON.parse(text);
-    const address = data.address || {};
-    return address.village || address.town || address.city || address.hamlet || address.county || "";
-  }
-
-  function ownerKind(text) {
-    const value = String(text || "").toLowerCase();
-    if (/forest service|national forest|usfs/.test(value)) return "usfs";
-    if (/bureau of land|\bblm\b/.test(value)) return "blm";
-    if (/\bdnr\b|state trust|state land|state forest/.test(value)) return "state";
-    return "private";
+  function esriLatLngRing(geometry) {
+    const rings = geometry && geometry.rings;
+    if (!rings || !rings.length) return null;
+    let best = rings[0];
+    rings.forEach(function (ring) { if (ring && ring.length > best.length) best = ring; });
+    if (!best || best.length < 4) return null;
+    const latlng = best.map(function (pair) { return [Number(pair[1]), Number(pair[0])]; }).filter(function (point) {
+      return Number.isFinite(point[0]) && Number.isFinite(point[1]);
+    });
+    return downsampleRing(latlng, 80);
   }
 
   function downsampleRing(points, limit) {
-    if (points.length <= limit) return points;
+    if (!points || points.length <= limit) return points || [];
     const step = Math.ceil(points.length / limit);
     const ring = [];
     for (let index = 0; index < points.length; index += step) ring.push(points[index]);
+    const last = points[points.length - 1];
+    const tail = ring[ring.length - 1];
+    if (!tail || tail[0] !== last[0] || tail[1] !== last[1]) ring.push(last);
     return ring;
   }
 
-  async function osmLots(bounds) {
-    const south = bounds.getSouth();
-    const west = bounds.getWest();
-    const north = bounds.getNorth();
-    const east = bounds.getEast();
-    if (north - south > 0.45 || east - west > 0.45) return [];
-    const box = south + "," + west + "," + north + "," + east;
-    const query = '[out:json][timeout:12];(way["boundary"="lot"](' + box + ');way["place"="plot"](' + box + ');way["owner"](' + box + ');way["landuse"~"^(residential|forest|farmland|meadow|orchard|industrial|commercial|grass)$"](' + box + '););out tags geom 12;';
-    let text = "";
-    try {
-      text = await net("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
-    } catch (error) {
-      text = await net("https://overpass.kumi.systems/api/interpreter", { method: "POST", body: query });
-    }
-    const data = JSON.parse(text);
-    return (data.elements || []).map(function (element, index) {
-      const geometry = element.geometry || [];
-      if (geometry.length < 4) return null;
-      const ring = downsampleRing(geometry.map(function (point) { return [point.lat, point.lon]; }), 40);
-      const tags = element.tags || {};
-      const owner = tags.owner || tags.operator || tags.name || "";
-      if (!owner && !tags.landuse && tags.boundary !== "lot" && tags.place !== "plot") return null;
-      const kind = ownerKind(owner + " " + (tags.landuse || ""));
-      let lat = 0;
-      let lon = 0;
-      ring.forEach(function (point) { lat += point[0]; lon += point[1]; });
-      lat /= ring.length;
-      lon /= ring.length;
-      const acres = Math.max(0.4, polygonAcres(ring));
-      if (acres > 4000) return null;
-      return {
-        id: "osm-" + (element.id || index),
-        ring: ring,
-        lat: lat,
-        lon: lon,
-        acres: acres,
-        kind: kind,
-        owner: owner || (kind === "private" ? "Private landowner" : PARCEL_STYLE[kind].badge),
-        agency: owner || "OpenStreetMap",
-        apn: "OSM-" + (element.id || index),
-        lot: tags.ref || tags["addr:unit"] || String((index % 48) + 1),
-        tract: tags["addr:street"] || tags.landuse || "OSM lot",
-        zoning: tags.landuse || (kind === "private" ? "RR-5" : kind === "usfs" ? "NF" : kind === "blm" ? "PUB" : "STL"),
-        source: "OpenStreetMap Overpass",
-        live: true
-      };
-    }).filter(Boolean);
-  }
-
   function polygonAcres(ring) {
+    if (!ring || ring.length < 3) return null;
     let meters2 = 0;
     for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
       const northA = ring[previous][0] * 111320;
@@ -2221,89 +2137,440 @@
       const eastB = ring[index][1] * 111320 * Math.cos(ring[index][0] * Math.PI / 180);
       meters2 += eastA * northB - eastB * northA;
     }
-    return Math.abs(meters2 / 2) / 4046.8564224;
+    const acres = Math.abs(meters2 / 2) / 4046.8564224;
+    return Number.isFinite(acres) && acres > 0 ? acres : null;
   }
 
-  function applyAgencySamples(cells, samples, forest) {
-    cells.forEach(function (cell) {
-      let nearest = null;
-      let best = Infinity;
-      samples.forEach(function (sample) {
-        const distance = miles(cell, sample);
-        if (distance < best) {
-          best = distance;
-          nearest = sample;
-        }
-      });
-      if (!nearest || best > 8) return;
-      cell.kind = nearest.kind;
-      cell.owner = nearest.kind === "usfs" && forest ? forest : nearest.owner;
-      cell.agency = nearest.agency;
-      cell.source = nearest.source;
-      if (nearest.kind === "usfs") cell.zoning = "NF";
-      else if (nearest.kind === "blm") cell.zoning = "PUB";
-      else if (nearest.kind === "state") cell.zoning = "STL";
-    });
+  async function readGis(url, options) {
+    const text = await net(url, options);
+    if (!text || text.length > 400000) return null;
+    const trimmed = text.trim();
+    if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return null;
+    const data = JSON.parse(trimmed);
+    if (data && data.error) {
+      const message = String((data.error && data.error.message) || data.error || "");
+      if (/not started|unable to complete|error/i.test(message)) return { down: true, message: message };
+      return { down: true, message: message };
+    }
+    return data;
+  }
+
+  function smaKind(code, name, adminState) {
+    const unit = publishedEntity(name);
+    const stateName = String(adminState || "");
+    if (code === "USFS") return { kind: "usfs", owner: unit || "U.S. Forest Service (USFS)", agency: "U.S. Forest Service (USFS)", badge: "U.S. FOREST SERVICE", source: "BLM Surface Management Agency" };
+    if (code === "BLM") return { kind: "blm", owner: unit || "Bureau of Land Management (BLM)", agency: "Bureau of Land Management (BLM)", badge: "BLM PUBLIC LAND", source: "BLM Surface Management Agency" };
+    if (code === "NPS") return { kind: "nps", owner: unit || "National Park Service", agency: "National Park Service", badge: "NATIONAL PARK SERVICE", source: "BLM Surface Management Agency" };
+    if (code === "ST") {
+      const wa = stateName === "WA" || /washington/i.test(stateName);
+      const label = wa ? "WA Dept. of Natural Resources (DNR)" : (unit || "State Trust Land");
+      return { kind: "state", owner: label, agency: label, badge: wa ? "WA DNR" : "STATE TRUST LAND", source: "BLM Surface Management Agency" };
+    }
+    if (unit) return { kind: "state", owner: unit, agency: unit, badge: "PUBLIC LAND", source: "BLM Surface Management Agency" };
+    if (code === "PVT" || code === "UND" || code === "PVTUNK") return { kind: "private", owner: "", agency: "Private land", badge: "PRIVATE LAND", private: true, source: "BLM Surface Management Agency" };
+    return null;
+  }
+
+  async function smaPoint(layer, point) {
+    const geometry = encodeURIComponent(JSON.stringify({ x: point.lon, y: point.lat, spatialReference: { wkid: 4326 } }));
+    const url = "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/" + layer + "/query?geometry=" + geometry + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=ADMIN_AGENCY_CODE,ADMIN_UNIT_NAME,ADMIN_ST&returnGeometry=false&f=json";
+    const data = await readGis(url);
+    if (!data || data.down) return null;
+    const attrs = (((data.features || [])[0] || {}).attributes) || null;
+    if (!attrs) return null;
+    const hit = smaKind(attrs.ADMIN_AGENCY_CODE, attrs.ADMIN_UNIT_NAME, attrs.ADMIN_ST);
+    return hit ? Object.assign({ lat: point.lat, lon: point.lon }, hit) : null;
+  }
+
+  async function smaIdentify(point) {
+    const hits = await Promise.all([7, 8, 9, 14, 15, 1].map(function (layer) {
+      return smaPoint(layer, point).catch(function () { return null; });
+    }));
+    const ranked = hits.filter(Boolean);
+    return ranked.find(function (hit) { return !hit.private && hit.owner; }) || ranked.find(function (hit) { return !hit.private; }) || ranked[0] || null;
+  }
+
+  async function usfsAt(point, withGeometry) {
+    const fields = "forestname";
+    const geom = withGeometry ? "true&maxAllowableOffset=0.05&outSR=4326" : "false";
+    const url = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query?geometry=" + point.lon + "," + point.lat + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=" + fields + "&returnGeometry=" + geom + "&f=json";
+    const data = await readGis(url);
+    if (!data || data.down) return null;
+    const feature = (data.features || [])[0];
+    if (!feature) return null;
+    const attrs = feature.attributes || {};
+    const name = publishedEntity(attrs.forestname || attrs.FORESTNAME || "");
+    if (!name) return null;
+    const ring = withGeometry ? esriLatLngRing(feature.geometry) : null;
+    const center = ring && ring.length ? ringCentroidLatLng(ring) : { lat: point.lat, lon: point.lon };
+    return {
+      id: "usfs-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      ring: ring,
+      lat: center.lat,
+      lon: center.lon,
+      acres: ring ? polygonAcres(ring) : null,
+      kind: "usfs",
+      owner: name,
+      agency: "U.S. Forest Service (USFS)",
+      badge: "U.S. FOREST SERVICE",
+      zoning: "National Forest",
+      parcelId: "",
+      source: "USFS EDW Forest System Boundaries",
+      live: true
+    };
+  }
+
+  async function censusPlace(point) {
+    const url = "https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=" + point.lon + "&y=" + point.lat + "&benchmark=Public_AR_Current&vintage=Current_Current&format=json";
+    const data = await readGis(url);
+    if (!data || data.down) return {};
+    const geos = ((data.result || {}).geographies) || {};
+    const county = (geos.Counties || [])[0] || {};
+    const place = (geos["Incorporated Places"] || [])[0] || {};
+    const block = (geos["Census Blocks"] || [])[0] || {};
+    const st = ((geos.States || [])[0] || {}).STUSAB || "";
+    const countyName = county.NAME || county.BASENAME || "";
+    return {
+      county: countyName ? (countyName.indexOf(",") >= 0 ? countyName : countyName + (st ? ", " + st : "")) : "",
+      place: place.NAME || place.BASENAME || "",
+      state: st,
+      block: block.GEOID || block.BLOCK || "",
+      tract: block.TRACT || ""
+    };
+  }
+
+  function stateAbbr(value) {
+    const text = String(value || "");
+    const iso = text.match(/US-([A-Z]{2})/);
+    if (iso) return iso[1];
+    if (/^[A-Za-z]{2}$/.test(text)) return text.toUpperCase();
+    const names = { washington: "WA", oregon: "OR", california: "CA", idaho: "ID", colorado: "CO", utah: "UT", nevada: "NV", arizona: "AZ", montana: "MT", wyoming: "WY", "new mexico": "NM", texas: "TX" };
+    return names[text.toLowerCase()] || text;
+  }
+
+  async function nominatimAddress(point) {
+    const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + point.lat + "&lon=" + point.lon + "&zoom=18&addressdetails=1";
+    const data = await readGis(url);
+    if (!data || data.down) return {};
+    const address = data.address || {};
+    const org = publishedEntity(address.office || data.name || "");
+    return {
+      house: address.house_number || "",
+      road: address.road || address.pedestrian || "",
+      town: address.city || address.town || address.village || address.hamlet || "",
+      state: stateAbbr(address["ISO3166-2-lvl4"] || address.state_code || address.state || ""),
+      zip: address.postcode || "",
+      county: address.county || "",
+      org: org
+    };
+  }
+
+  function formatStreet(address) {
+    if (!address) return "";
+    const street = [address.house, address.road].filter(Boolean).join(" ");
+    const tail = [address.town, [address.state, address.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+    if (street && tail) return street + ", " + tail;
+    return street || tail || "";
+  }
+
+  function residentialTitle(address) {
+    const line = formatStreet(address);
+    return line ? "Private Residential Lot — " + line : "Private Residential Lot";
+  }
+
+  function inClark(point) {
+    return point.lat >= 45.5 && point.lat <= 46.05 && point.lon >= -122.85 && point.lon <= -122.25;
+  }
+
+  function attrPick(attrs, pattern) {
+    const keys = Object.keys(attrs || {});
+    for (let index = 0; index < keys.length; index += 1) {
+      if (!pattern.test(keys[index])) continue;
+      const value = attrs[keys[index]];
+      if (value == null || String(value).trim() === "" || String(value) === "Null") continue;
+      return String(value).trim();
+    }
+    return "";
+  }
+
+  function clarkParcelFromFeature(feature, index) {
+    const attrs = feature.attributes || feature;
+    const ring = esriLatLngRing(feature.geometry);
+    const ownerRaw = attrPick(attrs, /owner|taxpayer|grantor/i);
+    const owner = publishedEntity(ownerRaw);
+    const address = attrPick(attrs, /situs|site_?addr|address|prop_?addr/i);
+    const parcelId = attrPick(attrs, /parcel|apn|pin\b|tax.?id|prop_?id/i);
+    const zoning = attrPick(attrs, /zoning|land.?use|lu_?desc|usecode/i);
+    const acresRaw = Number(attrPick(attrs, /acres|gisacres|shape.?area/i));
+    const acres = ring ? polygonAcres(ring) : (Number.isFinite(acresRaw) && acresRaw > 0 && acresRaw < 100000 ? acresRaw : null);
+    const center = ring && ring.length ? ringCentroidLatLng(ring) : null;
+    if (!ring && !address && !parcelId && !owner) return null;
+    return {
+      id: "clark-" + (parcelId || index),
+      ring: ring,
+      lat: center ? center.lat : null,
+      lon: center ? center.lon : null,
+      acres: acres,
+      kind: /forest|bureau|blm|usfs|nps|dnr|county|city|park|state/i.test(owner) ? "state" : "private",
+      owner: owner || (address ? "Private Residential Lot — " + address : "Private Residential Lot"),
+      agency: "Clark County, WA",
+      badge: "PRIVATE LAND",
+      address: address,
+      county: "Clark County, WA",
+      zoning: zoning,
+      parcelId: parcelId,
+      source: "Clark County LandRecords",
+      live: true
+    };
+  }
+
+  async function clarkLots(point) {
+    const geometry = encodeURIComponent(JSON.stringify({ x: point.lon, y: point.lat, spatialReference: { wkid: 4326 } }));
+    const extent = (point.lon - 0.02) + "," + (point.lat - 0.015) + "," + (point.lon + 0.02) + "," + (point.lat + 0.015);
+    const identify = "https://gis.clark.wa.gov/arcgisfed2/rest/services/MAPSOnline/LandRecords/MapServer/identify?geometry=" + geometry + "&geometryType=esriGeometryPoint&sr=4326&layers=all&tolerance=6&mapExtent=" + extent + "&imageDisplay=400,400,96&returnGeometry=true&f=json";
+    try {
+      const data = await readGis(identify);
+      if (!data || data.down) return { down: true, lots: [] };
+      const results = data.results || data.features || [];
+      const lots = results.map(clarkParcelFromFeature).filter(Boolean).slice(0, 4);
+      return { down: false, lots: lots };
+    } catch (error) {
+      return { down: true, lots: [] };
+    }
+  }
+
+  function osmParcel(element, index) {
+    const geometry = element.geometry || [];
+    if (geometry.length < 4) return null;
+    const ring = downsampleRing(geometry.map(function (point) { return [point.lat, point.lon]; }), 48);
+    if (ring.length < 4) return null;
+    const tags = element.tags || {};
+    const org = publishedEntity(tags.owner || tags.operator || "");
+    const address = {
+      house: tags["addr:housenumber"] || "",
+      road: tags["addr:street"] || "",
+      town: tags["addr:city"] || tags["addr:town"] || "",
+      state: stateAbbr(tags["addr:state"] || ""),
+      zip: tags["addr:postcode"] || ""
+    };
+    const street = formatStreet(address);
+    const named = publishedEntity(tags.name || "");
+    const landuse = tags.landuse || tags.leisure || tags.amenity || tags.boundary || "";
+    const kind = /forest service|national forest|usfs/i.test(org + " " + named) ? "usfs" : /bureau of land|\bblm\b/i.test(org + " " + named) ? "blm" : /national park/i.test(org + " " + named + " " + (tags.boundary || "")) ? "nps" : /\bdnr\b|state trust|state land/i.test(org + " " + named) ? "state" : "private";
+    const acres = polygonAcres(ring);
+    if (!Number.isFinite(acres) || acres < 0.01 || acres > 2500000) return null;
+    const center = ringCentroidLatLng(ring);
+    let owner = org || (kind !== "private" ? named : "");
+    if (!owner && kind === "private") owner = street ? "Private Residential Lot — " + street : (named || "Published OSM footprint");
+    if (!owner) owner = named || PARCEL_STYLE[kind].badge;
+    return {
+      id: "osm-" + (element.id || index),
+      ring: ring,
+      lat: center.lat,
+      lon: center.lon,
+      acres: acres,
+      kind: kind,
+      owner: owner,
+      agency: org || "OpenStreetMap",
+      address: street,
+      zoning: landuse || "",
+      parcelId: "",
+      source: "OpenStreetMap Overpass",
+      live: true
+    };
+  }
+
+  async function osmFootprints(bounds) {
+    const south = bounds.getSouth();
+    const west = bounds.getWest();
+    const north = bounds.getNorth();
+    const east = bounds.getEast();
+    const height = north - south;
+    const width = east - west;
+    const zoom = map.getZoom();
+    if (zoom < 11 || height > 0.35 || width > 0.35) return [];
+    const box = south + "," + west + "," + north + "," + east;
+    let parts = 'way["boundary"="protected_area"](' + box + ');way["boundary"="national_park"](' + box + ');way["landuse"="forest"](' + box + ');';
+    if (zoom >= 14 && height <= 0.08 && width <= 0.08) {
+      parts += 'way["building"](' + box + ');way["landuse"](' + box + ');way["amenity"](' + box + ');way["leisure"](' + box + ');way["boundary"="lot"](' + box + ');way["addr:housenumber"](' + box + ');';
+    }
+    const query = "[out:json][timeout:12];(" + parts + ");out tags geom " + (zoom >= 14 ? "16" : "8") + ";";
+    let text = "";
+    try {
+      text = await net("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
+    } catch (error) {
+      text = await net("https://overpass.kumi.systems/api/interpreter", { method: "POST", body: query });
+    }
+    if (!text || text.length > 400000) return [];
+    const data = JSON.parse(text);
+    return (data.elements || []).map(osmParcel).filter(Boolean);
+  }
+
+  function showParcelNote(text) {
+    state.parcelNote = text || "";
+    const node = document.getElementById("parcelNote");
+    if (node) node.textContent = state.parcelNote;
+  }
+
+  function syncSmaTiles() {
+    if (!map || !smaLayer) return;
+    const fade = Math.max(0, Math.min(100, Number(state.opacity.parcels) || 0)) / 100;
+    toggleTile(smaLayer, !!(state.parcelsOn && fade > 0), fade || 0);
   }
 
   async function refreshParcels() {
     if (!map || !state.parcelsOn) {
+      state.parcelCells = [];
       if (parcelLayer) parcelLayer.clearLayers();
+      syncSmaTiles();
       return;
     }
+    syncSmaTiles();
     const generation = ++state.parcelGen;
-    const county = state.parcelCounty || "";
-    const place = state.parcelPlace || "";
-    state.parcelCells = buildParcelCells(county, place);
-    drawParcels();
-    if (SHOT) return;
-    const points = samplePoints();
-    const anchor = points[0];
-    const samples = [];
-    const jobs = [];
-    points.forEach(function (point) {
-      [7, 9, 14].forEach(function (layer) {
-        jobs.push(smaPoint(layer, point).then(function (hit) { if (hit) samples.push(hit); }).catch(function () {}));
-      });
-    });
-    let forest = "";
-    let census = { county: county, place: place };
-    let named = place;
-    let osm = [];
-    jobs.push(forestName(anchor).then(function (value) { forest = value || ""; }).catch(function () {}));
-    jobs.push(censusPlace(anchor).then(function (value) { census = value || census; }).catch(function () {}));
-    jobs.push(nominatimPlace(anchor).then(function (value) { named = value || named; }).catch(function () {}));
-    jobs.push(osmLots(map.getBounds()).then(function (value) { osm = value || []; }).catch(function () {}));
+    if (map.getZoom() < 11) {
+      state.parcelCells = [];
+      drawParcels();
+      showParcelNote("Zoom in to load published lot geometry.");
+      return;
+    }
+    if (SHOT) {
+      state.parcelCells = [];
+      drawParcels();
+      showParcelNote("");
+      return;
+    }
+    const center = map.getCenter();
+    const point = { lat: center.lat, lon: center.lng };
+    const cells = [];
+    let clarkDown = false;
+    const jobs = [
+      usfsAt(point, true).then(function (forest) { if (forest && forest.ring) cells.push(forest); }).catch(function () {}),
+      osmFootprints(map.getBounds()).then(function (lots) { lots.forEach(function (lot) { cells.push(lot); }); }).catch(function () {})
+    ];
+    if (inClark(point)) {
+      jobs.push(clarkLots(point).then(function (result) {
+        if (!result || result.down) clarkDown = true;
+        (result && result.lots || []).forEach(function (lot) {
+          if (lot.ring) {
+            if (lot.lat == null) { lot.lat = point.lat; lot.lon = point.lon; }
+            cells.push(lot);
+          }
+        });
+      }).catch(function () { clarkDown = true; }));
+    }
     await Promise.all(jobs);
     if (generation !== state.parcelGen || !state.parcelsOn) return;
-    state.parcelCounty = census.county || county;
-    state.parcelPlace = named || census.place || place;
-    if (forest) {
-      samples.forEach(function (sample) {
-        if (sample.kind === "usfs") sample.owner = forest;
-      });
-    }
-    const cells = buildParcelCells(state.parcelCounty, state.parcelPlace);
-    applyAgencySamples(cells, samples, forest);
-    osm.forEach(function (lot) {
-      cells.forEach(function (cell) {
-        if (pointInRing(cell.lat, cell.lon, lot.ring)) cell.hidden = true;
-      });
-    });
-    state.parcelCells = cells.concat(osm);
+    state.parcelCells = cells.filter(function (lot) { return lot.ring && lot.ring.length >= 3; });
     drawParcels();
-    if (state.parcel) {
-      const next = parcelAt(state.parcel.lat, state.parcel.lon) || state.parcel;
-      state.parcel = next;
-      renderLotCard();
-      updateHud();
+    if (clarkDown) showParcelNote("Clark County LandRecords is not responding. No tax lot was invented.");
+    else if (!state.parcelCells.length) showParcelNote("No published parcel polygon in this view.");
+    else showParcelNote("");
+    if (state.parcel && state.parcel.ring) {
+      const next = parcelAt(state.parcel.lat, state.parcel.lon);
+      if (next) openParcel(next);
     }
   }
 
+  async function identifyParcel(lat, lon, hit) {
+    const generation = ++identifyGen;
+    const point = { lat: lat, lon: lon };
+    let sma = null;
+    let forest = null;
+    let census = {};
+    let address = {};
+    let clark = null;
+    await Promise.all([
+      smaIdentify(point).then(function (value) { sma = value; }).catch(function () {}),
+      usfsAt(point, !hit || !hit.ring).then(function (value) { forest = value; }).catch(function () {}),
+      censusPlace(point).then(function (value) { census = value || {}; }).catch(function () {}),
+      nominatimAddress(point).then(function (value) { address = value || {}; }).catch(function () {}),
+      inClark(point) ? clarkLots(point).then(function (value) { clark = value; }).catch(function () { clark = { down: true, lots: [] }; }) : Promise.resolve()
+    ]);
+    if (generation !== identifyGen || !state.parcelsOn) return;
+    if (clark && clark.down) showParcelNote("Clark County LandRecords is not responding. No tax lot was invented.");
+    const clarkLot = clark && (clark.lots || []).find(function (lot) { return lot.ring && pointInRing(lat, lon, lot.ring); }) || (clark && clark.lots && clark.lots[0]);
+    const street = formatStreet(address);
+    const county = (census.county) || (address.county ? address.county + (census.state ? ", " + census.state : "") : "") || (hit && hit.county) || "";
+    const sources = [];
+    let card = {
+      id: (hit && hit.id) || ("tap-" + lat.toFixed(5) + "-" + lon.toFixed(5)),
+      ring: (hit && hit.ring) || null,
+      lat: lat,
+      lon: lon,
+      acres: hit && Number.isFinite(hit.acres) ? hit.acres : null,
+      kind: "private",
+      owner: "",
+      agency: "",
+      address: street || (hit && hit.address) || "",
+      county: county,
+      censusBlock: census.block || "",
+      zoning: (hit && hit.zoning) || "",
+      parcelId: (hit && hit.parcelId) || "",
+      source: "",
+      live: true
+    };
+    if (clarkLot && clarkLot.ring && (!card.ring || clarkLot.parcelId)) {
+      card.ring = clarkLot.ring;
+      card.acres = clarkLot.acres;
+      card.parcelId = clarkLot.parcelId || card.parcelId;
+      card.zoning = clarkLot.zoning || card.zoning;
+      card.address = clarkLot.address || card.address;
+      card.county = "Clark County, WA";
+      if (clarkLot.owner && clarkLot.owner.indexOf("Private Residential") !== 0) card.owner = clarkLot.owner;
+      sources.push("Clark County LandRecords");
+    }
+    if (forest) {
+      card.kind = "usfs";
+      card.owner = forest.owner;
+      card.agency = "U.S. Forest Service (USFS)";
+      card.badge = "U.S. FOREST SERVICE";
+      card.zoning = card.zoning || "National Forest";
+      if (!card.ring && forest.ring) {
+        card.ring = forest.ring;
+        card.acres = forest.acres;
+      }
+      sources.push("USFS EDW Forest System Boundaries");
+    }
+    if (sma && !sma.private) {
+      card.kind = sma.kind || card.kind;
+      card.owner = card.owner || sma.owner;
+      card.agency = sma.agency || card.agency;
+      card.badge = sma.badge || card.badge;
+      sources.push(sma.source || "BLM Surface Management Agency");
+    } else if (sma && sma.private) {
+      sources.push("BLM Surface Management Agency");
+      if (!card.owner) card.kind = "private";
+    }
+    if (address.org && card.kind === "private") {
+      card.owner = address.org;
+      card.agency = address.org;
+    }
+    if (!card.owner) {
+      card.owner = card.kind === "private" ? residentialTitle(address) : (card.agency || "Published parcel");
+    }
+    if (!card.agency) card.agency = card.kind === "private" ? (county || "County assessor") : card.owner;
+    if (hit && hit.source) sources.push(hit.source);
+    if (street) sources.push("OpenStreetMap Nominatim");
+    if (census.block || census.county) sources.push("U.S. Census Bureau");
+    card.source = sources.filter(function (item, index, list) { return item && list.indexOf(item) === index; }).join(" · ");
+    if (!card.parcelId) card.parcelId = "";
+    if (card.ring && !state.parcelCells.some(function (lot) { return lot.id === card.id; })) {
+      state.parcelCells = state.parcelCells.concat([card]);
+      drawParcels();
+    }
+    openParcel(card);
+  }
   function loadOpacity() {
     const base = { parcels: 100, corridors: 70, slope: 55, hazards: 80 };
     try { return Object.assign(base, JSON.parse(localStorage.getItem("tf-opacity") || "{}")); }
     catch (error) { return base; }
+  }
+
+  function loadDropped() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("tf-hazards") || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) { return []; }
   }
 
   function loadReports() {
@@ -2335,6 +2602,13 @@
     if (!app) return;
     app.dataset.detent = state.detent;
     app.dataset.dash = dashOn() ? "1" : "0";
+    app.dataset.night = state.night ? "1" : "0";
+    document.querySelectorAll("[data-act=thermal]").forEach(function (button) {
+      button.classList.toggle("on", state.thermal);
+    });
+    document.querySelectorAll("[data-act=night]").forEach(function (button) {
+      button.classList.toggle("on", state.night);
+    });
     document.querySelectorAll("[data-act=detent]").forEach(function (button) {
       button.classList.toggle("on", button.dataset.id === state.detent);
     });
@@ -2371,6 +2645,9 @@
     });
     drawer.querySelectorAll("[data-act=pack-kind]").forEach(function (button) {
       button.classList.toggle("on", button.dataset.id === state.packKind);
+    });
+    drawer.querySelectorAll("[data-act=plot-mode]").forEach(function (button) {
+      button.classList.toggle("on", button.dataset.id === state.plotMode);
     });
     drawer.querySelectorAll("[data-overlay]").forEach(function (input) {
       if (document.activeElement === input) return;
@@ -2417,6 +2694,7 @@
         scheduleParcels();
       }
       drawParcels();
+      syncSmaTiles();
       updateHud();
       return;
     }
@@ -2431,13 +2709,35 @@
     } else if (map.hasLayer(layer)) map.removeLayer(layer);
   }
 
+  function usgsCovers(lat, lon) {
+    if (lat >= 24.4 && lat <= 49.5 && lon >= -125 && lon <= -66.5) return true;
+    if (lat >= 51 && lat <= 71.5 && lon >= -170 && lon <= -129) return true;
+    if (lat >= 18.8 && lat <= 22.3 && lon >= -160.3 && lon <= -154.7) return true;
+    if (lat >= 17.6 && lat <= 18.6 && lon >= -67.5 && lon <= -65.2) return true;
+    if (lat >= 17.6 && lat <= 18.5 && lon >= -65.1 && lon <= -64.5) return true;
+    if (lat >= 13.2 && lat <= 13.7 && lon >= 144.6 && lon <= 145) return true;
+    if (lat >= -14.4 && lat <= -11 && lon >= -171.1 && lon <= -169.4) return true;
+    return false;
+  }
+
   function applyBasemap() {
-    if (!imageryLayer) return;
-    const mode = state.basemap;
-    toggleTile(imageryLayer, mode === "hybrid" || mode === "satellite", 1);
-    toggleTile(topoLayer, mode === "hybrid" || mode === "topo", mode === "topo" ? 1 : 0.38);
-    toggleTile(darkLayer, mode === "dark", 1);
-    toggleTile(labelLayer, true, mode === "dark" ? 0.55 : mode === "topo" ? 0.85 : 0.9);
+    if (!hybridLayer || !map) return;
+    const center = map.getCenter();
+    const outside = !usgsCovers(center.lat, center.lng);
+    const deep = map.getZoom() > 16;
+    const dark = state.basemap === "dark";
+    const mode = state.thermal ? "topo" : state.basemap;
+    const showUsgs = !outside && !dark;
+    toggleTile(hybridLayer, showUsgs && mode === "hybrid", 1);
+    toggleTile(imageryLayer, showUsgs && mode === "satellite", 1);
+    toggleTile(topoLayer, showUsgs && mode === "topo", 1);
+    toggleTile(darkLayer, dark, 1);
+    if (osmLayer) {
+      osmLayer.options.minZoom = outside ? 3 : 17;
+      toggleTile(osmLayer, !dark && (outside || deep), 1);
+      if (map.hasLayer(osmLayer)) osmLayer.redraw();
+    }
+    if (map.attributionControl) map.attributionControl.setPrefix(MAP_ATTRIB);
     if (offlineLayer) offlineLayer.redraw();
   }
 
@@ -2697,11 +2997,14 @@
   function drawPlot() {
     if (!plotLayer) return;
     plotLayer.clearLayers();
-    if (state.plot.length >= 2) {
-      const fit = plotFit();
-      const line = state.plot.map(function (point) { return [point.lat, point.lon]; });
-      L.polyline(line, { color: "#071428", weight: 5, opacity: 0.95 }).addTo(plotLayer);
-      L.polyline(line, { color: fitColor(fit.verdict), weight: 3.2, opacity: 1 }).addTo(plotLayer);
+    const fit = state.plot.length ? plotFit() : null;
+    for (let index = 1; index < state.plot.length; index += 1) {
+      const prev = state.plot[index - 1];
+      const next = state.plot[index];
+      const free = prev.mode === "freehand" || next.mode === "freehand";
+      const line = [[prev.lat, prev.lon], [next.lat, next.lon]];
+      L.polyline(line, { color: "#071428", weight: 5, opacity: 0.95, dashArray: free ? "6 8" : null }).addTo(plotLayer);
+      L.polyline(line, { color: fit ? fitColor(fit.verdict) : "#38bdf8", weight: 3.2, opacity: 1, dashArray: free ? "6 8" : null }).addTo(plotLayer);
     }
     state.plot.forEach(function (point, index) {
       const icon = L.divIcon({ className: "flag-pin", html: "<span>" + (index + 1) + "</span>", iconAnchor: [12, 12] });
@@ -2711,30 +3014,35 @@
 
   function onMapClick(event) {
     if (state.plotting) {
-      const hit = nearestVertex(event.latlng);
+      const mode = state.plotMode === "freehand" ? "freehand" : "snap";
+      const hit = mode === "snap" ? nearestVertex(event.latlng) : null;
       const point = hit
-        ? { lat: hit.lat, lon: hit.lon, snapped: true, trailId: hit.trailId }
-        : { lat: event.latlng.lat, lon: event.latlng.lng, snapped: false, trailId: null };
+        ? { lat: hit.lat, lon: hit.lon, snapped: true, trailId: hit.trailId, mode: mode }
+        : { lat: event.latlng.lat, lon: event.latlng.lng, snapped: false, trailId: null, mode: mode };
       state.plot.push(point);
       drawPlot();
       renderDrawer();
-      toast((point.snapped ? "Snapped · " : "Point " + state.plot.length + " · ") + shortFit(plotFit().verdict));
+      const prefix = mode === "freehand" ? "Freehand · " : (point.snapped ? "Snapped · " : "Off trail · ");
+      toast(prefix + shortFit(plotFit().verdict));
       return;
     }
     onParcelMapClick(event);
   }
 
-  function gpxXml(name, points) {
+  function gpxXml(name, points, waypoints) {
     const body = points.map(function (point) {
       return '<trkpt lat="' + Number(point.lat).toFixed(6) + '" lon="' + Number(point.lon).toFixed(6) + '"></trkpt>';
     }).join("");
-    return '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="TrailForge Overland" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>' + esc(name) + "</name><trkseg>" + body + "</trkseg></trk>\n</gpx>\n";
+    const marks = (waypoints || []).map(function (point) {
+      return '<wpt lat="' + Number(point.lat).toFixed(6) + '" lon="' + Number(point.lon).toFixed(6) + '"><name>' + esc(point.name || "") + "</name><sym>" + esc(point.sym || "") + "</sym><type>" + esc(point.type || "") + "</type><desc>" + esc(point.desc || "") + "</desc></wpt>";
+    }).join("");
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="TrailForge Overland" xmlns="http://www.topografix.com/GPX/1/1">\n' + marks + "<trk><name>" + esc(name) + "</name><trkseg>" + body + "</trkseg></trk>\n</gpx>\n";
   }
 
   function exportGpx() {
     if (state.plot.length < 2) { toast("Plot at least two points"); return; }
     const trail = selected();
-    const xml = gpxXml(trail ? trail.name + " custom" : "TrailForge route", state.plot);
+    const xml = gpxXml(trail ? trail.name + " custom" : "TrailForge route", state.plot, collectWaypoints(trail));
     const blob = new Blob([xml], { type: "application/gpx+xml" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -2897,7 +3205,10 @@
     const line = corridorLine();
     if (!line) { toast("Select a trail or start a route first"); return; }
     const kind = state.packKind === "satellite" ? "satellite" : "topo";
-    const zoom = kind === "satellite" ? 13 : 11;
+    const zoom = kind === "satellite" ? 14 : 13;
+    if (window.Notification && Notification.permission === "default") {
+      try { Notification.requestPermission(); } catch (error) { /* Permission stays at the default. */ }
+    }
     const plan = corridorTiles(line.coords, zoom);
     if (!plan.tiles.length) { toast("No tiles for this corridor"); return; }
     state.packBusy = true;
@@ -2907,7 +3218,7 @@
     let bytes = 0;
     let failed = 0;
     const root = kind === "satellite"
-      ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
+      ? "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/"
       : "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/";
     try {
       for (let index = 0; index < plan.tiles.length; index += 3) {
@@ -2944,7 +3255,12 @@
     if (offlineLayer) offlineLayer.redraw();
     renderDrawer();
     const cap = plan.capped ? " Capped at 220 tiles." : "";
-    if (keys.length) toast("Saved " + keys.length + " tiles for " + line.name + "." + cap);
+    if (keys.length) {
+      toast("Saved " + keys.length + " USGS public-domain tiles for " + line.name + "." + cap);
+      if (window.Notification && Notification.permission === "granted") {
+        try { new Notification("TrailForge corridor ready", { body: "Saved " + keys.length + " USGS public-domain tiles for " + line.name }); } catch (error) { /* The toast already confirmed the save. */ }
+      }
+    }
     else toast(failed ? "Corridor download failed" : "No tiles saved");
   }
 
@@ -2962,24 +3278,386 @@
     toast("Corridor removed from this device");
   }
 
+  function alongTrack(coords, fraction) {
+    const index = Math.min(coords.length - 1, Math.max(0, Math.round(fraction * (coords.length - 1))));
+    return { lat: coords[index][0], lon: coords[index][1] };
+  }
+
+  function cruxPins(trail) {
+    const coords = trail && trail.coordinates;
+    if (!coords || coords.length < 2) return [];
+    const pins = [];
+    const fit = evaluate(trail);
+    const main = fit.verdict.indexOf("NO-GO") >= 0 ? "No-Go" : fit.verdict === "CAUTION" ? "Caution" : "Fits";
+    if (Number(trail.clearance) > 0) {
+      const inches = Math.max(1, Math.round(Number(trail.clearance)));
+      pins.push(Object.assign({
+        id: trail.id + "-rock",
+        short: "🪨 " + inches + '"',
+        title: "🪨 Obstacle #1: " + inches + '" Rock Ledge — Main Line: ' + main + " / Bypass: Fits All Rigs",
+        speak: inches + " inch rock ledge. Main line " + main + ". Bypass fits all rigs."
+      }, alongTrack(coords, 0.62)));
+    }
+    if (Number(trail.water) > 0) {
+      const inches = Math.max(1, Math.round(Number(trail.water)));
+      pins.push(Object.assign({
+        id: trail.id + "-ford",
+        short: "💧 " + inches + '"',
+        title: "💧 Obstacle #2: " + inches + '" Creek Ford — Check USGS Gauge',
+        speak: inches + " inch creek ford. Check the USGS gauge."
+      }, alongTrack(coords, 0.38)));
+    }
+    if (trail.gate && String(trail.gate).toUpperCase() !== "OPEN") {
+      pins.push(Object.assign({
+        id: trail.id + "-gate",
+        short: "🔒 Gate",
+        title: "🔒 Gate — " + trail.gate,
+        speak: "Gate ahead. Status " + trail.gate + "."
+      }, alongTrack(coords, 0.18)));
+    }
+    if (Number(trail.canopy) > 0 && Number(trail.canopy) < 11) {
+      pins.push(Object.assign({
+        id: trail.id + "-shelf",
+        short: "⚠️ Shelf",
+        title: "⚠️ Narrow Off-Camber Shelf",
+        speak: "Narrow off-camber shelf ahead. Canopy " + num(trail.canopy) + " feet."
+      }, alongTrack(coords, 0.78)));
+    }
+    return pins;
+  }
+
+  function speakHazards() {
+    if (!state.fix || (!state.route && !state.follow)) return;
+    const trail = selected();
+    if (!trail) return;
+    cruxPins(trail).forEach(function (pin) {
+      if (state.spokenHazards[pin.id]) return;
+      const distance = meters(state.fix, pin) / 1609.344;
+      if (distance > 0.15) return;
+      state.spokenHazards[pin.id] = true;
+      speak(pin.speak + " About " + Math.max(1, Math.round(distance * 5280)) + " feet.");
+    });
+  }
+
+  function mvumBadge(trail) {
+    if (state.mvum && state.mvum.trailId === trail.id && state.mvum.hit) {
+      return "✅ USFS MVUM / BLM Verified • Seasonal Open Window" + (state.mvum.window ? " · " + state.mvum.window : "");
+    }
+    const osm = !!trail.live && (String(trail.id).indexOf("osm-") === 0 || /openstreetmap/i.test(trail.agency || ""));
+    if (osm) return "⚠️ Unverified OSM Track — Check Local MVUM & Gate Status";
+    if (trail.bdr || /usfs|blm|forest|bureau|dnr/i.test((trail.agency || "") + " " + (trail.region || ""))) return "Confirm the local MVUM before you roll.";
+    return "";
+  }
+
+  function nearestRanger(trail) {
+    const point = trail || state.fix;
+    if (!point) return null;
+    const offices = [
+      { name: "Cowlitz Valley Ranger District", phone: "+13604971103", lat: 46.535, lon: -121.957 },
+      { name: "Mt. Adams Ranger District", phone: "+15093953402", lat: 46.001, lon: -121.529 },
+      { name: "Gifford Pinchot National Forest", phone: "+13608915000", lat: 45.632, lon: -122.662 },
+      { name: "Mount St. Helens National Volcanic Monument", phone: "+13604497800", lat: 46.15, lon: -122.18 },
+      { name: "Darrington Ranger District", phone: "+13604361155", lat: 48.253, lon: -121.603 },
+      { name: "Enumclaw Ranger District", phone: "+13608256585", lat: 47.204, lon: -121.988 },
+      { name: "Mt. Baker Ranger District", phone: "+13605992714", lat: 48.85, lon: -121.68 },
+      { name: "Sedro-Woolley Ranger District", phone: "+13608542553", lat: 48.504, lon: -122.236 },
+      { name: "Skykomish Ranger District", phone: "+13606772414", lat: 47.711, lon: -121.361 },
+      { name: "Colville National Forest", phone: "+15096847000", lat: 48.54, lon: -117.9 },
+      { name: "Newport Ranger District", phone: "+15094477300", lat: 48.18, lon: -117.04 },
+      { name: "Republic Ranger District", phone: "+15097757400", lat: 48.648, lon: -118.737 },
+      { name: "Tonasket Ranger District", phone: "+15094862186", lat: 48.706, lon: -119.437 },
+      { name: "Bend-Fort Rock Ranger District", phone: "+15413835300", lat: 44.058, lon: -121.315 },
+      { name: "Sisters Ranger District", phone: "+15415497700", lat: 44.291, lon: -121.549 },
+      { name: "Crescent Ranger District", phone: "+15414333200", lat: 43.473, lon: -121.692 },
+      { name: "Emigrant Creek Ranger District", phone: "+15415734300", lat: 43.548, lon: -118.623 },
+      { name: "Prairie City Ranger District", phone: "+15418203800", lat: 44.463, lon: -118.709 }
+    ];
+    let best = null;
+    let bestMiles = 150;
+    offices.forEach(function (office) {
+      const distance = miles(point, office);
+      if (distance < bestMiles) {
+        bestMiles = distance;
+        best = office;
+      }
+    });
+    return best;
+  }
+
+  async function refreshMvum(trail) {
+    if (!trail || SHOT) return;
+    const env = (trail.lon - 0.04) + "," + (trail.lat - 0.03) + "," + (trail.lon + 0.04) + "," + (trail.lat + 0.03);
+    const base = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer/";
+    let hit = null;
+    for (let layer = 1; layer <= 2 && !hit; layer += 1) {
+      try {
+        const url = base + layer + "/query?geometry=" + encodeURIComponent(env) + "&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=name,mvum_symbol_name,seasonal,passengervehicle_datesopen,jurisdiction&returnGeometry=false&f=json&resultRecordCount=1";
+        const data = await readGis(url);
+        const feature = data && data.features && data.features[0];
+        const attrs = feature && feature.attributes;
+        if (!attrs || (!attrs.mvum_symbol_name && !attrs.name && !attrs.jurisdiction)) continue;
+        hit = {
+          trailId: trail.id,
+          hit: true,
+          window: attrs.passengervehicle_datesopen || attrs.seasonal || "",
+          name: attrs.name || "",
+          symbol: attrs.mvum_symbol_name || ""
+        };
+      } catch (error) { /* No MVUM checkmark without a live feature. */ }
+    }
+    if (selected() && selected().id === trail.id) {
+      state.mvum = hit;
+      if (state.mode === "drive" && !state.route) renderSheet();
+    }
+  }
+
+  const HAZARD_KINDS = {
+    rock: "🪨 Rock Ledge",
+    ford: "💧 Deep Ford",
+    tree: "🌲 Downed Tree",
+    pad: "⛺ Verified <3° Pad",
+    gate: "🔒 Locked Gate"
+  };
+
+  function drawDropped() {
+    if (!hazardPinLayer) return;
+    hazardPinLayer.clearLayers();
+    state.dropped.forEach(function (pin) {
+      const icon = L.divIcon({
+        className: "hazard-pin",
+        html: "<span>" + esc(pin.name || "Hazard") + (pin.elevFt != null ? " · " + pin.elevFt + " ft" : "") + "</span>",
+        iconAnchor: [16, 12]
+      });
+      L.marker([pin.lat, pin.lon], { icon: icon, zIndexOffset: 680 }).addTo(hazardPinLayer);
+    });
+  }
+
+  function openHazardSheet() {
+    const sheet = document.getElementById("hazardSheet");
+    if (!sheet) return;
+    sheet.hidden = false;
+    const where = document.getElementById("hazardWhere");
+    if (where) {
+      const gps = state.fix ? formatPair(state.fix) : null;
+      const elev = state.fix && state.fix.altitudeM != null ? " · " + Math.round(state.fix.altitudeM * 3.280839895) + " ft" : "";
+      where.textContent = gps ? "MY GPS " + gps + elev : "Waiting for GPS…";
+    }
+    const note = document.getElementById("hazardNote");
+    if (note) note.textContent = hazardNote || "";
+  }
+
+  function closeHazardSheet() {
+    const sheet = document.getElementById("hazardSheet");
+    if (sheet) sheet.hidden = true;
+  }
+
+  function captureHazardVoice() {
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Rec) { toast("Voice notes need the device speech engine"); return; }
+    const rec = new Rec();
+    rec.lang = "en-US";
+    rec.onresult = function (event) {
+      hazardNote = (event.results[0] && event.results[0][0] && event.results[0][0].transcript) || "";
+      const note = document.getElementById("hazardNote");
+      if (note) note.textContent = hazardNote;
+    };
+    try { rec.start(); toast("Listening for a voice note…"); }
+    catch (error) { toast("Voice note did not start"); }
+  }
+
+  function persistHazards() {
+    const slim = state.dropped.map(function (pin) {
+      const copy = Object.assign({}, pin);
+      if (copy.photo && copy.photo.length > 90000) copy.photo = "";
+      return copy;
+    });
+    try {
+      localStorage.setItem("tf-hazards", JSON.stringify(slim));
+      state.dropped = slim;
+    } catch (error) {
+      const quieter = slim.map(function (pin) { const copy = Object.assign({}, pin); copy.photo = ""; return copy; });
+      try { localStorage.setItem("tf-hazards", JSON.stringify(quieter)); state.dropped = quieter; }
+      catch (again) { toast("Hazard pin kept for this session"); }
+    }
+  }
+
+  function saveHazard(kind) {
+    if (!state.fix) { toast("Waiting for GPS…"); return; }
+    const label = HAZARD_KINDS[kind] || HAZARD_KINDS.rock;
+    const pin = {
+      id: "hz-" + Date.now(),
+      kind: kind || "rock",
+      name: label,
+      lat: state.fix.lat,
+      lon: state.fix.lon,
+      elevFt: state.fix.altitudeM != null ? Math.round(state.fix.altitudeM * 3.280839895) : null,
+      note: hazardNote || "",
+      photo: hazardPhoto || "",
+      time: Date.now()
+    };
+    state.dropped.unshift(pin);
+    state.dropped = state.dropped.slice(0, 40);
+    hazardPhoto = "";
+    hazardNote = "";
+    persistHazards();
+    drawDropped();
+    closeHazardSheet();
+    toast(label + " dropped at MY GPS");
+  }
+
+  function attachHazardPhoto(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      const image = new Image();
+      image.onload = function () {
+        const scale = Math.min(1, 480 / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        hazardPhoto = canvas.toDataURL("image/jpeg", 0.62);
+        toast("Photo attached");
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function collectWaypoints(trail) {
+    const marks = [];
+    if (trail) {
+      cruxPins(trail).forEach(function (pin) {
+        marks.push({ lat: pin.lat, lon: pin.lon, name: pin.title, sym: pin.short, type: "crux", desc: pin.speak || "" });
+      });
+      spotsFor(trail).forEach(function (spot) {
+        if (spot.slope >= 3) return;
+        marks.push({ lat: spot.lat, lon: spot.lon, name: spot.name, sym: "Camp", type: "pad", desc: spot.slope.toFixed(1) + " degree pad" });
+      });
+    }
+    state.dropped.forEach(function (pin) {
+      marks.push({ lat: pin.lat, lon: pin.lon, name: pin.name, sym: pin.kind || "Hazard", type: "hazard", desc: (pin.note || "") + (pin.elevFt != null ? " " + pin.elevFt + " ft" : "") });
+    });
+    if (state.convoy) marks.push({ lat: state.fix ? state.fix.lat : (trail ? trail.lat : 0), lon: state.fix ? state.fix.lon : (trail ? trail.lon : 0), name: state.convoy, sym: "Convoy", type: "convoy", desc: "Local convoy status" });
+    return marks.filter(function (mark) { return Number.isFinite(mark.lat) && Number.isFinite(mark.lon); });
+  }
+
+  function tripLine() {
+    if (state.plot.length >= 2) return state.plot.map(function (point) { return { lat: point.lat, lon: point.lon }; });
+    const trail = selected();
+    const coords = trail && trail.coordinates;
+    if (!coords || coords.length < 2) return [];
+    const stride = Math.max(1, Math.ceil(coords.length / 40));
+    const line = [];
+    for (let index = 0; index < coords.length; index += stride) line.push({ lat: coords[index][0], lon: coords[index][1] });
+    const last = coords[coords.length - 1];
+    line.push({ lat: last[0], lon: last[1] });
+    return line;
+  }
+
+  function tripCompact(name, points) {
+    let sample = points.slice();
+    let text = "";
+    while (sample.length) {
+      text = "TF1|" + name + "|" + sample.map(function (point) { return point.lat.toFixed(4) + "," + point.lon.toFixed(4); }).join(";");
+      if (state.convoy) text += "|C|" + state.convoy;
+      if (text.length <= 900 || sample.length <= 4) break;
+      sample = sample.filter(function (_, index) { return index % 2 === 0; });
+    }
+    return text;
+  }
+
+  function downloadText(text, filename, type) {
+    const blob = new Blob([text], { type: type || "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+  }
+
+  function paintQr(text) {
+    const canvas = document.getElementById("qrCanvas");
+    if (!canvas || typeof qrcode !== "function") return;
+    const qr = qrcode(0, "M");
+    qr.addData(text);
+    qr.make();
+    const count = qr.getModuleCount();
+    const size = 220;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, size, size);
+    const cell = size / count;
+    ctx.fillStyle = "#041018";
+    for (let row = 0; row < count; row += 1) {
+      for (let col = 0; col < count; col += 1) {
+        if (qr.isDark(row, col)) ctx.fillRect(Math.floor(col * cell), Math.floor(row * cell), Math.ceil(cell), Math.ceil(cell));
+      }
+    }
+  }
+
+  function closeQr() {
+    const modal = document.getElementById("qrModal");
+    if (modal) modal.hidden = true;
+  }
+
+  function shareTrip() {
+    const trail = selected();
+    const points = tripLine();
+    if (points.length < 2 && !state.dropped.length) { toast("Select a trail or plot a route first"); return; }
+    const name = state.plot.length >= 2 ? "Custom route" : corridorLabel(trail || { name: "TrailForge trip" });
+    const xml = gpxXml(name, points.length ? points : [{ lat: state.fix ? state.fix.lat : 0, lon: state.fix ? state.fix.lon : 0 }], collectWaypoints(trail));
+    downloadText(xml, "TrailForge-trip.gpx", "application/gpx+xml");
+    const compact = tripCompact(name, points.length ? points : collectWaypoints(trail));
+    paintQr(compact);
+    const modal = document.getElementById("qrModal");
+    if (modal) modal.hidden = false;
+    const caption = document.getElementById("qrCaption");
+    if (caption) caption.textContent = name + (state.convoy ? " · " + state.convoy : "");
+    if (navigator.share) navigator.share({ title: name, text: compact }).catch(function () {});
+    toast("Trip package ready");
+  }
+
+  function setConvoy(label) {
+    state.convoy = label || "";
+    const banner = document.getElementById("convoyBanner");
+    if (banner) {
+      banner.hidden = !state.convoy;
+      banner.textContent = state.convoy;
+    }
+    if (state.convoy) toast(state.convoy);
+  }
+
   function boot() {
     state.trails = buildBuiltins();
-    map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 3, maxZoom: 18 });
+    map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 3, maxZoom: 19 });
     map.setView([37.9589, -107.7352], 11);
-    imageryLayer = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    if (map.attributionControl) map.attributionControl.setPrefix(MAP_ATTRIB);
+    const usgsOpts = { maxNativeZoom: 16, maxZoom: 19, zIndex: 1, attribution: "" };
+    hybridLayer = L.tileLayer(USGS_TILES.hybrid, usgsOpts);
+    imageryLayer = L.tileLayer(USGS_TILES.satellite, usgsOpts);
+    topoLayer = L.tileLayer(USGS_TILES.topo, usgsOpts);
+    darkLayer = L.tileLayer("https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
+      maxZoom: 20,
+      zIndex: 1,
+      attribution: "© CARTO"
+    });
+    osmLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      minZoom: 17,
       maxZoom: 19,
-      zIndex: 1,
-      attribution: "Esri, Maxar, Earthstar Geographics"
-    });
-    darkLayer = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
-      maxZoom: 16,
-      zIndex: 1,
-      attribution: "Esri"
-    });
-    topoLayer = L.tileLayer("https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}", {
-      maxZoom: 16,
       zIndex: 2,
-      attribution: "USGS"
+      attribution: ""
+    });
+    smaLayer = L.tileLayer("https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/tile/{z}/{y}/{x}", {
+      maxNativeZoom: 13,
+      maxZoom: 19,
+      opacity: 0,
+      zIndex: 4
     });
     offlineLayer = L.gridLayer({ zIndex: 3 });
     offlineLayer.createTile = function (coords, done) {
@@ -3000,11 +3678,6 @@
       }).catch(function () { done(null, img); });
       return img;
     };
-    labelLayer = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
-      maxZoom: 19,
-      zIndex: 4,
-      attribution: ""
-    });
     applyBasemap();
     offlineLayer.addTo(map);
     corridorLayer = L.layerGroup().addTo(map);
@@ -3014,10 +3687,11 @@
     routeLayer = L.layerGroup().addTo(map);
     parcelLayer = L.layerGroup().addTo(map);
     hazardLayer = L.layerGroup().addTo(map);
+    hazardPinLayer = L.layerGroup().addTo(map);
     plotLayer = L.layerGroup().addTo(map);
     map.on("dragstart", function () { state.follow = false; });
-    map.on("zoomend", function () { syncMap(); scheduleParcels(); });
-    map.on("moveend", scheduleParcels);
+    map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); });
+    map.on("moveend", function () { applyBasemap(); scheduleParcels(); });
     map.on("click", onMapClick);
     document.addEventListener("click", function (event) {
       const button = event.target.closest("[data-act]");
@@ -3086,13 +3760,21 @@
       reader.onload = function () { importGpx(String(reader.result || "")); };
       reader.readAsText(file);
     });
+    const hazardPhotoInput = document.getElementById("hazardPhoto");
+    if (hazardPhotoInput) hazardPhotoInput.addEventListener("change", function () {
+      const file = hazardPhotoInput.files && hazardPhotoInput.files[0];
+      hazardPhotoInput.value = "";
+      if (file) attachHazardPhoto(file);
+    });
     installHost();
     setMuted(state.muted);
     renderAll();
+    syncSmaTiles();
     startGeolocation();
     loadTelemetry();
     bootShot();
     scheduleParcels();
+    refreshMvum(selected());
     setTimeout(function () {
       map.invalidateSize();
       if (state.route && !state.follow) frameRoute();
