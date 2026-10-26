@@ -27,10 +27,13 @@ targets:
         excludes:
           - project.yml
           - TrailForgeProducts.storekit
+          - community-reports.json
           - "**/*.xcodeproj/**"
           - "**/xcuserdata/**"
       - path: TrailForgeProducts.storekit
         buildPhase: none
+      - path: community-reports.json
+        buildPhase: resources
     dependencies:
       - sdk: SwiftUI.framework
       - sdk: MapKit.framework

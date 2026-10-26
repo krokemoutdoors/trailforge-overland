@@ -24,6 +24,7 @@ final class ConvoyMeshManager: NSObject, ObservableObject {
     @Published var isBroadcasting = false
     @Published var connectedPeers: [String] = []
     @Published var lastAlert = ""
+    var onCommunity: ((String) -> Void)?
 
     private let peerID: MCPeerID
     private var session: MCSession?
@@ -61,6 +62,13 @@ final class ConvoyMeshManager: NSObject, ObservableObject {
         try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
     }
 
+    func broadcastCommunity(_ payload: String) {
+        start()
+        let wire = "TFCR1" + payload
+        guard let session, !session.connectedPeers.isEmpty, let data = wire.data(using: .utf8) else { return }
+        try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+    }
+
     private func refreshPeers() {
         let names = session?.connectedPeers.map(\.displayName).sorted() ?? []
         DispatchQueue.main.async {
@@ -76,6 +84,13 @@ extension ConvoyMeshManager: MCSessionDelegate {
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         let text = String(data: data, encoding: .utf8) ?? "Convoy update"
+        if text.hasPrefix("TFCR1") {
+            let payload = String(text.dropFirst(5))
+            DispatchQueue.main.async {
+                self.onCommunity?(payload)
+            }
+            return
+        }
         DispatchQueue.main.async {
             self.lastAlert = "\(peerID.displayName) • \(text)"
         }

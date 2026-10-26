@@ -26,7 +26,9 @@ class NativeFetchBridge(
         "basemap.nationalmap.gov",
         "tile.openstreetmap.org",
         "basemaps.cartocdn.com",
-        "gis.clark.wa.gov"
+        "gis.clark.wa.gov",
+        "krokemoutdoors.github.io",
+        "ntfy.sh"
     )
 
     @JavascriptInterface

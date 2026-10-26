@@ -11,7 +11,7 @@ Copy-paste fields for Play Console. Package `com.edwardshin.trailforge`, version
 - **Tags:** Off-road, Navigation, Camping
 - **Contact email:** use the address on the KrokeM Outdoors Play Console account
 - **Privacy policy URL:** https://krokemoutdoors.github.io/trailforge-overland/#privacy
-- **Content rating:** Everyone (IARC). No user-generated public content, no violence, no unrestricted web, location is used only for navigation.
+- **Content rating:** Everyone (IARC). Community trail reports share a status, rig type, and coordinate with other TrailForge users. No personal names, no violence, no unrestricted web. Location is used for navigation and for a report the driver chooses to publish.
 
 ### Full description
 
@@ -34,8 +34,8 @@ Set tire size, lift, minimum differential clearance, roof or tent height, and lo
 
 TrailForge Pro
 - Annual: $24.99/year, 7-day trial
-- Lifetime Overland Founders Pass: $59.99 one time
-- Weekend Expedition: $4.99/month
+- Founders Lifetime Pass: $149.99 one time (One-Time • 6-Yr Value)
+- Weekend Pass: $4.99/month
 
 Purchases are completed with Google Play Billing. The atlas and cockpit also run offline after the first save. Live scans, river gauges, and turn-by-turn routing need a connection.
 
@@ -58,7 +58,7 @@ Answer Play Console Data safety as follows. TrailForge does not sell data and do
 
 | Data type | Collected | Shared | Purpose | Notes |
 | --- | --- | --- | --- | --- |
-| Precise location | Yes | No | App functionality | Used on device for the GPS puck, Near Me, and turn-by-turn. A route request sends the start and destination to the OSRM public router. A trail scan sends the map center to OpenStreetMap Overpass and the USFS road service. |
+| Precise location | Yes | Yes, with other TrailForge users when a driver publishes a trail report | App functionality | Used on device for the GPS puck, Near Me, and turn-by-turn. A route request sends the start and destination to the OSRM public router. A trail scan sends the map center to OpenStreetMap Overpass and the USFS road service. A trail report or hazard pin the driver submits sends that coordinate, status, and rig type to the shared community feed. |
 | Approximate location | Yes | No | App functionality | Coarse location is the fallback when precise GPS is denied. |
 | Device or other IDs | No | No | — | Not collected by the app. Google Play Billing is handled by Google. |
 | Financial info | No | No | — | Prices and purchases stay in Google Play. |

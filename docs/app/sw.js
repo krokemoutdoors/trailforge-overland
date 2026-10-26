@@ -8,6 +8,7 @@ const SHELL = [
   "./leaflet.js",
   "./leaflet.css",
   "./manifest.json",
+  "./community-reports.json",
   "./icon-192.png",
   "./icon-512.png"
 ];
@@ -26,6 +27,14 @@ self.addEventListener("activate", function (event) {
 self.addEventListener("fetch", function (event) {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith("/community-reports.json")) {
+    event.respondWith(fetch(event.request).then(function (response) {
+      const copy = response.clone();
+      caches.open(CACHE).then(function (cache) { cache.put(event.request, copy); });
+      return response;
+    }).catch(function () { return caches.match(event.request); }));
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then(function (cached) {
       return cached || fetch(event.request);

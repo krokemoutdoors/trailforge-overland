@@ -27,13 +27,13 @@ class BillingBridge(
     )
     private val titles = mapOf(
         "com.edwardshin.trailforge.pro.annual" to "TrailForge Pro Annual",
-        "com.edwardshin.trailforge.pro.monthly" to "Weekend Expedition Monthly",
-        "com.edwardshin.trailforge.founders.lifetime" to "Lifetime Overland Founders Pass"
+        "com.edwardshin.trailforge.pro.monthly" to "Weekend Pass",
+        "com.edwardshin.trailforge.founders.lifetime" to "Founders Lifetime Pass"
     )
     private val fallbackPrices = mapOf(
         "com.edwardshin.trailforge.pro.annual" to "$24.99",
         "com.edwardshin.trailforge.pro.monthly" to "$4.99",
-        "com.edwardshin.trailforge.founders.lifetime" to "$59.99"
+        "com.edwardshin.trailforge.founders.lifetime" to "$149.99"
     )
     private val details = linkedMapOf<String, ProductDetails>()
     private var pro = false

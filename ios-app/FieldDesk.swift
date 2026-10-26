@@ -223,7 +223,8 @@ enum TripPackageBuilder {
     static func gpx(
         trail: OverlandTrail,
         track: [CLLocationCoordinate2D],
-        hazards: [DroppedHazard]
+        hazards: [DroppedHazard],
+        community: [CommunityReport] = []
     ) -> String {
         let line = track.count >= 2 ? track : trail.coordinates
         var waypoints: [GPXWaypoint] = trail.campSpots.map { spot in
@@ -262,6 +263,18 @@ enum TripPackageBuilder {
                 sym: "Flag"
             ))
         }
+        for report in community where !report.cleared {
+            waypoints.append(GPXWaypoint(
+                id: UUID(),
+                name: xml("TFCR|\(report.status)|\(report.trailId)|\(report.confirmCount)|0"),
+                latitude: report.lat,
+                longitude: report.lon,
+                elevationMeters: 0,
+                slopeDegrees: 0,
+                starlinkSkyPct: 0,
+                sym: "Community"
+            ))
+        }
         return GPXTrackManager().exportGPXString(
             trailName: xml(trail.name),
             waypoints: waypoints,
@@ -269,14 +282,27 @@ enum TripPackageBuilder {
         )
     }
 
-    static func qrText(for trail: OverlandTrail, hazards: [DroppedHazard]) -> String {
+    static func qrText(for trail: OverlandTrail, hazards: [DroppedHazard], community: [CommunityReport] = []) -> String {
         let start = trail.coordinates.first
         let end = trail.coordinates.last
         let crux = CruxCatalog.pins(for: trail).map(\.title).joined(separator: " | ")
         let drops = hazards.prefix(6).map { "\($0.category) \(String(format: "%.4f", $0.latitude)),\(String(format: "%.4f", $0.longitude))" }.joined(separator: " | ")
+        let pins = community.filter { !$0.cleared }.prefix(8).map { report -> String in
+            let code: String
+            switch report.status {
+            case "Gate Locked": code = "G"
+            case "Downed Tree": code = "T"
+            case "Washout": code = "W"
+            case "Mud/Snow": code = "M"
+            case "Open & Clear": code = "O"
+            default: code = "H"
+            }
+            return String(format: "%.4f,%.4f,%@,%@", report.lat, report.lon, code, report.trailId)
+        }.joined(separator: ";")
         var text = "\(trail.name) | \(trail.state) | \(String(format: "%.4f", start?.latitude ?? trail.centerLat)),\(String(format: "%.4f", start?.longitude ?? trail.centerLon)) -> \(String(format: "%.4f", end?.latitude ?? trail.centerLat)),\(String(format: "%.4f", end?.longitude ?? trail.centerLon)) | \(crux) | \(drops)"
-        if text.utf8.count > 900 {
-            text = String(text.prefix(900))
+        if !pins.isEmpty { text += "|R|" + pins }
+        if text.utf8.count > 1400 {
+            text = String(text.prefix(1400))
         }
         return text
     }

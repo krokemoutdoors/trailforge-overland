@@ -32,7 +32,7 @@ Download compact USGS topo + public land packs for dead-zone backcountry trips a
 
 ### FAIR, TRANSPARENT PRICING
 - **TrailForge Pro Annual**: $24.99/year (includes 7-day free trial)
-- **Lifetime Overland Founders Pass**: $59.99 one-time unlock
-- **Weekend Expedition Monthly**: $4.99/month
+- **Founders Lifetime Pass**: $149.99 one-time unlock (One-Time • 6-Yr Value)
+- **Weekend Pass**: $4.99/month
 
 Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/

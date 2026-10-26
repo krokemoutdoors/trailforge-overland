@@ -125,6 +125,24 @@
     .reports > span { flex: 1 0 100%; color: var(--cyan); font-size: 11px; font-weight: 800; }
     .reports button { border: 0; border-radius: 999px; background: #163044; color: white; font-size: 11px; font-weight: 800; padding: 7px 10px; }
     .reports button.on { background: var(--cyan); color: #041018; }
+    .live-flag { display: inline-block; margin-top: 4px; border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 900; letter-spacing: .02em; white-space: normal; }
+    .live-flag.gate { background: #3a1014; color: #ff5a6a; }
+    .live-flag.obstacle { background: #3a2a10; color: #ffb020; }
+    .community { margin-top: 8px; }
+    .community > button { border: 0; border-radius: 999px; background: #163044; color: white; font-size: 12px; font-weight: 800; min-height: 36px; padding: 7px 10px; }
+    .community-card { background: #0c1824; border-radius: 10px; padding: 8px; margin-top: 6px; }
+    .community-card b, .community-card small { display: block; }
+    .community-card small { color: var(--muted); font-size: 11px; }
+    .community-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .community-actions button, .community-pop button { border: 0; border-radius: 999px; background: #163044; color: white; font-size: 11px; font-weight: 800; padding: 7px 10px; }
+    .sync-ok { color: #3ddc84 !important; white-space: normal !important; }
+    .sync-wait { color: #ffb020 !important; white-space: normal !important; }
+    .community-pin { background: transparent; border: 0; }
+    .community-pin span { display: inline-block; font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 999px; white-space: nowrap; background: #ffb020; color: #1c1402; }
+    .community-pin.gate span { background: #ff5a6a; color: #2a060b; }
+    .community-pop { color: #041018; font-size: 12px; }
+    .community-pop b, .community-pop div { display: block; margin-bottom: 4px; }
+    #tripCode { width: 100%; min-height: 64px; margin: 8px 0; border-radius: 8px; border: 0; padding: 8px; font-size: 11px; }
     #dashHud { display: none; }
     #app[data-dash="1"] #dashHud { display: block; }
     #dashHud .corner { position: absolute; z-index: 570; max-width: 46%; background: rgba(7, 16, 24, 0.9); border: 1px solid rgba(62, 203, 255, 0.35); border-radius: 12px; padding: 8px 10px; }
@@ -201,7 +219,9 @@
     .psi b { font-size: 28px; letter-spacing: -0.04em; }
     .psi span, .pass small, .foot { color: var(--muted); font-size: 11px; }
     .pass { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; background: #13202e; border-radius: 12px; padding: 8px; margin-top: 6px; border: 1px solid transparent; }
+    .pass.popular { border-color: #38bdf8; box-shadow: 0 0 0 1px rgba(56,189,248,.45); }
     .pass.founders { border-color: #e2b657; background: linear-gradient(180deg, #2a2416, #13202e); }
+    .pass .pop { display: inline-block; background: #38bdf8; color: #041018; font-style: normal; font-size: 10px; font-weight: 900; letter-spacing: .04em; border-radius: 999px; padding: 2px 6px; margin-bottom: 4px; }
     .pass .meta { flex: 1; min-width: 0; }
     .pass b { display: block; font-size: 13px; }
     .pass .price { color: var(--cyan); font-weight: 800; font-size: 13px; }
@@ -370,6 +390,8 @@
       <b>Trip package</b>
       <canvas id="qrCanvas" width="220" height="220"></canvas>
       <div class="sub" id="qrCaption"></div>
+      <textarea id="tripCode" aria-label="Trip code" placeholder="Paste a scanned TrailForge trip code"></textarea>
+      <button type="button" data-act="apply-trip">Apply scanned trip code</button>
       <button type="button" data-act="close-qr">Close</button>
     </div>
   </div>

@@ -28,6 +28,8 @@
 		A20000000000000000000019 /* ParcelBoundaryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000019 /* ParcelBoundaryService.swift */; };
 		A2000000000000000000001A /* CockpitStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3000000000000000000001A /* CockpitStudio.swift */; };
 		A2000000000000000000001B /* FieldDesk.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3000000000000000000001B /* FieldDesk.swift */; };
+		A2000000000000000000001C /* CommunitySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3000000000000000000001C /* CommunitySync.swift */; };
+		A2000000000000000000001D /* community-reports.json in Resources */ = {isa = PBXBuildFile; fileRef = A3000000000000000000001D /* community-reports.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,6 +57,8 @@
 		A30000000000000000000019 /* ParcelBoundaryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParcelBoundaryService.swift; sourceTree = "<group>"; };
 		A3000000000000000000001A /* CockpitStudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CockpitStudio.swift; sourceTree = "<group>"; };
 		A3000000000000000000001B /* FieldDesk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FieldDesk.swift; sourceTree = "<group>"; };
+		A3000000000000000000001C /* CommunitySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunitySync.swift; sourceTree = "<group>"; };
+		A3000000000000000000001D /* community-reports.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = community-reports.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -86,6 +90,8 @@
 				A30000000000000000000019 /* ParcelBoundaryService.swift */,
 				A3000000000000000000001A /* CockpitStudio.swift */,
 				A3000000000000000000001B /* FieldDesk.swift */,
+				A3000000000000000000001C /* CommunitySync.swift */,
+				A3000000000000000000001D /* community-reports.json */,
 				A30000000000000000000005 /* MainCockpitView.swift */,
 				A30000000000000000000006 /* RigFitEngine.swift */,
 				A30000000000000000000007 /* StoreKitPaywall.swift */,
@@ -181,6 +187,7 @@
 			files = (
 				A2000000000000000000000A /* Assets.xcassets in Resources */,
 				A20000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */,
+				A2000000000000000000001D /* community-reports.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -198,6 +205,7 @@
 				A20000000000000000000019 /* ParcelBoundaryService.swift in Sources */,
 				A2000000000000000000001A /* CockpitStudio.swift in Sources */,
 				A2000000000000000000001B /* FieldDesk.swift in Sources */,
+				A2000000000000000000001C /* CommunitySync.swift in Sources */,
 				A20000000000000000000005 /* MainCockpitView.swift in Sources */,
 				A20000000000000000000006 /* RigFitEngine.swift in Sources */,
 				A20000000000000000000007 /* StoreKitPaywall.swift in Sources */,
