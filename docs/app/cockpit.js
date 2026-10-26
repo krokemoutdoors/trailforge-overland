@@ -75,12 +75,6 @@
     lastReroute: 0,
     aim: null,
     targetCopy: "",
-    parcelsOn: localStorage.getItem("tf-parcels") !== "0",
-    parcel: null,
-    parcelCells: [],
-    parcelGen: 0,
-    parcelTimer: null,
-    parcelAnchor: null,
     detent: (function () {
       const saved = localStorage.getItem("tf-detent");
       return saved === "peek" || saved === "full" ? saved : "split";
@@ -111,7 +105,6 @@
     convoy: "",
     mvum: null,
     lastAtt: 0,
-    parcelNote: "",
     community: loadCommunityStore(),
     communityOps: loadCommunityOps(),
     communityQueue: loadCommunityQueue(),
@@ -139,7 +132,6 @@
   let trailLayer;
   let campLayer;
   let routeLayer;
-  let parcelLayer;
   let corridorLayer;
   let slopeLayer;
   let hazardLayer;
@@ -161,7 +153,6 @@
   let labelLayer;
   let darkLayer;
   let osmLayer;
-  let identifyGen = 0;
   let placeSearchGen = 0;
   let placeLayer;
   let hazardPhoto = "";
@@ -777,7 +768,7 @@
       return '<div class="place-card"><button type="button" class="row" data-act="place-route" data-id="' + esc(place.id) + '"><span class="meta"><b>' + esc(place.name) + "</b><small>" + esc(place.address || "") + esc(away) + '</small></span></button><div class="actions"><button type="button" data-act="place-show" data-id="' + esc(place.id) + '">Show on Map</button><button type="button" class="primary" data-act="place-route" data-id="' + esc(place.id) + '">Route Here</button></div></div>';
     }).join("");
     const places = (state.placeBusy || placeRows) ? '<div class="status">Places &amp; Addresses</div>' + (state.placeBusy ? '<div class="status">Searching addresses and stores…</div>' : "") + placeRows : "";
-    return recorderHtml() + savedMarkersHtml() + plotWaypointsHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
+    return recorderHtml() + savedMarkersHtml() + plotWaypointsHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + "</div>" + telemetry + convoy;
   }
 
   function profileHtml(trail) {
@@ -850,7 +841,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.7 · build 19<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.8 · build 20<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -891,7 +882,6 @@
   function targetPoint() {
     if (state.route && state.route.destination) return state.route.destination;
     if (state.routing && state.aim) return state.aim;
-    if (state.parcel) return state.parcel;
     if (state.placePin) return state.placePin;
     const trail = selected();
     if (!trail) return null;
@@ -947,8 +937,6 @@
     const targetRead = document.querySelector("#targetRead b");
     if (gpsRead) gpsRead.textContent = gpsText || "—";
     if (targetRead) targetRead.textContent = aimText || "—";
-    const parcelToggle = document.getElementById("parcelToggle");
-    if (parcelToggle) parcelToggle.classList.toggle("on", state.parcelsOn);
     const limit = state.rollLimit || 25;
     const warn = Math.abs(state.roll) >= limit || Math.abs(state.pitch) >= limit;
     const pill = document.getElementById("clinPill");
@@ -1941,7 +1929,6 @@
     appendRecording(fix);
     updatePuck();
     updateHud();
-    noteParcelFix();
     if (!state.centeredOnce && !state.route && !SHOT) {
       state.centeredOnce = true;
       state.userPanned = false;
@@ -2286,28 +2273,6 @@
       copyText(state.targetCopy);
       return;
     }
-    if (act === "parcels") {
-      state.parcelsOn = !state.parcelsOn;
-      localStorage.setItem("tf-parcels", state.parcelsOn ? "1" : "0");
-      if (!state.parcelsOn) {
-        state.parcel = null;
-        state.parcelCells = [];
-        if (parcelLayer) parcelLayer.clearLayers();
-        syncSmaTiles();
-        renderLotCard();
-      } else scheduleParcels();
-      updateHud();
-      return;
-    }
-    if (act === "close-lot") { state.parcel = null; renderLotCard(); updateHud(); return; }
-    if (act === "copy-lot") {
-      if (!state.parcel) return;
-      const text = formatPair(state.parcel);
-      if (!text) return;
-      copyText("TARGET: " + text);
-      return;
-    }
-    if (act === "route-parcel") { routeToParcel(); return; }
     if (act === "surface") { state.surface = button.dataset.id; updateHud(); renderSheet(); return; }
     if (act === "locker") {
       state.rig.hasRearLocker = button.dataset.id === "rear";
@@ -2535,7 +2500,6 @@
     if (hazard && !hazard.hidden) { closeHazardSheet(); return true; }
     if (state.drawer) { state.drawer = null; renderDrawer(); applyChrome(); return true; }
     if (state.plotting) { state.plotting = false; drawPlot(); applyChrome(); return true; }
-    if (state.parcel) { state.parcel = null; renderLotCard(); updateHud(); return true; }
     if (state.menuOpen) { state.menuOpen = false; renderSheet(); return true; }
     if (state.showSteps) { state.showSteps = false; renderTop(); return true; }
     if (state.route) { endRoute(); return true; }
@@ -2642,861 +2606,14 @@
     });
   }
 
-  const PARCEL_STYLE = {
-    private: { fill: "#e2b657", stroke: "#f6e2a4", badge: "PRIVATE LAND" },
-    usfs: { fill: "#14915a", stroke: "#b7f5d4", badge: "U.S. FOREST SERVICE" },
-    blm: { fill: "#f5e642", stroke: "#fff3a1", badge: "BLM PUBLIC LAND" },
-    state: { fill: "#38bdf8", stroke: "#d7f3ff", badge: "STATE TRUST LAND" },
-    nps: { fill: "#34d399", stroke: "#d1fae5", badge: "NATIONAL PARK SERVICE" }
-  };
-
-  function scheduleParcels() {
-    if (!map) return;
-    clearTimeout(state.parcelTimer);
-    state.parcelTimer = setTimeout(refreshParcels, 420);
-  }
-
-  function noteParcelFix() {
-    if (!state.parcelsOn || !state.fix) return;
-    if (state.parcelAnchor && miles(state.parcelAnchor, state.fix) < 0.25) return;
-    state.parcelAnchor = { lat: state.fix.lat, lon: state.fix.lon };
-    scheduleParcels();
-  }
-
-  function regionBearing(lat, lon) {
-    let best = null;
-    let bestD = 14000;
-    const trails = allTrails();
-    for (let index = 0; index < trails.length; index += 1) {
-      const trail = trails[index];
-      if (!trail.coordinates || trail.coordinates.length < 2) continue;
-      if (Math.abs(trail.lat - lat) > 1.4 || Math.abs(trail.lon - lon) > 1.8) continue;
-      const step = Math.max(1, Math.ceil(trail.coordinates.length / 10));
-      for (let point = step; point < trail.coordinates.length; point += step) {
-        const start = { lat: trail.coordinates[point - step][0], lon: trail.coordinates[point - step][1] };
-        const end = { lat: trail.coordinates[point][0], lon: trail.coordinates[point][1] };
-        const distance = meters({ lat: lat, lon: lon }, start);
-        if (distance < bestD) {
-          bestD = distance;
-          best = bearing(start, end);
-        }
-      }
-    }
-    if (best != null) return Math.round(best / 5) * 5;
-    return (seedFor(Math.floor(lat * 2) + ":" + Math.floor(lon * 2)) % 50) - 25;
-  }
-
-  function localMeters(lat, lon, originLat, originLon, heading) {
-    const north = (lat - originLat) * 111320;
-    const east = (lon - originLon) * Math.max(20000, 111320 * Math.cos(originLat * Math.PI / 180));
-    const angle = heading * Math.PI / 180;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    return { x: north * cos + east * sin, y: -north * sin + east * cos };
-  }
-
-  function worldPoint(x, y, originLat, originLon, heading) {
-    const angle = heading * Math.PI / 180;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const north = x * cos - y * sin;
-    const east = x * sin + y * cos;
-    return [
-      originLat + north / 111320,
-      originLon + east / Math.max(20000, 111320 * Math.cos(originLat * Math.PI / 180))
-    ];
-  }
-
-  function pointInRing(lat, lon, ring) {
-    if (!ring || ring.length < 3) return false;
-    let inside = false;
-    for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
-      const yi = ring[index][0];
-      const xi = ring[index][1];
-      const yj = ring[previous][0];
-      const xj = ring[previous][1];
-      const intersect = ((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-
-  function parcelAt(lat, lon) {
-    const list = state.parcelCells || [];
-    for (let index = list.length - 1; index >= 0; index -= 1) {
-      if (list[index].ring && pointInRing(lat, lon, list[index].ring)) return list[index];
-    }
-    return null;
-  }
-
-  function publishedEntity(name) {
-    const text = String(name || "").trim();
-    if (!text || /private landowner/i.test(text)) return "";
-    if (/\b(usfs|blm|nps|dnr|forest|service|bureau|county|city|town|park|parks|district|inc\.?|llc|corp|company|trust|agency|department|weyerhaeuser|state|national|public|school)\b/i.test(text)) return text;
-    if (/^[A-Z][a-z.'-]+(?:\s+[A-Z][a-z.'-]+){1,2}$/.test(text)) return "";
-    return text;
-  }
-
-  function drawParcels() {
-    if (!parcelLayer) return;
-    parcelLayer.clearLayers();
-    const fade = Math.max(0, Math.min(100, Number(state.opacity.parcels) || 0)) / 100;
-    if (!state.parcelsOn || fade <= 0) return;
-    let labels = 0;
-    (state.parcelCells || []).forEach(function (parcel) {
-      if (!parcel.ring || parcel.ring.length < 3) return;
-      const style = PARCEL_STYLE[parcel.kind] || PARCEL_STYLE.private;
-      L.polygon(parcel.ring, {
-        color: style.stroke,
-        weight: 1.6,
-        fillColor: style.fill,
-        fillOpacity: 0.34 * fade,
-        interactive: true,
-        bubblingMouseEvents: false
-      }).on("click", function (event) {
-        if (state.plotting) { onMapClick(event); return; }
-        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
-        openParcel(parcel);
-        identifyParcel(parcel.lat, parcel.lon, parcel);
-      }).addTo(parcelLayer);
-      if (labels < 12 && parcel.owner) {
-        labels += 1;
-        const acres = Number.isFinite(parcel.acres) ? " · " + parcel.acres.toFixed(1) + " ac" : "";
-        const icon = L.divIcon({
-          className: "lot-label",
-          html: "<span>" + esc(shortOwner(parcel.owner)) + acres + "</span>",
-          iconSize: [150, 18],
-          iconAnchor: [75, 9]
-        });
-        L.marker([parcel.lat, parcel.lon], { icon: icon, interactive: false, zIndexOffset: 260 }).addTo(parcelLayer);
-      }
-    });
-  }
-
-  function shortOwner(name) {
-    const text = String(name || "");
-    return text.length > 28 ? text.slice(0, 27) + "…" : text;
-  }
-
-  function openParcel(parcel) {
-    state.parcel = parcel;
-    renderLotCard();
-    updateHud();
-  }
-
-  function renderLotCard() {
-    const card = document.getElementById("lotCard");
-    if (!card) return;
-    const parcel = state.parcelsOn ? state.parcel : null;
-    if (!parcel) {
-      card.hidden = true;
-      card.innerHTML = "";
-      return;
-    }
-    const style = PARCEL_STYLE[parcel.kind] || PARCEL_STYLE.private;
-    const coord = formatPair(parcel) || "—";
-    const acres = Number.isFinite(parcel.acres) ? parcel.acres.toFixed(1) + " ac" : "—";
-    const note = state.parcelNote ? '<div class="src">' + esc(state.parcelNote) + "</div>" : "";
-    card.hidden = false;
-    card.className = "lot-card " + (parcel.kind || "private");
-    card.innerHTML = '<div class="lot-top"><span class="badge" style="background:' + style.fill + '">' + esc(parcel.badge || style.badge) + '</span><button type="button" data-act="close-lot" aria-label="Close lot card">✕</button></div><b class="owner">' + esc(parcel.owner || "Published parcel") + '</b><div class="sub">' + esc(parcel.agency || "") + '</div><div class="lot-grid"><div><span>ADDRESS</span><b>' + esc(parcel.address || "—") + '</b></div><div><span>COUNTY</span><b>' + esc(parcel.county || "—") + '</b></div><div><span>CENSUS BLOCK</span><b>' + esc(parcel.censusBlock || "—") + '</b></div><div><span>ACRES</span><b>' + esc(acres) + '</b></div><div><span>ZONING / LAND USE</span><b>' + esc(parcel.zoning || "—") + '</b></div><div><span>PARCEL ID</span><b>' + esc(parcel.parcelId || "Not published") + '</b></div></div><button type="button" class="line" data-act="copy-lot">TARGET: ' + esc(coord) + '</button><button type="button" class="go" data-act="route-parcel">Route to Parcel</button><div class="src">' + esc(parcel.source || "") + "</div>" + note;
-  }
-
-  function routeToParcel() {
-    const parcel = state.parcel;
-    if (!parcel) return;
-    let nearest = null;
-    let best = Infinity;
-    state.trails.forEach(function (trail) {
-      const distance = miles(parcel, trail);
-      if (distance < best) {
-        best = distance;
-        nearest = trail;
-      }
-    });
-    const trail = nearest || selected();
-    state.parcel = null;
-    renderLotCard();
-    beginRoute({
-      id: parcel.id || "parcel",
-      trailID: trail ? trail.id : state.selectedId,
-      name: parcel.owner || "Published parcel",
-      lat: parcel.lat,
-      lon: parcel.lon,
-      slope: 0,
-      starlink: 0,
-      kind: "parcel",
-      acres: Number.isFinite(parcel.acres) ? parcel.acres : 0,
-      zoning: parcel.zoning || "—"
-    });
-  }
-
-  function onParcelMapClick(event) {
-    if (!state.parcelsOn || SHOT) return;
-    const original = event.originalEvent;
-    if (original && original.target && original.target.closest && original.target.closest(".leaflet-marker-icon, .camp-pin, .flag-pin")) return;
-    const lat = event.latlng.lat;
-    const lon = event.latlng.lng;
-    const hit = parcelAt(lat, lon);
-    if (hit) openParcel(hit);
-    identifyParcel(lat, lon, hit);
-  }
-
-  function ringCentroidLatLng(ring) {
-    let lat = 0;
-    let lon = 0;
-    ring.forEach(function (point) { lat += point[0]; lon += point[1]; });
-    return { lat: lat / ring.length, lon: lon / ring.length };
-  }
-
-  function esriLatLngRing(geometry) {
-    const rings = geometry && geometry.rings;
-    if (!rings || !rings.length) return null;
-    let best = rings[0];
-    rings.forEach(function (ring) { if (ring && ring.length > best.length) best = ring; });
-    if (!best || best.length < 4) return null;
-    const latlng = best.map(function (pair) { return [Number(pair[1]), Number(pair[0])]; }).filter(function (point) {
-      return Number.isFinite(point[0]) && Number.isFinite(point[1]);
-    });
-    return downsampleRing(latlng, 80);
-  }
-
-  function downsampleRing(points, limit) {
-    if (!points || points.length <= limit) return points || [];
-    const step = Math.ceil(points.length / limit);
-    const ring = [];
-    for (let index = 0; index < points.length; index += step) ring.push(points[index]);
-    const last = points[points.length - 1];
-    const tail = ring[ring.length - 1];
-    if (!tail || tail[0] !== last[0] || tail[1] !== last[1]) ring.push(last);
-    return ring;
-  }
-
-  function polygonAcres(ring) {
-    if (!ring || ring.length < 3) return null;
-    let meters2 = 0;
-    for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
-      const northA = ring[previous][0] * 111320;
-      const eastA = ring[previous][1] * 111320 * Math.cos(ring[previous][0] * Math.PI / 180);
-      const northB = ring[index][0] * 111320;
-      const eastB = ring[index][1] * 111320 * Math.cos(ring[index][0] * Math.PI / 180);
-      meters2 += eastA * northB - eastB * northA;
-    }
-    const acres = Math.abs(meters2 / 2) / 4046.8564224;
-    return Number.isFinite(acres) && acres > 0 ? acres : null;
-  }
-
-  async function readGis(url, options) {
-    const text = await net(url, options);
-    if (!text || text.length > 400000) return null;
-    const trimmed = text.trim();
-    if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return null;
-    const data = JSON.parse(trimmed);
-    if (data && data.error) {
-      const message = String((data.error && data.error.message) || data.error || "");
-      if (/not started|unable to complete|error/i.test(message)) return { down: true, message: message };
-      return { down: true, message: message };
-    }
-    return data;
-  }
-
-  function smaKind(code, name, adminState) {
-    const unit = publishedEntity(name);
-    const stateName = String(adminState || "");
-    if (code === "USFS") return { kind: "usfs", owner: unit || "U.S. Forest Service (USFS)", agency: "U.S. Forest Service (USFS)", badge: "U.S. FOREST SERVICE", source: "BLM Surface Management Agency" };
-    if (code === "BLM") return { kind: "blm", owner: unit || "Bureau of Land Management (BLM)", agency: "Bureau of Land Management (BLM)", badge: "BLM PUBLIC LAND", source: "BLM Surface Management Agency" };
-    if (code === "NPS") return { kind: "nps", owner: unit || "National Park Service", agency: "National Park Service", badge: "NATIONAL PARK SERVICE", source: "BLM Surface Management Agency" };
-    if (code === "ST") {
-      const wa = stateName === "WA" || /washington/i.test(stateName);
-      const label = wa ? "WA Dept. of Natural Resources (DNR)" : (unit || "State Trust Land");
-      return { kind: "state", owner: label, agency: label, badge: wa ? "WA DNR" : "STATE TRUST LAND", source: "BLM Surface Management Agency" };
-    }
-    if (unit) return { kind: "state", owner: unit, agency: unit, badge: "PUBLIC LAND", source: "BLM Surface Management Agency" };
-    if (code === "PVT" || code === "UND" || code === "PVTUNK") return { kind: "private", owner: "", agency: "Private land", badge: "PRIVATE LAND", private: true, source: "BLM Surface Management Agency" };
-    return null;
-  }
-
-  async function smaPoint(layer, point) {
-    const geometry = encodeURIComponent(JSON.stringify({ x: point.lon, y: point.lat, spatialReference: { wkid: 4326 } }));
-    const url = "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/" + layer + "/query?geometry=" + geometry + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=ADMIN_AGENCY_CODE,ADMIN_UNIT_NAME,ADMIN_ST&returnGeometry=false&f=json";
-    const data = await readGis(url);
-    if (!data || data.down) return null;
-    const attrs = (((data.features || [])[0] || {}).attributes) || null;
-    if (!attrs) return null;
-    const hit = smaKind(attrs.ADMIN_AGENCY_CODE, attrs.ADMIN_UNIT_NAME, attrs.ADMIN_ST);
-    return hit ? Object.assign({ lat: point.lat, lon: point.lon }, hit) : null;
-  }
-
-  async function smaIdentify(point) {
-    const hits = await Promise.all([7, 8, 9, 14, 15, 1].map(function (layer) {
-      return smaPoint(layer, point).catch(function () { return null; });
-    }));
-    const ranked = hits.filter(Boolean);
-    return ranked.find(function (hit) { return !hit.private && hit.owner; }) || ranked.find(function (hit) { return !hit.private; }) || ranked[0] || null;
-  }
-
-  async function usfsAt(point, withGeometry) {
-    const fields = "forestname";
-    const geom = withGeometry ? "true&maxAllowableOffset=0.05&outSR=4326" : "false";
-    const url = "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query?geometry=" + point.lon + "," + point.lat + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=" + fields + "&returnGeometry=" + geom + "&f=json";
-    const data = await readGis(url);
-    if (!data || data.down) return null;
-    const feature = (data.features || [])[0];
-    if (!feature) return null;
-    const attrs = feature.attributes || {};
-    const name = publishedEntity(attrs.forestname || attrs.FORESTNAME || "");
-    if (!name) return null;
-    const ring = withGeometry ? esriLatLngRing(feature.geometry) : null;
-    const center = ring && ring.length ? ringCentroidLatLng(ring) : { lat: point.lat, lon: point.lon };
-    return {
-      id: "usfs-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-      ring: ring,
-      lat: center.lat,
-      lon: center.lon,
-      acres: ring ? polygonAcres(ring) : null,
-      kind: "usfs",
-      owner: name,
-      agency: "U.S. Forest Service (USFS)",
-      badge: "U.S. FOREST SERVICE",
-      zoning: "National Forest",
-      parcelId: "",
-      source: "USFS EDW Forest System Boundaries",
-      live: true
-    };
-  }
-
-  async function censusPlace(point) {
-    const url = "https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=" + point.lon + "&y=" + point.lat + "&benchmark=Public_AR_Current&vintage=Current_Current&format=json";
-    const data = await readGis(url);
-    if (!data || data.down) return {};
-    const geos = ((data.result || {}).geographies) || {};
-    const county = (geos.Counties || [])[0] || {};
-    const place = (geos["Incorporated Places"] || [])[0] || {};
-    const block = (geos["Census Blocks"] || [])[0] || {};
-    const st = ((geos.States || [])[0] || {}).STUSAB || "";
-    const countyName = county.NAME || county.BASENAME || "";
-    return {
-      county: countyName ? (countyName.indexOf(",") >= 0 ? countyName : countyName + (st ? ", " + st : "")) : "",
-      place: place.NAME || place.BASENAME || "",
-      state: st,
-      block: block.GEOID || block.BLOCK || "",
-      tract: block.TRACT || ""
-    };
-  }
-
-  function stateAbbr(value) {
-    const text = String(value || "");
-    const iso = text.match(/US-([A-Z]{2})/);
-    if (iso) return iso[1];
-    if (/^[A-Za-z]{2}$/.test(text)) return text.toUpperCase();
-    const names = { washington: "WA", oregon: "OR", california: "CA", idaho: "ID", colorado: "CO", utah: "UT", nevada: "NV", arizona: "AZ", montana: "MT", wyoming: "WY", "new mexico": "NM", texas: "TX" };
-    return names[text.toLowerCase()] || text;
-  }
-
-  async function nominatimAddress(point) {
-    const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + point.lat + "&lon=" + point.lon + "&zoom=18&addressdetails=1";
-    const data = await readGis(url);
-    if (!data || data.down) return {};
-    const address = data.address || {};
-    const org = publishedEntity(address.office || data.name || "");
-    return {
-      house: address.house_number || "",
-      road: address.road || address.pedestrian || "",
-      town: address.city || address.town || address.village || address.hamlet || "",
-      state: stateAbbr(address["ISO3166-2-lvl4"] || address.state_code || address.state || ""),
-      zip: address.postcode || "",
-      county: address.county || "",
-      org: org
-    };
-  }
-
-  function formatStreet(address) {
-    if (!address) return "";
-    const street = [address.house, address.road].filter(Boolean).join(" ");
-    const tail = [address.town, [address.state, address.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
-    if (street && tail) return street + ", " + tail;
-    return street || tail || "";
-  }
-
-  function residentialTitle(address) {
-    const line = formatStreet(address);
-    return line ? "Private Residential Lot — " + line : "Private Residential Lot";
-  }
-
-  function inClark(point) {
-    return point.lat >= 45.5 && point.lat <= 46.05 && point.lon >= -122.85 && point.lon <= -122.25;
-  }
-
-  function attrPick(attrs, pattern) {
-    const keys = Object.keys(attrs || {});
-    for (let index = 0; index < keys.length; index += 1) {
-      if (!pattern.test(keys[index])) continue;
-      const value = attrs[keys[index]];
-      if (value == null || String(value).trim() === "" || String(value) === "Null") continue;
-      return String(value).trim();
-    }
-    return "";
-  }
-
-  function clarkParcelFromFeature(feature, index) {
-    const attrs = feature.attributes || feature;
-    const ring = esriLatLngRing(feature.geometry);
-    const ownerRaw = attrPick(attrs, /owner|taxpayer|grantor/i);
-    const owner = publishedEntity(ownerRaw);
-    const address = attrPick(attrs, /situs|site_?addr|address|prop_?addr/i);
-    const parcelId = attrPick(attrs, /parcel|apn|pin\b|tax.?id|prop_?id/i);
-    const zoning = attrPick(attrs, /zoning|land.?use|lu_?desc|usecode/i);
-    const acresRaw = Number(attrPick(attrs, /acres|gisacres|shape.?area/i));
-    const acres = ring ? polygonAcres(ring) : (Number.isFinite(acresRaw) && acresRaw > 0 && acresRaw < 100000 ? acresRaw : null);
-    const center = ring && ring.length ? ringCentroidLatLng(ring) : null;
-    if (!ring && !address && !parcelId && !owner) return null;
-    return {
-      id: "clark-" + (parcelId || index),
-      ring: ring,
-      lat: center ? center.lat : null,
-      lon: center ? center.lon : null,
-      acres: acres,
-      kind: /forest|bureau|blm|usfs|nps|dnr|county|city|park|state/i.test(owner) ? "state" : "private",
-      owner: owner || (address ? "Private Residential Lot — " + address : "Private Residential Lot"),
-      agency: "Clark County, WA",
-      badge: "PRIVATE LAND",
-      address: address,
-      county: "Clark County, WA",
-      zoning: zoning,
-      parcelId: parcelId,
-      source: "Clark County taxlots",
-      live: true
-    };
-  }
-
-  const PAD_URL = "https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name_PADUS/FeatureServer/0/query";
-  const PLSS_ALIQUOT_URL = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer/3/query";
-  const PLSS_SECTION_URL = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer/2/query";
-  const WILDERNESS_URL = "https://services1.arcgis.com/ERdCHt0sNM6dENSD/arcgis/rest/services/Wilderness_Areas_in_the_United_States/FeatureServer/0/query";
-  const TRIBAL_URL = "https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/AIANNHA_v1/FeatureServer/0/query";
-  const CLARK_TAXLOT_URL = "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/TaxlotsPublic/MapServer/0/query";
-  const CLARK_STATE_URL = "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/PublicLandState/MapServer/0/query";
-  const CLARK_COUNTY_URL = "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/CountyLandsbyOwner/MapServer/0/query";
-  const PARCEL_CATALOG = [
-    { state: "WA", id: "wa", source: "Washington current parcels", url: "https://services.arcgis.com/jsIt88o09Q0r1j8h/ArcGIS/rest/services/Current_Parcels/FeatureServer/0/query" },
-    { state: "CO", id: "co", source: "Colorado public parcels", url: "https://gis.colorado.gov/public/rest/services/Address_and_Parcel/Colorado_Public_Parcels/FeatureServer/0/query" },
-    { state: "MT", id: "mt", source: "Montana cadastral", url: "https://services.arcgis.com/qnjIrwR8z5Izc0ij/arcgis/rest/services/Cadastral_Application_Support/FeatureServer/5/query" },
-    { state: "WY", id: "wy", source: "Wyoming parcels", url: "https://services3.arcgis.com/r0iJ85SKZ4zAzz3P/arcgis/rest/services/Wyoming_Parcels_for_2026/FeatureServer/0/query" },
-    { state: "ID", id: "id-ada", source: "Ada County parcels", url: "https://services2.arcgis.com/dgGjZc6xAH5m5JyP/arcgis/rest/services/Parcels/FeatureServer/5/query", minLat: 43.25, maxLat: 43.85, minLon: -116.65, maxLon: -115.95 },
-    { state: "OR", id: "or-metro", source: "Portland Metro taxlots", url: "https://services2.arcgis.com/McQ0OlIABe29rJJy/arcgis/rest/services/Taxlots_with_Right_of_Way_Public/FeatureServer/3/query", minLat: 45.20, maxLat: 45.75, minLon: -123.20, maxLon: -122.15 },
-    { state: "NV", id: "nv-washoe", source: "Washoe County parcels", url: "https://wcgisweb.washoecounty.us/arcgis/rest/services/OpenData/OpenData/MapServer/0/query", minLat: 39.15, maxLat: 41.99, minLon: -120.60, maxLon: -119.00 },
-    { state: "AZ", id: "az-maricopa", source: "Maricopa County parcels", url: "https://gis.maricopa.gov/arcgis/rest/services/IndividualService/Parcel/MapServer/1/query", minLat: 32.50, maxLat: 34.10, minLon: -113.35, maxLon: -111.00 },
-    { state: "NM", id: "nm-bern", source: "Bernalillo County parcels", url: "https://services.arcgis.com/CWv1abTnC3urn4bV/arcgis/rest/services/berncoparcels_forIDO/FeatureServer/0/query", minLat: 34.70, maxLat: 35.40, minLon: -107.15, maxLon: -106.15 },
-    { state: "NC", id: "nc", source: "North Carolina parcels", url: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/1/query" },
-    { state: "NY", id: "ny", source: "New York tax parcels", url: "https://services6.arcgis.com/EbVsqZ18sv1kVJ3k/arcgis/rest/services/NYS_Tax_Parcels_Public/FeatureServer/1/query" },
-    { state: "NJ", id: "nj", source: "New Jersey parcels", url: "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Parcels_Composite_NJ_WM/FeatureServer/0/query" },
-    { state: "IN", id: "in", source: "Indiana parcels", url: "https://gisdata.in.gov/server/rest/services/Hosted/Parcel_Boundaries_of_Indiana_Current/FeatureServer/0/query" },
-    { state: "VA", id: "va", source: "Virginia parcels", url: "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VA_Parcels/FeatureServer/0/query" },
-    { state: "WV", id: "wv", source: "West Virginia parcels", url: "https://services.wvgis.wvu.edu/arcgis/rest/services/Planning_Cadastre/WV_Parcels/MapServer/0/query" },
-    { state: "MD", id: "md", source: "Maryland parcels", url: "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0/query" },
-    { state: "MA", id: "ma", source: "Massachusetts tax parcels", url: "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query" },
-    { state: "ME", id: "me", source: "Maine parcels", url: "https://services1.arcgis.com/RbMX0mRVOFNTdLzd/arcgis/rest/services/Maine_Parcels_Organized_Towns/FeatureServer/10/query" },
-    { state: "VT", id: "vt", source: "Vermont parcels", url: "https://services1.arcgis.com/BkFxaEFNwHqX3tAw/arcgis/rest/services/FS_VCGI_OPENDATA_Cadastral_VTPARCELS_poly_standardized_parcels_SP_v1/FeatureServer/0/query" },
-    { state: "CT", id: "ct", source: "Connecticut parcels", url: "https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_CAMA_and_Parcel_Layer/FeatureServer/0/query" },
-    { state: "NH", id: "nh", source: "New Hampshire parcels", url: "https://nhgeodata.unh.edu/hosting/rest/services/Hosted/CAD_ParcelMosaic/FeatureServer/1/query" },
-    { state: "DE", id: "de", source: "Delaware parcels", url: "https://enterprise.firstmap.delaware.gov/arcgis/rest/services/PlanningCadastre/DE_StateParcels/FeatureServer/0/query" },
-    { state: "ND", id: "nd", source: "North Dakota parcels", url: "https://services1.arcgis.com/GOcSXpzwBHyk2nog/arcgis/rest/services/NDGISHUB_Parcels/FeatureServer/0/query" },
-    { state: "MN", id: "mn", source: "Minnesota parcels", url: "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_mngeo/plan_parcels_open/FeatureServer/1/query" },
-    { state: "AR", id: "ar", source: "Arkansas parcels", url: "https://gis.arkansas.gov/arcgis/rest/services/FEATURESERVICES/Planning_Cadastre/FeatureServer/6/query" },
-    { state: "AK", id: "ak", source: "Alaska parcels", url: "https://services1.arcgis.com/7HDiw78fcUiM2BWn/arcgis/rest/services/AK_Parcels/FeatureServer/0/query" },
-    { state: "HI", id: "hi", source: "Hawaii parcels", url: "https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/MapServer/25/query" },
-    { state: "PA", id: "pa-bucks", source: "Bucks County parcels", url: "https://services3.arcgis.com/SP47Tddf7RK32lBU/arcgis/rest/services/Bucks_County_Parcels/FeatureServer/0/query", minLat: 40.05, maxLat: 40.60, minLon: -75.40, maxLon: -74.70 },
-    { state: "PA", id: "pa-chester", source: "Chester County parcels", url: "https://services.arcgis.com/G4S1dGvn7PIgYd6Y/arcgis/rest/services/Parcels_owners/FeatureServer/0/query", minLat: 39.72, maxLat: 40.25, minLon: -76.15, maxLon: -75.35 },
-    { state: "PA", id: "pa-mont", source: "Montgomery County parcels", url: "https://services1.arcgis.com/kOChldNuKsox8qZD/arcgis/rest/services/Montgomery_County_Parcels/FeatureServer/0/query", minLat: 40.00, maxLat: 40.50, minLon: -75.70, maxLon: -74.95 },
-    { state: "TX", id: "tx", source: "Texas StratMap parcels", url: "https://feature.geographic.texas.gov/arcgis/rest/services/Parcels/stratmap24_land_parcels_48/MapServer/0/query", fallback: "https://feature.geographic.texas.gov/arcgis/rest/services/Parcels/stratmap_land_parcels/MapServer/0/query" }
-  ];
-  const OWNER_FIELDS = ["ownname", "ownername1", "ownername", "PRIMARY_OWNER", "OWNER", "owner", "DEEDHOLDER", "Own_Name", "Mang_Name", "Unit_Nm", "Loc_Nm", "PubLandOwner", "OwnerName", "PACSOwner", "forestname", "NAME", "AGENCY", "STEWARD"];
-  const ADDR_FIELDS = ["SitusAddrsFull", "SITUS_ADDRESS", "locationad", "PARCEL_ADDR", "PROP_LOC", "SITUSADD", "PropertyFullStreetAddress", "SITEADDR", "ADDRESS", "SitusAddress", "addr_line1"];
-  const APN_FIELDS = ["PARCEL_ID_NR", "parcel_id", "parcelnb", "parno", "PRINT_KEY", "PAMS_PIN", "state_parcel_id", "PARCELID", "GISPID", "ACCTID", "MAP_PAR_ID", "STATE_ID", "SPAN", "Parcel_ID", "PIN", "UniqueGISID", "state_pin", "tmk_txt", "UPC", "APN", "PLSSID", "Prop_id"];
-  const ACRE_FIELDS = ["GISAcres", "GIS_Acres", "gisacres", "GISACRE", "acreage", "CALC_ACRES", "landgrossa", "GISAc", "ACRES", "RECRDAREATX"];
-  const VALUE_FIELDS = ["FULL_MARKET_VAL", "parval", "actualvalu", "total_value", "totalval", "TotalValue", "taxtotval", "mkttotval"];
-  const LEGAL_FIELDS = ["legal", "LEGALDESC", "SECDIVTXT", "SECDIVLAB", "FRSTDIVLAB", "TWNSHPLAB", "LegalShort"];
-  const COUNTY_FIELDS = ["CountyName", "COUNTY_NAME", "COUNTY", "county"];
-
-  function arcgisPointURL(base, point, offset) {
-    const sep = base.indexOf("?") >= 0 ? "&" : "?";
-    return base + sep + "geometry=" + point.lon + "," + point.lat + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&outSR=4326&maxAllowableOffset=" + (offset || 0.004) + "&resultRecordCount=2&f=json";
-  }
-
-  function fieldByNames(attrs, names) {
-    const wanted = {};
-    names.forEach(function (name) { wanted[String(name).toLowerCase()] = true; });
-    const keys = Object.keys(attrs || {});
-    for (let index = 0; index < keys.length; index += 1) {
-      if (!wanted[keys[index].toLowerCase()]) continue;
-      const value = attrs[keys[index]];
-      if (value == null) continue;
-      const text = String(value).trim();
-      const upper = text.toUpperCase();
-      if (!text || upper === "NULL" || upper === "<NULL>" || upper === "NONE" || text === "0") continue;
-      return text;
-    }
-    return "";
-  }
-
-  function esriParcelFromFeature(feature, meta, index) {
-    const attrs = feature.attributes || feature;
-    const ring = esriLatLngRing(feature.geometry);
-    const ownerRaw = fieldByNames(attrs, OWNER_FIELDS);
-    const owner = /^(null|private|unknown|none|not available)$/i.test(ownerRaw) ? "" : ownerRaw;
-    const address = fieldByNames(attrs, ADDR_FIELDS);
-    const parcelId = fieldByNames(attrs, APN_FIELDS);
-    const legal = fieldByNames(attrs, LEGAL_FIELDS);
-    const county = fieldByNames(attrs, COUNTY_FIELDS);
-    let acres = null;
-    ACRE_FIELDS.forEach(function (key) {
-      if (acres != null) return;
-      const number = Number(String(fieldByNames(attrs, [key])).replace(/,/g, ""));
-      if (Number.isFinite(number) && number > 0.02 && number < 8000000) acres = number;
-    });
-    if (ring && acres == null) acres = polygonAcres(ring);
-    const center = ring && ring.length ? ringCentroidLatLng(ring) : { lat: null, lon: null };
-    if (!ring && !address && !parcelId && !owner) return null;
-    const blob = owner + " " + (meta.source || "") + " " + legal;
-    let kind = meta.kind || "private";
-    if (/wilderness|national forest|forest service|\busfs\b/i.test(blob)) kind = "usfs";
-    else if (/bureau of land|\bblm\b/i.test(blob)) kind = "blm";
-    else if (/national park|\bnps\b/i.test(blob)) kind = "nps";
-    else if (/tribal|reservation|dnr|state park|state forest/i.test(blob)) kind = "state";
-    return {
-      id: (meta.id || "lot") + "-" + (parcelId || index),
-      ring: ring,
-      lat: center.lat,
-      lon: center.lon,
-      acres: acres,
-      kind: kind,
-      owner: owner || (address ? "Private Residential Lot — " + address : ""),
-      agency: meta.source || "",
-      address: address,
-      county: county,
-      zoning: legal,
-      parcelId: parcelId,
-      source: meta.source || "",
-      live: true
-    };
-  }
-
-  function catalogMatches(item, point) {
-    if (item.state !== stateCode(point.lat, point.lon)) return false;
-    if (item.minLat == null) return true;
-    return point.lat >= item.minLat && point.lat <= item.maxLat && point.lon >= item.minLon && point.lon <= item.maxLon;
-  }
-
-  async function esriLotsAt(url, point, meta) {
-    const data = await readGis(url);
-    if (!data || data.down || !data.features) return [];
-    return data.features.map(function (feature, index) {
-      return esriParcelFromFeature(feature, meta, index);
-    }).filter(Boolean);
-  }
-
-  async function authoritativeLots(point) {
-    const jobs = [
-      esriLotsAt(arcgisPointURL(PAD_URL, point, 0.05), point, { id: "padus", source: "USGS PAD-US", kind: "state" }),
-      esriLotsAt(arcgisPointURL(PLSS_ALIQUOT_URL, point, 0.002), point, { id: "plss", source: "BLM PLSS CadNSDI", kind: "private" }),
-      esriLotsAt(arcgisPointURL(PLSS_SECTION_URL, point, 0.01), point, { id: "plss-sec", source: "BLM PLSS sections", kind: "private" }),
-      esriLotsAt(arcgisPointURL(WILDERNESS_URL, point, 0.05), point, { id: "wild", source: "National Wilderness Areas", kind: "usfs" }),
-      esriLotsAt(arcgisPointURL(TRIBAL_URL, point, 0.05), point, { id: "tribal", source: "Census AIANNHA tribal lands", kind: "state" })
-    ];
-    PARCEL_CATALOG.forEach(function (item) {
-      if (!catalogMatches(item, point)) return;
-      jobs.push(esriLotsAt(arcgisPointURL(item.url, point, 0.004), point, { id: item.id, source: item.source, kind: "private" }).then(function (rows) {
-        if ((rows && rows.length) || !item.fallback) return rows || [];
-        return esriLotsAt(arcgisPointURL(item.fallback, point, 0.004), point, { id: item.id + "-fb", source: item.source, kind: "private" });
-      }));
-    });
-    const groups = await Promise.all(jobs.map(function (job) { return job.catch(function () { return []; }); }));
-    const lots = [];
-    groups.forEach(function (rows) { (rows || []).forEach(function (lot) { if (lot) lots.push(lot); }); });
-    return lots;
-  }
-
-  async function clarkLots(point) {
-    if (!inClark(point)) return { down: false, lots: [] };
-    try {
-      const tax = await readGis(arcgisPointURL(CLARK_TAXLOT_URL, point, 0.0008));
-      if (!tax || tax.down) return { down: true, lots: [] };
-      const extras = await Promise.all([
-        readGis(arcgisPointURL(CLARK_STATE_URL, point, 0.004)).catch(function () { return null; }),
-        readGis(arcgisPointURL(CLARK_COUNTY_URL, point, 0.004)).catch(function () { return null; })
-      ]);
-      const lots = (tax.features || []).map(function (feature, index) {
-        return esriParcelFromFeature(feature, { id: "clark", source: "Clark County taxlots", kind: "private" }, index);
-      }).concat(((extras[0] && extras[0].features) || []).map(function (feature, index) {
-        return esriParcelFromFeature(feature, { id: "clark-public", source: "Clark County public land", kind: "state" }, index);
-      })).concat(((extras[1] && extras[1].features) || []).map(function (feature, index) {
-        return esriParcelFromFeature(feature, { id: "clark-county", source: "Clark County lands", kind: "state" }, index);
-      })).filter(Boolean).slice(0, 6);
-      return { down: false, lots: lots };
-    } catch (error) {
-      return { down: true, lots: [] };
-    }
-  }
-
-  function osmParcel(element, index) {
-    const geometry = element.geometry || [];
-    if (geometry.length < 4) return null;
-    const ring = downsampleRing(geometry.map(function (point) { return [point.lat, point.lon]; }), 48);
-    if (ring.length < 4) return null;
-    const tags = element.tags || {};
-    const org = publishedEntity(tags.owner || tags.operator || "");
-    const address = {
-      house: tags["addr:housenumber"] || "",
-      road: tags["addr:street"] || "",
-      town: tags["addr:city"] || tags["addr:town"] || "",
-      state: stateAbbr(tags["addr:state"] || ""),
-      zip: tags["addr:postcode"] || ""
-    };
-    const street = formatStreet(address);
-    const named = publishedEntity(tags.name || "");
-    const landuse = tags.landuse || tags.leisure || tags.amenity || tags.boundary || "";
-    const kind = /forest service|national forest|usfs/i.test(org + " " + named) ? "usfs" : /bureau of land|\bblm\b/i.test(org + " " + named) ? "blm" : /national park/i.test(org + " " + named + " " + (tags.boundary || "")) ? "nps" : /\bdnr\b|state trust|state land/i.test(org + " " + named) ? "state" : "private";
-    const acres = polygonAcres(ring);
-    if (!Number.isFinite(acres) || acres < 0.01 || acres > 2500000) return null;
-    const center = ringCentroidLatLng(ring);
-    let owner = org || (kind !== "private" ? named : "");
-    if (!owner && kind === "private") owner = street ? "Private Residential Lot — " + street : (named || "Published OSM footprint");
-    if (!owner) owner = named || PARCEL_STYLE[kind].badge;
-    return {
-      id: "osm-" + (element.id || index),
-      ring: ring,
-      lat: center.lat,
-      lon: center.lon,
-      acres: acres,
-      kind: kind,
-      owner: owner,
-      agency: org || "OpenStreetMap",
-      address: street,
-      zoning: landuse || "",
-      parcelId: "",
-      source: "OpenStreetMap Overpass",
-      live: true
-    };
-  }
-
-  async function osmFootprints(bounds) {
-    const south = bounds.getSouth();
-    const west = bounds.getWest();
-    const north = bounds.getNorth();
-    const east = bounds.getEast();
-    const height = north - south;
-    const width = east - west;
-    const zoom = map.getZoom();
-    if (zoom < 11 || height > 0.35 || width > 0.35) return [];
-    const box = south + "," + west + "," + north + "," + east;
-    let parts = 'way["boundary"="protected_area"](' + box + ');way["boundary"="national_park"](' + box + ');way["landuse"="forest"](' + box + ');';
-    if (zoom >= 14 && height <= 0.08 && width <= 0.08) {
-      parts += 'way["building"](' + box + ');way["landuse"](' + box + ');way["amenity"](' + box + ');way["leisure"](' + box + ');way["boundary"="lot"](' + box + ');way["addr:housenumber"](' + box + ');';
-    }
-    const query = "[out:json][timeout:12];(" + parts + ");out tags geom " + (zoom >= 14 ? "16" : "8") + ";";
-    let text = "";
-    try {
-      text = await net("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
-    } catch (error) {
-      text = await net("https://overpass.kumi.systems/api/interpreter", { method: "POST", body: query });
-    }
-    if (!text || text.length > 400000) return [];
-    const data = JSON.parse(text);
-    return (data.elements || []).map(osmParcel).filter(Boolean);
-  }
-
-  function showParcelNote(text) {
-    state.parcelNote = text || "";
-    const node = document.getElementById("parcelNote");
-    if (node) node.textContent = state.parcelNote;
-  }
-
   function syncSmaTiles() {
     if (!map || !smaLayer) return;
-    const fade = Math.max(0, Math.min(100, Number(state.opacity.parcels) || 0)) / 100;
-    toggleTile(smaLayer, !!(state.parcelsOn && fade > 0), fade || 0);
+    const fade = Math.max(0, Math.min(100, Number(state.opacity.corridors) || 0)) / 100;
+    toggleTile(smaLayer, fade > 0, fade || 0);
   }
 
-  async function refreshParcels() {
-    if (!map || !state.parcelsOn) {
-      state.parcelCells = [];
-      if (parcelLayer) parcelLayer.clearLayers();
-      syncSmaTiles();
-      return;
-    }
-    syncSmaTiles();
-    const generation = ++state.parcelGen;
-    if (map.getZoom() < 11) {
-      state.parcelCells = [];
-      drawParcels();
-      showParcelNote("Zoom in to load published lot geometry.");
-      return;
-    }
-    if (SHOT) {
-      state.parcelCells = [];
-      drawParcels();
-      showParcelNote("");
-      return;
-    }
-    const center = map.getCenter();
-    const point = { lat: center.lat, lon: center.lng };
-    const cells = [];
-    let clarkDown = false;
-    const jobs = [
-      usfsAt(point, true).then(function (forest) { if (forest && forest.ring) cells.push(forest); }).catch(function () {}),
-      osmFootprints(map.getBounds()).then(function (lots) { lots.forEach(function (lot) { cells.push(lot); }); }).catch(function () {}),
-      authoritativeLots(point).then(function (lots) {
-        (lots || []).slice(0, 8).forEach(function (lot) {
-          if (!lot.ring) return;
-          if (lot.lat == null) { lot.lat = point.lat; lot.lon = point.lon; }
-          cells.push(lot);
-        });
-      }).catch(function () {})
-    ];
-    if (inClark(point)) {
-      jobs.push(clarkLots(point).then(function (result) {
-        if (!result || result.down) clarkDown = true;
-        (result && result.lots || []).forEach(function (lot) {
-          if (lot.ring) {
-            if (lot.lat == null) { lot.lat = point.lat; lot.lon = point.lon; }
-            cells.push(lot);
-          }
-        });
-      }).catch(function () { clarkDown = true; }));
-    }
-    await Promise.all(jobs);
-    if (generation !== state.parcelGen || !state.parcelsOn) return;
-    state.parcelCells = cells.filter(function (lot) { return lot.ring && lot.ring.length >= 3; });
-    drawParcels();
-    if (clarkDown) showParcelNote("Clark County taxlots are not responding. No tax lot was invented.");
-    else if (!state.parcelCells.length) showParcelNote("No published parcel polygon in this view.");
-    else showParcelNote("");
-    if (state.parcel && state.parcel.ring) {
-      const next = parcelAt(state.parcel.lat, state.parcel.lon);
-      if (next) openParcel(next);
-    }
-  }
-
-  async function identifyParcel(lat, lon, hit) {
-    const generation = ++identifyGen;
-    const point = { lat: lat, lon: lon };
-    let sma = null;
-    let forest = null;
-    let census = {};
-    let address = {};
-    let clark = null;
-    let authoritative = [];
-    await Promise.all([
-      smaIdentify(point).then(function (value) { sma = value; }).catch(function () {}),
-      usfsAt(point, !hit || !hit.ring).then(function (value) { forest = value; }).catch(function () {}),
-      censusPlace(point).then(function (value) { census = value || {}; }).catch(function () {}),
-      nominatimAddress(point).then(function (value) { address = value || {}; }).catch(function () {}),
-      inClark(point) ? clarkLots(point).then(function (value) { clark = value; }).catch(function () { clark = { down: true, lots: [] }; }) : Promise.resolve(),
-      authoritativeLots(point).then(function (value) { authoritative = value || []; }).catch(function () { authoritative = []; })
-    ]);
-    if (generation !== identifyGen || !state.parcelsOn) return;
-    if (clark && clark.down) showParcelNote("Clark County taxlots are not responding. No tax lot was invented.");
-    const clarkLot = clark && (clark.lots || []).find(function (lot) { return lot.ring && pointInRing(lat, lon, lot.ring); }) || (clark && clark.lots && clark.lots[0]);
-    const street = formatStreet(address);
-    const county = (census.county) || (address.county ? address.county + (census.state ? ", " + census.state : "") : "") || (hit && hit.county) || "";
-    const sources = [];
-    let card = {
-      id: (hit && hit.id) || ("tap-" + lat.toFixed(5) + "-" + lon.toFixed(5)),
-      ring: (hit && hit.ring) || null,
-      lat: lat,
-      lon: lon,
-      acres: hit && Number.isFinite(hit.acres) ? hit.acres : null,
-      kind: "private",
-      owner: "",
-      agency: "",
-      address: street || (hit && hit.address) || "",
-      county: county,
-      censusBlock: census.block || "",
-      zoning: (hit && hit.zoning) || "",
-      parcelId: (hit && hit.parcelId) || "",
-      source: "",
-      live: true
-    };
-    if (clarkLot && clarkLot.ring && (!card.ring || clarkLot.parcelId)) {
-      card.ring = clarkLot.ring;
-      card.acres = clarkLot.acres;
-      card.parcelId = clarkLot.parcelId || card.parcelId;
-      card.zoning = clarkLot.zoning || card.zoning;
-      card.address = clarkLot.address || card.address;
-      card.county = "Clark County, WA";
-      if (clarkLot.owner && clarkLot.owner.indexOf("Private Residential") !== 0) card.owner = clarkLot.owner;
-      sources.push("Clark County taxlots");
-    }
-    if (forest) {
-      card.kind = "usfs";
-      card.owner = forest.owner;
-      card.agency = "U.S. Forest Service (USFS)";
-      card.badge = "U.S. FOREST SERVICE";
-      card.zoning = card.zoning || "National Forest";
-      if (!card.ring && forest.ring) {
-        card.ring = forest.ring;
-        card.acres = forest.acres;
-      }
-      sources.push("USFS EDW Forest System Boundaries");
-    }
-    if (sma && !sma.private) {
-      card.kind = sma.kind || card.kind;
-      card.owner = card.owner || sma.owner;
-      card.agency = sma.agency || card.agency;
-      card.badge = sma.badge || card.badge;
-      sources.push(sma.source || "BLM Surface Management Agency");
-    } else if (sma && sma.private) {
-      sources.push("BLM Surface Management Agency");
-      if (!card.owner) card.kind = "private";
-    }
-    const taxLot = (authoritative || []).find(function (lot) {
-      return lot.parcelId && (!lot.ring || pointInRing(lat, lon, lot.ring));
-    });
-    const publicLot = (authoritative || []).find(function (lot) {
-      return lot.kind && lot.kind !== "private" && (!lot.ring || pointInRing(lat, lon, lot.ring));
-    });
-    const chosenLot = taxLot || (!card.parcelId ? publicLot : null);
-    if (chosenLot && (chosenLot.parcelId || !card.parcelId)) {
-      if (chosenLot.ring) card.ring = chosenLot.ring;
-      if (chosenLot.parcelId) card.parcelId = chosenLot.parcelId;
-      if (chosenLot.address) card.address = chosenLot.address;
-      if (chosenLot.acres) card.acres = chosenLot.acres;
-      if (chosenLot.zoning) card.zoning = chosenLot.zoning || card.zoning;
-      if (chosenLot.county) card.county = chosenLot.county;
-      if (chosenLot.owner) card.owner = chosenLot.owner;
-      if (chosenLot.kind && chosenLot.kind !== "private") {
-        card.kind = chosenLot.kind;
-        card.agency = chosenLot.agency || chosenLot.source;
-        card.badge = chosenLot.kind === "usfs" ? "U.S. FOREST SERVICE" : chosenLot.kind === "blm" ? "BLM PUBLIC LAND" : "PUBLIC LAND";
-      }
-      sources.push(chosenLot.source);
-      authoritative.forEach(function (lot) {
-        if (lot.ring && !state.parcelCells.some(function (cell) { return cell.id === lot.id; })) {
-          state.parcelCells = state.parcelCells.concat([lot]);
-        }
-      });
-    }
-    if (address.org && card.kind === "private") {
-      card.owner = address.org;
-      card.agency = address.org;
-    }
-    if (!card.owner) {
-      card.owner = card.kind === "private" ? residentialTitle(address) : (card.agency || "Published parcel");
-    }
-    if (!card.agency) card.agency = card.kind === "private" ? (county || "County assessor") : card.owner;
-    if (hit && hit.source) sources.push(hit.source);
-    if (street) sources.push("OpenStreetMap Nominatim");
-    if (census.block || census.county) sources.push("U.S. Census Bureau");
-    card.source = sources.filter(function (item, index, list) { return item && list.indexOf(item) === index; }).join(" · ");
-    if (!card.parcelId) card.parcelId = "";
-    if (card.ring && !state.parcelCells.some(function (lot) { return lot.id === card.id; })) {
-      state.parcelCells = state.parcelCells.concat([card]);
-      drawParcels();
-    }
-    openParcel(card);
-  }
   function loadOpacity() {
-    const base = { parcels: 100, corridors: 70, slope: 55, hazards: 80 };
+    const base = { corridors: 70, slope: 55, hazards: 80 };
     try { return Object.assign(base, JSON.parse(localStorage.getItem("tf-opacity") || "{}")); }
     catch (error) { return base; }
   }
@@ -3645,18 +2762,8 @@
     localStorage.setItem("tf-opacity", JSON.stringify(state.opacity));
     const read = document.querySelector('[data-read="' + name + '"]');
     if (read) read.textContent = state.opacity[name] + "%";
-    if (name === "parcels") {
-      if (state.opacity.parcels > 0 && !state.parcelsOn) {
-        state.parcelsOn = true;
-        localStorage.setItem("tf-parcels", "1");
-        scheduleParcels();
-      }
-      drawParcels();
-      syncSmaTiles();
-      updateHud();
-      return;
-    }
     syncOverlays();
+    if (name === "corridors") syncSmaTiles();
   }
 
   function toggleTile(layer, on, opacity) {
@@ -4642,7 +3749,6 @@
       toast(prefix + shortFit(plotFit().verdict));
       return;
     }
-    onParcelMapClick(event);
   }
 
   function gpxXml(name, points, waypoints) {
@@ -4899,16 +4005,7 @@
         if (camp.lat >= box.minLat && camp.lat <= box.maxLat && camp.lon >= box.minLon && camp.lon <= box.maxLon) camps.push(camp);
       });
     });
-    const parcels = (state.parcelCells || []).filter(function (cell) {
-      let lat = Number(cell.lat);
-      let lon = Number(cell.lon);
-      if (!Number.isFinite(lat) && cell.ring && cell.ring.length) {
-        lat = Number(cell.ring[0][0]);
-        lon = Number(cell.ring[0][1]);
-      }
-      return Number.isFinite(lat) && Number.isFinite(lon) && lat >= box.minLat && lat <= box.maxLat && lon >= box.minLon && lon <= box.maxLon;
-    });
-    return { trails: trails, camps: camps, parcels: parcels };
+    return { trails: trails, camps: camps };
   }
 
   function areaEstimateText() {
@@ -4918,7 +4015,7 @@
     const inside = featuresInside(box);
     const mb = Math.max(1, Math.round(plan.tiles.length * 20 / 1024));
     const cap = plan.capped ? " · capped at 600 tiles" : "";
-    return areaChoiceLabel() + " · ~" + plan.tiles.length + " tiles · " + inside.parcels.length + " parcels · " + inside.trails.length + " trails · ~" + mb + " MB" + cap;
+    return areaChoiceLabel() + " · ~" + plan.tiles.length + " tiles · " + inside.trails.length + " trails · ~" + mb + " MB" + cap;
   }
 
   function offlinePreviewVisible() {
@@ -5129,12 +4226,10 @@
         maxLat: box.maxLat,
         minLon: box.minLon,
         maxLon: box.maxLon,
-        parcelCount: inside.parcels.length,
         trailCount: inside.trails.length,
         campCount: inside.camps.length,
-        badge: label + " • " + style + " + Parcels + Trails",
-        trails: inside.trails.map(function (trail) { return { id: trail.id, name: trail.name }; }),
-        parcels: inside.parcels.slice(0, 80)
+        badge: label + " • " + style + " + Trails",
+        trails: inside.trails.map(function (trail) { return { id: trail.id, name: trail.name }; })
       });
       state.packs = state.packs.slice(0, 12);
       savePacks();
@@ -5664,7 +4759,6 @@
     if (!hit) return;
     state.placePin = { id: hit.id, name: hit.name, address: hit.address, lat: hit.lat, lon: hit.lon };
     state.aim = state.placePin;
-    if (state.parcelsOn) identifyParcel(hit.lat, hit.lon, null);
     if (!route) {
       if (map) map.setView([hit.lat, hit.lon], Math.max(map.getZoom(), 15));
       drawPlacePin(true);
@@ -6073,18 +5167,11 @@
     if (now - lastPinDrop < 600) return;
     lastPinDrop = now;
     if (navigator.vibrate) navigator.vibrate(25);
-    const parcel = parcelAt(lat, lon);
-    state.droppedPin = { lat: lat, lon: lon, name: "Saved Pin " + (state.savedMarkers.length + 1), place: parcel ? parcelSummary(parcel) : "Looking up this point…" };
+    state.droppedPin = { lat: lat, lon: lon, name: "Saved Pin " + (state.savedMarkers.length + 1), place: "Looking up this point…" };
     state.pinCategory = "Waypoint";
     openPinSheet();
     drawSavedMarkers();
     reversePin(lat, lon);
-  }
-
-  function parcelSummary(parcel) {
-    const owner = parcel.owner || parcel.ownerName || "";
-    const lot = parcel.apn || parcel.lot || parcel.id || "";
-    return [owner, lot].filter(Boolean).join(" · ") || "Parcel";
   }
 
   function openPinSheet() {
@@ -6335,7 +5422,6 @@
     trailLayer = L.layerGroup().addTo(map);
     campLayer = L.layerGroup().addTo(map);
     routeLayer = L.layerGroup().addTo(map);
-    parcelLayer = L.layerGroup().addTo(map);
     hazardLayer = L.layerGroup().addTo(map);
     hazardPinLayer = L.layerGroup().addTo(map);
     communityLayer = L.layerGroup().addTo(map);
@@ -6347,8 +5433,8 @@
     installPitchGesture();
     applyMapPitch(false);
     map.on("dragstart", function () { state.follow = false; state.userPanned = true; });
-    map.on("zoomend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
-    map.on("moveend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
+    map.on("zoomend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); refreshAreaChrome(); scheduleTrailScan(); });
+    map.on("moveend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); refreshAreaChrome(); scheduleTrailScan(); });
     map.on("move", function () { syncAreaPreview(); });
     refreshAreaChrome();
     map.on("click", onMapClick);
@@ -6483,7 +5569,6 @@
     startGeolocation();
     loadTelemetry();
     bootShot();
-    scheduleParcels();
     scheduleTrailScan();
     refreshMvum(selected());
     refreshCommunity(false);

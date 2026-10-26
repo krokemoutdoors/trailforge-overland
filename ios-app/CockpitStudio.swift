@@ -162,71 +162,6 @@ struct MapHazard: Identifiable {
     let radiusMeters: Double
 }
 
-struct ParcelSnapshot: Codable {
-    var id: String
-    var apnLotNumber: String
-    var ownerName: String
-    var ownerIsPublished: Bool
-    var ownershipType: String
-    var acreage: Double
-    var subdivisionOrTract: String
-    var zoningOrUse: String
-    var assessedValueOrStatus: String
-    var countyAndState: String
-    var centerLat: Double
-    var centerLon: Double
-    var ring: [Double]
-    var streetAddress: String
-    var sourceName: String
-    var censusLabel: String
-
-    init(_ parcel: PropertyParcel) {
-        id = parcel.id
-        apnLotNumber = parcel.apnLotNumber
-        ownerName = parcel.ownerName
-        ownerIsPublished = parcel.ownerIsPublished
-        ownershipType = parcel.ownershipType.rawValue
-        acreage = parcel.acreage
-        subdivisionOrTract = parcel.subdivisionOrTract
-        zoningOrUse = parcel.zoningOrUse
-        assessedValueOrStatus = parcel.assessedValueOrStatus
-        countyAndState = parcel.countyAndState
-        centerLat = parcel.centerLat
-        centerLon = parcel.centerLon
-        ring = parcel.boundaryCoordinates.flatMap { [$0.latitude, $0.longitude] }
-        streetAddress = parcel.streetAddress
-        sourceName = parcel.sourceName
-        censusLabel = parcel.censusLabel
-    }
-
-    var parcel: PropertyParcel {
-        var coordinates: [CLLocationCoordinate2D] = []
-        var index = 0
-        while index + 1 < ring.count {
-            coordinates.append(CLLocationCoordinate2D(latitude: ring[index], longitude: ring[index + 1]))
-            index += 2
-        }
-        return PropertyParcel(
-            id: id,
-            apnLotNumber: apnLotNumber,
-            ownerName: ownerName,
-            ownerIsPublished: ownerIsPublished,
-            ownershipType: OwnershipCategory(rawValue: ownershipType) ?? .privateParcel,
-            acreage: acreage,
-            subdivisionOrTract: subdivisionOrTract,
-            zoningOrUse: zoningOrUse,
-            assessedValueOrStatus: assessedValueOrStatus,
-            countyAndState: countyAndState,
-            centerLat: centerLat,
-            centerLon: centerLon,
-            boundaryCoordinates: coordinates,
-            streetAddress: streetAddress,
-            sourceName: sourceName,
-            censusLabel: censusLabel
-        )
-    }
-}
-
 struct SavedMarker: Codable, Identifiable, Hashable {
     var id: UUID
     var name: String
@@ -338,7 +273,6 @@ struct DiscoveredTrailSnapshot: Codable {
 enum CockpitStore {
     private static let reportsKey = "trailforge.trailReports"
     private static let packsKey = "trailforge.offlinePacks"
-    private static let parcelsKey = "trailforge.parcelCache"
     private static let hazardsKey = "trailforge.hazardPins"
     private static let recordedRoutesKey = "trailforge.recordedRoutes"
     private static let savedMarkersKey = "trailforge.savedMarkers.v1"
@@ -358,15 +292,6 @@ enum CockpitStore {
 
     static func savePacks(_ packs: [OfflineCorridorPack]) {
         encode(packs, key: packsKey)
-    }
-
-    static func loadParcels() -> [PropertyParcel] {
-        (decode([ParcelSnapshot].self, key: parcelsKey) ?? []).map(\.parcel)
-    }
-
-    static func saveParcels(_ parcels: [PropertyParcel], limit: Int = 18) {
-        guard !parcels.isEmpty else { return }
-        encode(parcels.prefix(max(1, limit)).map(ParcelSnapshot.init), key: parcelsKey)
     }
 
     static func loadHazards() -> [DroppedHazard] {

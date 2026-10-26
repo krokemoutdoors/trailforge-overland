@@ -71,23 +71,6 @@
     .coords b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
     .coords button.line { cursor: pointer; touch-action: manipulation; }
     .coords button.line:active { background: rgba(62, 203, 255, 0.24); }
-    .lot-label { background: transparent; border: 0; }
-    .lot-label span { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: white; font-size: 10px; font-weight: 800; text-shadow: 0 1px 2px #041018, 0 0 4px #041018; }
-    .lot-card { position: absolute; z-index: 650; left: 8px; right: 8px; bottom: 108px; background: rgba(8, 16, 28, 0.94); border: 1px solid rgba(226, 182, 87, 0.65); border-radius: 16px; padding: 10px 12px 12px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35); }
-    .lot-card.usfs { border-color: #14915a; } .lot-card.blm { border-color: #f5e642; } .lot-card.state { border-color: #38bdf8; }
-    .lot-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .lot-card .badge { border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; color: #1c1402; }
-    .lot-card.usfs .badge, .lot-card.state .badge { color: #04140c; }
-    .lot-card .owner { display: block; margin-top: 6px; font-size: 16px; }
-    .lot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
-    .lot-grid div { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 6px 8px; }
-    .lot-grid span { display: block; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 0.04em; }
-    .lot-grid b { display: block; font-size: 12px; overflow-wrap: anywhere; }
-    .lot-card .line, .lot-card .go { width: 100%; border: 0; border-radius: 999px; font-weight: 800; }
-    .lot-card .line { text-align: left; background: rgba(7, 16, 24, 0.9); color: #e8f1f8; padding: 8px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
-    .lot-card .go { margin-top: 8px; background: #1d6dff; color: white; padding: 9px 10px; font-size: 13px; }
-    .lot-card .src { margin-top: 6px; color: var(--muted); font-size: 10px; }
-    .lot-top button { border: 0; background: transparent; color: white; font-size: 16px; }
     .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
     .legend .g { background: var(--green); } .legend .o { background: var(--amber); } .legend .r { background: var(--red); }
     .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 6px 8px 6px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; display: flex; align-items: center; gap: 8px; }
@@ -310,14 +293,12 @@
       <div class="hud-left">
         <button type="button" data-act="center">Center on My GPS</button>
         <button type="button" data-act="near">Near My GPS</button>
-        <button type="button" id="parcelToggle" data-act="parcels" class="on">Parcels</button>
       </div>
       <div class="coords" id="coordsHud">
         <div class="line" id="myGpsRead"><span class="k">MY GPS:</span><b>—</b></div>
         <button type="button" class="line" id="targetRead" data-act="copy-target" aria-label="Copy target coordinates"><span class="k">TARGET:</span><b>—</b></button>
       </div>
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
-      <div class="lot-card" id="lotCard" hidden></div>
       <nav id="rail" aria-label="Map tools">
         <button type="button" data-act="layers" title="Layers &amp; Opacity Drawer" aria-label="Layers and Opacity Drawer">▦</button>
         <button type="button" class="rail-3d" data-act="toggle-3d" title="3D terrain and tilt" aria-label="Toggle 3D map">3D</button>
@@ -360,7 +341,6 @@
             <button type="button" data-act="basemap" data-id="dark">Dark Overland</button>
           </div>
           <div class="drawer-label">OVERLAYS</div>
-          <label class="field"><span>Parcels <b data-read="parcels">100%</b></span><input type="range" min="0" max="100" step="1" value="100" data-overlay="parcels" aria-label="Parcels opacity" /></label>
           <label class="field"><span>USFS/BLM Corridors <b data-read="corridors">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="corridors" aria-label="USFS and BLM corridor opacity" /></label>
           <label class="field"><span>&lt;3° LIDAR Slope Shading <b data-read="slope">55%</b></span><input type="range" min="0" max="100" step="1" value="55" data-overlay="slope" aria-label="Slope shading opacity" /></label>
           <label class="field"><span>Wildfires &amp; Stream Gauges <b data-read="hazards">80%</b></span><input type="range" min="0" max="100" step="1" value="80" data-overlay="hazards" aria-label="Wildfire and stream gauge opacity" /></label>
