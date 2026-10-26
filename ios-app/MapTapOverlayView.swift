@@ -54,11 +54,19 @@ struct MapTapOverlayView: UIViewRepresentable {
             }
         }
 
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            gestureRecognizer.numberOfTouches <= 1
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            !(touch.view is UIControl)
+        }
+
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            true
+            gestureRecognizer.numberOfTouches <= 1
         }
     }
 }
@@ -88,7 +96,10 @@ final class MapPressInstaller: UIView {
         let press = UILongPressGestureRecognizer(target: coordinator, action: #selector(MapTapOverlayView.Coordinator.pressed(_:)))
         press.minimumPressDuration = 0.45
         press.allowableMovement = 14
+        press.numberOfTouchesRequired = 1
         press.cancelsTouchesInView = false
+        press.delaysTouchesBegan = false
+        press.delaysTouchesEnded = false
         press.delegate = coordinator
         host.addGestureRecognizer(press)
         recognizer = press
@@ -110,8 +121,25 @@ final class MapPressInstaller: UIView {
 
     private func pressHost() -> UIView? {
         if let map = Self.findMap(startingAt: self) { return map }
-        if let superview, superview !== self { return superview }
-        return window
+        var node = superview
+        var hops = 0
+        var host = superview
+        while let view = node, hops < 8, !(view is UIWindow) {
+            host = view
+            let name = String(describing: type(of: view))
+            if name.contains("MKMapView") || name.contains("MapView") {
+                return view
+            }
+            // The SwiftUI Map and this overlay share a large multi-child container.
+            // Attach there so one-finger long-press reaches the map, and stop
+            // before UIWindow so sheet controls are not part of the recognizer.
+            if view.bounds.width > 240, view.bounds.height > 240, view.subviews.count > 1 {
+                return view
+            }
+            node = view.superview
+            hops += 1
+        }
+        return host
     }
 
     static func findMap(startingAt view: UIView) -> MKMapView? {

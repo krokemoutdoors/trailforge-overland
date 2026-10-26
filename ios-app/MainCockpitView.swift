@@ -162,7 +162,12 @@ struct MainCockpitView: View {
     @AppStorage("trailforge.hazardOpacity") private var hazardOverlayOpacity = 0.85
     @AppStorage("trailforge.starlinkOpacity") private var starlinkOverlayOpacity = 0.75
     @AppStorage("trailforge.nightVision") private var nightVision = false
-    @AppStorage("trailforge.thermalSaver") private var thermalSaver = false
+    @State private var thermalSaver = false
+    @AppStorage("trailforge.map3D") private var is3DMapsEnabled = true
+    @State private var cameraPitch: Double = 45
+    @State private var lastCameraHeading: Double = 0
+    @State private var lastMapCamera: MapCamera?
+    @State private var lastCameraNote = Date.distantPast
     @StateObject private var convoy = ConvoyMeshManager()
     @StateObject private var community = CommunityReportSyncService()
     @StateObject private var hazardRecorder = HazardNoteRecorder()
@@ -316,6 +321,8 @@ struct MainCockpitView: View {
         hasher.combine(nextSegmentFreehand)
         hasher.combine(segmentFreehand.map { $0 ? "1" : "0" }.joined())
         hasher.combine(thermalSaver)
+        hasher.combine(showOffline)
+        hasher.combine(downloadRunning)
         hasher.combine(hazardPins.map { "\($0.id):\($0.confirmations):\($0.cleared)" }.joined(separator: ","))
         hasher.combine(reports.map { "\($0.id):\($0.status):\($0.confirmations):\($0.cleared)" }.joined(separator: ","))
         hasher.combine(community.feedToken)
@@ -350,8 +357,12 @@ struct MainCockpitView: View {
     }
 
     private var heatLimited: Bool {
-        let state = ProcessInfo.processInfo.thermalState
-        return thermalSaver || state == .serious || state == .critical
+        thermalSaver
+    }
+
+    private var activePitch: Double {
+        guard is3DMapsEnabled else { return 0 }
+        return cameraPitch > 1 ? cameraPitch : 55
     }
 
     private var effectiveBasemap: BasemapChoice {
@@ -495,8 +506,8 @@ struct MainCockpitView: View {
                 savedMarkers = CockpitStore.loadSavedMarkers()
                 convoy.start()
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-                if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
-                    thermalSaver = true
+                if is3DMapsEnabled {
+                    applyCameraPitch(cameraPitch > 1 ? cameraPitch : 45)
                 }
                 if offlineFirst {
                     parcelService.replace(CockpitStore.loadParcels())
@@ -515,7 +526,7 @@ struct MainCockpitView: View {
                 if activeRoute == nil, regionFilter == "near" {
                     applyFilterSelection(scanIfNear: true)
                 } else if activeRoute == nil {
-                    pushCamera(.userLocation(fallback: .automatic))
+                    pushCamera(userTrackingCamera(followsHeading: false))
                 }
             }
             .onChange(of: locationTracker.locationRevision) { _, _ in
@@ -573,12 +584,6 @@ struct MainCockpitView: View {
             }
             .onChange(of: parcelService.status) { _, _ in
                 CockpitStore.saveParcels(parcelService.parcels)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
-                let state = ProcessInfo.processInfo.thermalState
-                if state == .serious || state == .critical {
-                    thermalSaver = true
-                }
             }
             .onChange(of: offlineFirst) { _, enabled in
                 community.setOfflineSimulation(enabled)
@@ -1129,10 +1134,10 @@ struct MainCockpitView: View {
         let latDelta = max(0.22, (maxLat - minLat) * 1.25)
         let lonDelta = max(0.22, (maxLon - minLon) * 1.25)
         withAnimation {
-            pushCamera(.region(MKCoordinateRegion(
+            pushCamera(regionCamera(
                 center: center,
                 span: MKCoordinateSpan(latitudeDelta: latDelta, longitudeDelta: lonDelta)
-            )))
+            ))
         }
     }
 
@@ -1244,6 +1249,16 @@ struct MainCockpitView: View {
         refreshLiveRouteMetrics()
         refreshTurnProgress()
         announceNearbyCrux()
+        if followRoute, is3DMapsEnabled, let user = locationTracker.userCoordinate,
+           Date().timeIntervalSince(lastCameraNote) > 0.8 {
+            let distance = lastMapCamera?.distance ?? cameraDistance(for: visibleRegion)
+            pushCamera(.camera(MapCamera(
+                centerCoordinate: user,
+                distance: distance,
+                heading: lastCameraHeading,
+                pitch: activePitch
+            )))
+        }
         guard let route = activeRoute, let user = locationTracker.userCoordinate else { return }
         if !routeStartedFromGPS {
             routeStartedFromGPS = true
@@ -1354,16 +1369,9 @@ struct MainCockpitView: View {
     }
 
     private func followUserCamera() {
-        let center = locationTracker.userCoordinate ?? mapCenter
         cameraGate.ignoreFollowDisengageUntil = Date().addingTimeInterval(0.45)
         showingRouteOverview = false
-        pushCamera(.userLocation(
-            followsHeading: true,
-            fallback: .region(MKCoordinateRegion(
-                center: center,
-                span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
-            ))
-        ))
+        pushCamera(userTrackingCamera(followsHeading: true))
     }
 
     private func showOverview() {
@@ -1403,10 +1411,10 @@ struct MainCockpitView: View {
         cameraGate.ignoreFollowDisengageUntil = Date().addingTimeInterval(0.45)
         showingRouteOverview = true
         withAnimation {
-            pushCamera(.region(MKCoordinateRegion(
+            pushCamera(regionCamera(
                 center: CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2),
                 span: MKCoordinateSpan(latitudeDelta: latDelta, longitudeDelta: lonDelta)
-            )))
+            ))
         }
     }
 
@@ -1559,6 +1567,74 @@ struct MainCockpitView: View {
         cameraPosition = position
     }
 
+    private func cameraDistance(for region: MKCoordinateRegion) -> CLLocationDistance {
+        let latitudeMeters = max(region.span.latitudeDelta, region.span.longitudeDelta) * 111_320
+        return min(max(latitudeMeters / 1.6, 400), 2_500_000)
+    }
+
+    private func regionCamera(center: CLLocationCoordinate2D, span: MKCoordinateSpan) -> MapCameraPosition {
+        let pitch = activePitch
+        let region = MKCoordinateRegion(center: center, span: span)
+        guard pitch > 1 else { return .region(region) }
+        return .camera(MapCamera(
+            centerCoordinate: center,
+            distance: cameraDistance(for: region),
+            heading: lastCameraHeading,
+            pitch: pitch
+        ))
+    }
+
+    private func userTrackingCamera(followsHeading: Bool) -> MapCameraPosition {
+        let center = locationTracker.userCoordinate ?? visibleRegion.center
+        guard is3DMapsEnabled else {
+            return .userLocation(followsHeading: followsHeading, fallback: .automatic)
+        }
+        let span = MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
+        return .camera(MapCamera(
+            centerCoordinate: center,
+            distance: lastMapCamera?.distance ?? cameraDistance(for: MKCoordinateRegion(center: center, span: span)),
+            heading: lastCameraHeading,
+            pitch: activePitch
+        ))
+    }
+
+    private func applyCameraPitch(_ pitch: Double) {
+        let clamped = min(max(pitch, 0), 70)
+        cameraPitch = clamped
+        is3DMapsEnabled = clamped > 1
+        let center = lastMapCamera?.centerCoordinate ?? visibleRegion.center
+        let distance = lastMapCamera?.distance ?? cameraDistance(for: visibleRegion)
+        pushCamera(.camera(MapCamera(
+            centerCoordinate: center,
+            distance: distance,
+            heading: lastMapCamera?.heading ?? lastCameraHeading,
+            pitch: clamped
+        )))
+    }
+
+    private func toggle3DMaps() {
+        if is3DMapsEnabled && cameraPitch > 1 {
+            applyCameraPitch(0)
+        } else {
+            applyCameraPitch(55)
+        }
+    }
+
+    private func noteMapCamera(_ camera: MapCamera) {
+        let now = Date()
+        let pitchChanged = abs(camera.pitch - cameraPitch) > 2
+        let headingChanged = abs(camera.heading - lastCameraHeading) > 8
+        guard pitchChanged || headingChanged || now.timeIntervalSince(lastCameraNote) > 0.45 else { return }
+        lastCameraNote = now
+        lastMapCamera = camera
+        lastCameraHeading = camera.heading
+        if pitchChanged {
+            cameraPitch = camera.pitch
+            if camera.pitch > 8 { is3DMapsEnabled = true }
+            if camera.pitch < 1 { is3DMapsEnabled = false }
+        }
+    }
+
     private func handleCameraEnd(_ region: MKCoordinateRegion) {
         let span = max(region.span.latitudeDelta, region.span.longitudeDelta)
         let center = region.center
@@ -1590,7 +1666,7 @@ struct MainCockpitView: View {
             if drifted || pinched {
                 followRoute = false
                 showingRouteOverview = false
-                pushCamera(.region(region))
+                pushCamera(regionCamera(center: region.center, span: region.span))
             }
             return
         }
@@ -1743,10 +1819,10 @@ struct MainCockpitView: View {
         selectedCampSpot = placeSpot(hit)
         followRoute = false
         withAnimation {
-            pushCamera(.region(MKCoordinateRegion(
+            pushCamera(regionCamera(
                 center: hit.coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-            )))
+            ))
         }
         if showParcelLayer {
             parcelService.inspect(at: hit.coordinate)
@@ -1997,6 +2073,9 @@ struct MainCockpitView: View {
             onLongPress: { coordinate in
                 handleMapLongPress(coordinate)
             },
+            onMapCamera: { camera in
+                noteMapCamera(camera)
+            },
             onSelectMarker: { id in
                 if let marker = savedMarkers.first(where: { $0.id == id }) {
                     editingMarker = marker
@@ -2017,6 +2096,10 @@ struct MainCockpitView: View {
                 showLayers = true
             }
             .accessibilityLabel("Map layers")
+            railButton("view.3d", active: is3DMapsEnabled && cameraPitch > 1) {
+                toggle3DMaps()
+            }
+            .accessibilityLabel(is3DMapsEnabled && cameraPitch > 1 ? "Switch to top-down map" : "Tilt map to 3D")
             railButton("point.topleft.down.curvedto.point.bottomright.up", active: plotMode) {
                 togglePlotter()
             }
@@ -2318,6 +2401,13 @@ struct MainCockpitView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    Text("3D Terrain & Tilt")
+                        .font(.caption.bold())
+                    HStack(spacing: 8) {
+                        terrainPitchButton("0°", pitch: 0)
+                        terrainPitchButton("45°", pitch: 45)
+                        terrainPitchButton("60°", pitch: 60)
+                    }
                     opacitySlider("Property Boundaries & Landowners", value: $parcelOpacity)
                     opacitySlider("USFS & BLM Legal Trail Corridors", value: $trailCorridorOpacity)
                     opacitySlider("<3° LIDAR Flat Camp Slope Shading", value: $campSlopeOpacity)
@@ -2328,8 +2418,8 @@ struct MainCockpitView: View {
                     Toggle("🌙 Night Vision", isOn: $nightVision)
                         .font(.caption.bold())
                     Text(heatLimited
-                         ? "Thermal Saver is on. Satellite and Hybrid stay on imagery with flat elevation, and live hazard refreshes pause."
-                         : "Thermal Saver flattens 3D terrain when the phone gets hot. Satellite and Hybrid stay on imagery.")
+                         ? "Thermal Saver is on. Terrain stays flat and live hazard refreshes pause until you turn it off."
+                         : "3D terrain stays on. Thermal Saver flattens elevation and pauses live hazard refreshes.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     Text("NIFC perimeters and USGS quakes load when a signal is available. Fords and ledges stay on the cached route. Starlink shading uses each pad's sky view, not a live carrier map.")
@@ -2481,8 +2571,19 @@ struct MainCockpitView: View {
         return "\(label) · ~\(tiles) tiles · \(lookups) parcel lookups · \(trails) trails · ~\(mb) MB"
     }
 
+    private func terrainPitchButton(_ title: String, pitch: Double) -> some View {
+        let selected = abs(cameraPitch - pitch) < 6
+        return Button(title) {
+            applyCameraPitch(pitch)
+        }
+        .font(.caption.bold())
+        .buttonStyle(.borderedProminent)
+        .tint(selected ? .cyan : .gray)
+    }
+
     private var savedOfflineRings: [[CLLocationCoordinate2D]] {
-        offlinePacks.compactMap { pack in
+        guard showOffline || downloadRunning else { return [] }
+        return offlinePacks.compactMap { pack in
             guard let minLat = pack.minLat, let maxLat = pack.maxLat, let minLon = pack.minLon, let maxLon = pack.maxLon else { return nil }
             return OfflineAreaBox(minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon).ring
         }
@@ -3486,10 +3587,10 @@ struct MainCockpitView: View {
     private func cycleCameraMode() {
         followHeading.toggle()
         if followHeading {
-            pushCamera(.userLocation(followsHeading: true, fallback: .automatic))
+            pushCamera(userTrackingCamera(followsHeading: true))
         } else {
             followRoute = false
-            pushCamera(.userLocation(followsHeading: false, fallback: .automatic))
+            pushCamera(userTrackingCamera(followsHeading: false))
         }
     }
 
@@ -3497,7 +3598,7 @@ struct MainCockpitView: View {
         followHeading = false
         followRoute = false
         showingRouteOverview = false
-        pushCamera(.userLocation(followsHeading: false, fallback: .automatic))
+        pushCamera(userTrackingCamera(followsHeading: false))
     }
 
     private func togglePlotter() {
@@ -3705,6 +3806,7 @@ struct MainCockpitView: View {
     }
 
     private func liveOfflineBox() -> OfflineAreaBox? {
+        guard showOffline || downloadRunning else { return nil }
         switch offlineArea {
         case "sq30":
             return .square(center: screenCenter, squareMiles: 30)
@@ -3736,11 +3838,7 @@ struct MainCockpitView: View {
     }
 
     private func trackScreen(_ region: MKCoordinateRegion) {
-        guard offlineArea != "corridor" else { return }
         let moved = meters(from: screenCenter, to: region.center)
-        let spanChanged = abs(region.span.latitudeDelta - visibleRegion.span.latitudeDelta) > 0.002
-            || abs(region.span.longitudeDelta - visibleRegion.span.longitudeDelta) > 0.002
-        guard moved > 35 || spanChanged else { return }
         screenCenter = region.center
         visibleRegion = region
         if moved > 40 {
@@ -3754,7 +3852,7 @@ struct MainCockpitView: View {
         showOffline = false
         screenCenter = box.center
         visibleRegion = box.region
-        pushCamera(.region(box.region))
+        pushCamera(regionCamera(center: box.region.center, span: box.region.span))
         if let parcels = CorridorDownloader.parcels(in: pack.id), !parcels.isEmpty {
             parcelService.replace(parcels, limit: 80)
             CockpitStore.saveParcels(parcels, limit: 80)
@@ -4131,6 +4229,7 @@ private struct StableRouteMap: View, Equatable {
     var onInspect: (CLLocationCoordinate2D) -> Void
     var onSelectParcel: (String) -> Void
     var onLongPress: (CLLocationCoordinate2D) -> Void
+    var onMapCamera: (MapCamera) -> Void = { _ in }
     var onSelectMarker: (UUID) -> Void
     var onDeletePlotPoint: (Int) -> Void
 
@@ -4153,25 +4252,14 @@ private struct StableRouteMap: View, Equatable {
                         onInspect(coordinate)
                     }
                 )
-                .simultaneousGesture(mapHoldGesture(proxy: proxy))
                 .overlay {
                     MapTapOverlayView(proxy: proxy, onLongPress: onLongPress)
                 }
         }
     }
 
-    private func mapHoldGesture(proxy: MapProxy) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.45)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
-            .onChanged { value in
-                guard case .second(true, let drag?) = value else { return }
-                guard let coordinate = proxy.convert(drag.startLocation, from: .local) else { return }
-                onLongPress(coordinate)
-            }
-    }
-
     private var mapBody: some View {
-        Map(position: $cameraPosition) {
+        Map(position: $cameraPosition, interactionModes: .all) {
             UserAnnotation()
             if campSlopeOpacity > 0.02 {
                 ForEach(Array(camps.prefix(12))) { spot in
@@ -4333,13 +4421,16 @@ private struct StableRouteMap: View, Equatable {
         .mapControls {
             MapUserLocationButton()
             MapCompass()
+            MapPitchToggle()
             MapScaleView()
         }
         .onMapCameraChange(frequency: .continuous) { context in
             onCameraPreview(context.region)
+            onMapCamera(context.camera)
         }
         .onMapCameraChange(frequency: .onEnd) { context in
             onCameraEnd(context.region)
+            onMapCamera(context.camera)
         }
     }
 
