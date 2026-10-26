@@ -203,6 +203,10 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
         startAltimeter()
     }
 
+    func requestLocation() {
+        start()
+    }
+
     private func startAltimeter() {
         guard !didStartAltimeter, CMAltimeter.isRelativeAltitudeAvailable() else { return }
         didStartAltimeter = true
