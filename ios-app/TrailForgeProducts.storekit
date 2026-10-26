@@ -1,0 +1,82 @@
+{
+  "identifier": "TrailForgeStoreKitConfiguration",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "59.99",
+      "familyShareable": true,
+      "internalID": "founders_lifetime_001",
+      "localizations": [
+        {
+          "description": "Permanent Pro Unlock Forever + Offline Convoy Mesh + CarPlay Cockpit",
+          "displayName": "Lifetime Overland Founders Pass",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.edwardshin.trailforge.founders.lifetime",
+      "referenceName": "Lifetime Founders Pass",
+      "type": "NonConsumable"
+    }
+  ],
+  "settings": {
+    "_applicationInternalID": "trailforge_001",
+    "_developerTeamID": "YOUR_TEAM_ID"
+  },
+  "subscriptionGroups": [
+    {
+      "id": "trailforge_pro_group",
+      "localizations": [],
+      "name": "TrailForge Overland Pro",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "24.99",
+          "familyShareable": true,
+          "groupNumber": 1,
+          "internalID": "pro_annual_001",
+          "introductoryOffer": {
+            "internalID": "trial_7day",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "Unlimited Offline USGS/BLM Topo, Rig-Fit Filter, <3\u00b0 Flat Camp & Starlink Finder",
+              "displayName": "TrailForge Pro Annual",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.edwardshin.trailforge.pro.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Pro Annual ($24.99/yr)",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "4.99",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "pro_monthly_001",
+          "localizations": [
+            {
+              "description": "Full Offline Topo & Flat Boondocking Finder for weekend trips",
+              "displayName": "Weekend Expedition Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.edwardshin.trailforge.pro.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pro Monthly ($4.99/mo)",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

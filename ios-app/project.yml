@@ -1,0 +1,22 @@
+name: TrailForgeOverland
+options:
+  bundleIdPrefix: com.edwardshin
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  TrailForgeOverland:
+    type: application
+    platform: iOS
+    sources:
+      - path: .
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: "TrailForge Overland"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        NSLocationWhenInUseUsageDescription: "TrailForge uses your GPS location to display your 4x4 rig on offline USGS topographic maps and record GPX tracks."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "TrailForge records your backcountry GPX breadcrumb trail even when your screen is locked."
+        NSBluetoothAlwaysUsageDescription: "TrailForge uses Bluetooth for offline peer-to-peer convoy location sharing when out of cell range."
+        NSLocalNetworkUsageDescription: "TrailForge connects to nearby convoy vehicles over peer-to-peer mesh."

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="TrailForge Overland iOS" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Imogene Pass &amp; Yankee Boy Basin (FS-869)</name>
+    <desc>TrailForge Verified Route | Min Clearance: 10.5 in | Canopy Limit: 8.5 ft | USGS Gauge 09010500</desc>
+  </metadata>
+  <wpt lat="37.981420" lon="-107.734110">
+    <ele>3163.8</ele>
+    <name>ALP-01: Upper Basin Bench Pad</name>
+    <desc>USFS Dispersed Pad | Slope: 1.4 deg (No Leveling Blocks) | Starlink Sky: 96% | Verizon LTE 3 bars</desc>
+    <sym>Campground</sym>
+  </wpt>
+  <wpt lat="37.932680" lon="-107.736940">
+    <ele>3997.1</ele>
+    <name>SUMMIT: Imogene Pass (13,114 ft)</name>
+    <desc>High Alpine Summit | Check SNOTEL Red Mountain Pass Snow Telemetry</desc>
+    <sym>Summit</sym>
+  </wpt>
+  <trk>
+    <name>Imogene Pass 4x4 Main Track</name>
+    <trkseg>
+      <trkpt lat="38.022800" lon="-107.671400"><ele>2380.5</ele></trkpt>
+      <trkpt lat="37.981420" lon="-107.734110"><ele>3163.8</ele></trkpt>
+      <trkpt lat="37.958900" lon="-107.735200"><ele>3590.0</ele></trkpt>
+      <trkpt lat="37.932680" lon="-107.736940"><ele>3997.1</ele></trkpt>
+      <trkpt lat="37.937500" lon="-107.810800"><ele>2667.0</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
