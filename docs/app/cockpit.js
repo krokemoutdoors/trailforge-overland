@@ -5,9 +5,9 @@
   const SHOT = new URLSearchParams(location.search).get("shot");
   const ATLAS = window.TRAILFORGE_ATLAS;
   const CATALOG = [
-    { id: "com.edwardshin.trailforge.pro.annual", title: "TrailForge Pro Annual", price: "$24.99/yr", note: "7-day free trial" },
-    { id: "com.edwardshin.trailforge.founders.lifetime", title: "Lifetime Founders Pass", price: "$59.99", note: "One-time unlock", founders: true },
-    { id: "com.edwardshin.trailforge.pro.monthly", title: "Weekend Expedition", price: "$4.99/mo", note: "Monthly" }
+    { id: "com.edwardshin.trailforge.pro.annual", title: "TrailForge Pro Annual", price: "$24.99/year", note: "7-day free trial", popular: true },
+    { id: "com.edwardshin.trailforge.founders.lifetime", title: "Founders Lifetime Pass", price: "$149.99", note: "One-Time • 6-Yr Value", founders: true },
+    { id: "com.edwardshin.trailforge.pro.monthly", title: "Weekend Pass", price: "$4.99/month", note: "Monthly" }
   ];
   const MAP_ATTRIB = "USGS National Map (Public Domain) • © OpenStreetMap contributors";
   const CORRIDOR_NOTE = "Independent public-road overland corridor compiled from public USFS, BLM, and state highway data. Not affiliated with, endorsed by, or sponsored by Backcountry Discovery Routes®.";
@@ -86,7 +86,12 @@
     convoy: "",
     mvum: null,
     lastAtt: 0,
-    parcelNote: ""
+    parcelNote: "",
+    community: loadCommunityStore(),
+    communityOps: loadCommunityOps(),
+    communityQueue: loadCommunityQueue(),
+    communityNotice: localStorage.getItem("tf-community-notice") || "",
+    communityFlushing: false
   };
 
   const pendingNet = new Map();
@@ -102,6 +107,8 @@
   let hazardLayer;
   let plotLayer;
   let hazardPinLayer;
+  let communityLayer;
+  let communityChannel = null;
   let smaLayer;
   let offlineLayer;
   let hybridLayer;
@@ -117,6 +124,18 @@
   let toastTimer;
   let chromeTimer;
   const REPORTS = ["Open & Clear", "Mud/Snow", "Downed Tree", "Washout", "Gate Locked"];
+  const REPORT_LABELS = {
+    "Open & Clear": "✅ Open & Clear",
+    "Mud/Snow": "❄️ Mud/Snow",
+    "Downed Tree": "🌲 Downed Tree",
+    "Washout": "⚠️ Washout",
+    "Gate Locked": "🔒 Gate Locked"
+  };
+  const COMMUNITY_FEED = "https://krokemoutdoors.github.io/trailforge-overland/app/community-reports.json";
+  const COMMUNITY_RELAY = "https://ntfy.sh/trailforge-overland-community/json?poll=1&since=all";
+  const COMMUNITY_POST = "https://ntfy.sh/trailforge-overland-community";
+  const COMMUNITY_SYNCED = "☁️ Synced to All TrailForge Users";
+  const COMMUNITY_QUEUED = "📡 Queued Offline — Auto-Syncs on Signal";
 
   function loadRig() {
     const base = {
@@ -562,7 +581,7 @@
       const stepHtml = state.showSteps ? '<div class="steps">' + steps.map(function (step, index) {
         return '<div class="step' + (index === (state.route.stepIndex || 0) ? " on" : "") + '"><span>' + formatDistance(step.distanceMeters) + "</span><span>" + esc(step.instruction) + "</span></div>";
       }).join("") + "</div>" : "";
-      top.innerHTML = '<div class="nav"><div class="man" id="navIcon">' + maneuverSvg(cue.step) + '</div><div class="nav-copy"><div class="nav-dist" id="navDist">' + esc(state.routing ? "Recalculating route…" : cue.distance) + '</div><div class="nav-street" id="navStreet">' + esc(cue.street) + '</div><div class="sub" id="navSub">' + esc(cue.text) + '</div></div><button type="button" class="icon-btn" id="muteBtn" data-act="mute" aria-label="Mute voice directions">' + (state.muted ? "🔇" : "🔊") + '</button><button type="button" class="icon-btn" data-act="steps" aria-label="Step list">☰</button></div>' + stepHtml;
+      top.innerHTML = '<div class="nav"><div class="man" id="navIcon">' + maneuverSvg(cue.step) + '</div><div class="nav-copy"><div class="nav-dist" id="navDist">' + esc(state.routing ? "Recalculating route…" : cue.distance) + '</div><div class="nav-street" id="navStreet">' + esc(cue.street) + '</div><div class="sub" id="navSub">' + esc(cue.text) + '</div>' + liveFlagHtml() + '</div><button type="button" class="icon-btn" id="muteBtn" data-act="mute" aria-label="Mute voice directions">' + (state.muted ? "🔇" : "🔊") + '</button><button type="button" class="icon-btn" data-act="steps" aria-label="Step list">☰</button></div>' + stepHtml;
       return;
     }
     const list = pickerTrails();
@@ -570,7 +589,7 @@
     const color = !list.length || !fit ? "#8ea6bb" : fitColor(fit.verdict);
     const title = !list.length || !trail ? "No routes for " + filterTitle() : fit.verdict + " · " + corridorLabel(trail);
     const detail = !list.length || !trail ? "Pick another state or tap Near Me." : bannerDetail(trail, fit);
-    top.innerHTML = '<div class="fit"><div class="lamp" style="background:' + color + ";color:" + color + '"></div><div class="fit-copy"><div class="fit-title">' + esc(title) + '</div><div class="sub">' + esc(detail) + '</div></div><button type="button" class="pill-btn" data-act="offline">' + (state.offlineSaved ? "Offline" : "Save") + "</button></div>";
+    top.innerHTML = '<div class="fit"><div class="lamp" style="background:' + color + ";color:" + color + '"></div><div class="fit-copy"><div class="fit-title">' + esc(title) + '</div><div class="sub">' + esc(detail) + '</div>' + liveFlagHtml() + '</div><button type="button" class="pill-btn" data-act="offline">' + (state.offlineSaved ? "Offline" : "Save") + "</button></div>";
   }
 
   function routeBarHtml() {
@@ -623,11 +642,11 @@
 
   function profileHtml(trail) {
     if (!trail) return "";
-    const latest = state.reports.find(function (item) { return item.trailId === trail.id; });
+    const active = state.community.filter(function (item) { return item.trailId === trail.id && !item.cleared; }).sort(function (a, b) { return b.time - a.time; });
+    const latest = active[0] || state.reports.find(function (item) { return item.trailId === trail.id; });
     const pills = REPORTS.map(function (status) {
-      return '<button type="button" data-act="report" data-id="' + esc(status) + '" class="' + (latest && latest.status === status ? "on" : "") + '">' + esc(status) + "</button>";
+      return '<button type="button" data-act="report" data-id="' + esc(status) + '" class="' + (latest && latest.status === status ? "on" : "") + '">' + esc(reportLabel(status)) + "</button>";
     }).join("");
-    const queued = latest ? "Queued on device: " + esc(latest.status) : "Reports stay on this device until you have a signal.";
     const crux = cruxPins(trail).map(function (pin) {
       return '<div class="crux">' + esc(pin.title) + "</div>";
     }).join("");
@@ -637,7 +656,7 @@
       ? '<button type="button" data-act="call-ranger" data-id="' + esc(ranger.phone) + '">Call ' + esc(ranger.name) + "</button>"
       : '<button type="button" data-act="ranger-page">Ranger district contacts</button>';
     const disclaimer = trail.bdr ? '<div class="sub">' + esc(CORRIDOR_NOTE) + "</div>" : "";
-    return '<div class="profile"><div class="profile-top"><b>Elevation</b><span id="elevRead">—</span></div><canvas id="elevChart" height="92"></canvas><div class="obs-key">💧 Ford · 🪨 Ledge · ⛺ &lt;3° Pad</div>' + (crux ? '<div class="crux-list">' + crux + "</div>" : "") + (badge ? '<div class="sub mvum">' + esc(badge) + "</div>" : "") + '<div class="actions"><button type="button" data-act="share-trip">Share Trip Package (QR / Export)</button>' + rangerBtn + '</div>' + disclaimer + '<div class="reports"><span>Report Trail Status</span>' + pills + '</div><div class="sub">' + queued + "</div></div>";
+    return '<div class="profile"><div class="profile-top"><b>Elevation</b><span id="elevRead">—</span></div><canvas id="elevChart" height="92"></canvas><div class="obs-key">💧 Ford · 🪨 Ledge · ⛺ &lt;3° Pad</div>' + (crux ? '<div class="crux-list">' + crux + "</div>" : "") + (badge ? '<div class="sub mvum">' + esc(badge) + "</div>" : "") + '<div class="actions"><button type="button" data-act="share-trip">Share Trip Package (QR / Export)</button>' + rangerBtn + '</div>' + disclaimer + '<div class="reports"><span>Report Trail Status</span>' + pills + "</div>" + communityListHtml(trail) + "</div>";
   }
 
   function telemetryHtml(trail) {
@@ -689,7 +708,8 @@
       const live = (state.billing.products || []).find(function (product) { return product.id === item.id; });
       const price = live && live.price ? live.price : item.price;
       const owned = state.billing.pro ? "Unlocked" : "Get";
-      return '<div class="pass' + (item.founders ? " founders" : "") + '"><div class="meta"><b>' + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
+      const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
+      return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
     return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><b id="psiRead">' + psi.front + "F / " + psi.rear + 'R</b><span>Air-down PSI · ' + esc(state.surface) + '</span><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + "°</div></div></div>" + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.3.0 · build 9<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
@@ -872,6 +892,7 @@
       }
     });
     drawDropped();
+    drawCommunity();
     drawRoute();
     updatePuck();
     drawPlot();
@@ -1593,6 +1614,7 @@
       renderAll();
       loadTelemetry();
       refreshMvum(picked);
+      refreshCommunity(false);
       return;
     }
     if (act === "mode") {
@@ -1747,6 +1769,14 @@
       return;
     }
     if (act === "report") { queueReport(button.dataset.id); return; }
+    if (act === "refresh-live") { refreshCommunity(true); return; }
+    if (act === "still-here") { confirmCommunity(button.dataset.id); return; }
+    if (act === "mark-cleared") { clearCommunity(button.dataset.id); return; }
+    if (act === "apply-trip") {
+      const code = document.getElementById("tripCode");
+      applyTripCode(code ? code.value : "");
+      return;
+    }
     if (act === "export-gpx") { exportGpx(); return; }
     if (act === "import-gpx") {
       const input = document.getElementById("gpxFile");
@@ -2944,20 +2974,394 @@
     paintElevation();
   }
 
+
+  function loadCommunityStore() {
+    try { return JSON.parse(localStorage.getItem("tf-community") || "[]"); }
+    catch (error) { return []; }
+  }
+
+  function loadCommunityOps() {
+    try { return JSON.parse(localStorage.getItem("tf-community-ops") || "{}"); }
+    catch (error) { return {}; }
+  }
+
+  function loadCommunityQueue() {
+    try { return JSON.parse(localStorage.getItem("tf-community-queue") || "[]"); }
+    catch (error) { return []; }
+  }
+
+  function reportLabel(status) {
+    return REPORT_LABELS[status] || status;
+  }
+
+  function communityCode(item) {
+    if (item.status === "Gate Locked") return "G";
+    if (item.status === "Downed Tree") return "T";
+    if (item.status === "Washout") return "W";
+    if (item.status === "Mud/Snow") return "M";
+    if (item.status === "Open & Clear") return "O";
+    return "H";
+  }
+
+  function statusFromCode(code) {
+    return { G: "Gate Locked", T: "Downed Tree", W: "Washout", M: "Mud/Snow", O: "Open & Clear", H: "Washout" }[code] || "Washout";
+  }
+
+  function canonicalCommunityStatus(status) {
+    const text = String(status || "").trim();
+    const compact = text.replace(/\s*\/\s*/g, "/");
+    if (REPORTS.indexOf(compact) >= 0) return compact;
+    if (REPORTS.indexOf(text) >= 0) return text;
+    return text.slice(0, 40);
+  }
+
+  function statusFromHazardCategory(category) {
+    const text = String(category || "");
+    if (text.indexOf("Gate") >= 0) return "Gate Locked";
+    if (text.indexOf("Tree") >= 0) return "Downed Tree";
+    if (text.indexOf("Mud") >= 0 || text.indexOf("Snow") >= 0) return "Mud/Snow";
+    if (text.indexOf("Pad") >= 0) return "Verified Pad";
+    return "Washout";
+  }
+
+  function communityTime(raw) {
+    if (typeof raw.time === "number" && Number.isFinite(raw.time)) return raw.time;
+    const stamp = raw.updatedAt || raw.createdAt || raw.time;
+    if (typeof stamp === "number" && Number.isFinite(stamp)) return stamp;
+    const parsed = Date.parse(stamp || "");
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  }
+
+  function normalizeCommunity(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const lat = Number(raw.lat != null ? raw.lat : raw.latitude);
+    const lon = Number(raw.lon != null ? raw.lon : raw.longitude);
+    const trailId = raw.trailId || raw.trailID;
+    let status = canonicalCommunityStatus(raw.status || "");
+    if (!status && raw.category) status = canonicalCommunityStatus(statusFromHazardCategory(raw.category));
+    if (!raw.id || !trailId || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const kind = raw.kind === "hazard" || raw.category ? "hazard" : "condition";
+    if (REPORTS.indexOf(status) < 0 && kind !== "hazard" && status.indexOf("Pad") < 0) return null;
+    const confirm = raw.confirmCount != null ? raw.confirmCount : raw.confirmations;
+    return {
+      id: String(raw.id).slice(0, 80),
+      trailId: String(trailId).slice(0, 80),
+      lat: lat,
+      lon: lon,
+      status: status,
+      kind: kind,
+      rig: String(raw.rig || "Overland rig").slice(0, 60),
+      time: communityTime(raw),
+      confirmCount: Math.max(0, Number(confirm) || 0),
+      cleared: !!raw.cleared,
+      note: String(raw.note || "").slice(0, 140)
+    };
+  }
+
+  function mergeCommunity(older, incoming) {
+    const newer = (incoming.time || 0) >= (older.time || 0) ? incoming : older;
+    const previous = newer === incoming ? older : incoming;
+    return {
+      id: older.id,
+      trailId: newer.trailId || previous.trailId,
+      lat: newer.lat,
+      lon: newer.lon,
+      status: newer.status,
+      kind: newer.kind || previous.kind,
+      rig: newer.rig || previous.rig,
+      time: Math.max(older.time || 0, incoming.time || 0),
+      confirmCount: Math.max(older.confirmCount || 0, incoming.confirmCount || 0),
+      cleared: !!(older.cleared || incoming.cleared),
+      note: newer.note || previous.note || ""
+    };
+  }
+
+  function saveCommunity() {
+    try { localStorage.setItem("tf-community", JSON.stringify(state.community)); } catch (error) {}
+    const keys = Object.keys(state.communityOps);
+    if (keys.length > 400) {
+      const trimmed = {};
+      keys.slice(-400).forEach(function (key) { trimmed[key] = 1; });
+      state.communityOps = trimmed;
+    }
+    try { localStorage.setItem("tf-community-ops", JSON.stringify(state.communityOps)); } catch (error) {}
+  }
+
+  function saveCommunityQueue() {
+    try { localStorage.setItem("tf-community-queue", JSON.stringify(state.communityQueue)); } catch (error) {}
+  }
+
+  function setCommunityNotice(text) {
+    state.communityNotice = text;
+    try { localStorage.setItem("tf-community-notice", text); } catch (error) {}
+  }
+
+  function absorbCommunityReport(raw) {
+    const item = normalizeCommunity(raw);
+    if (!item) return;
+    const index = state.community.findIndex(function (row) { return row.id === item.id; });
+    if (index < 0) state.community.unshift(item);
+    else state.community[index] = mergeCommunity(state.community[index], item);
+    if (state.community.length > 240) state.community = state.community.slice(0, 240);
+  }
+
+  function absorbCommunityFeed(payload) {
+    const list = payload && payload.reports;
+    if (list && list.forEach) list.forEach(absorbCommunityReport);
+    const hazards = payload && payload.hazards;
+    if (!hazards || !hazards.forEach) return;
+    hazards.forEach(function (hazard) {
+      absorbCommunityReport(Object.assign({}, hazard, {
+        kind: "hazard",
+        status: hazard.status || statusFromHazardCategory(hazard.category),
+        trailId: hazard.trailId || hazard.trailID,
+        lat: hazard.lat != null ? hazard.lat : hazard.latitude,
+        lon: hazard.lon != null ? hazard.lon : hazard.longitude,
+        time: hazard.time || hazard.updatedAt || hazard.createdAt,
+        confirmCount: hazard.confirmCount != null ? hazard.confirmCount : hazard.confirmations
+      }));
+    });
+  }
+
+  function applyCommunityEvent(event) {
+    if (!event || !event.opId || state.communityOps[event.opId]) return;
+    state.communityOps[event.opId] = 1;
+    if (event.op === "upsert") absorbCommunityReport(event.report);
+    else if (event.op === "confirm") {
+      const row = state.community.find(function (item) { return item.id === event.id; });
+      if (row) row.confirmCount += 1;
+    } else if (event.op === "clear") {
+      const row = state.community.find(function (item) { return item.id === event.id; });
+      if (row) {
+        row.cleared = true;
+        row.time = Math.max(row.time || 0, Number(event.time) || Date.now());
+      }
+    }
+  }
+
+  function absorbCommunityRelay(text) {
+    String(text || "").split("\n").forEach(function (line) {
+      if (!line.trim()) return;
+      let row = null;
+      try { row = JSON.parse(line); } catch (error) { return; }
+      if (!row || row.event !== "message" || !row.message) return;
+      let event = null;
+      try { event = JSON.parse(row.message); } catch (error) { return; }
+      if (!event.opId && row.id) event.opId = "ntfy-" + row.id;
+      applyCommunityEvent(event);
+    });
+  }
+
+  function publishCommunity(event) {
+    applyCommunityEvent(event);
+    saveCommunity();
+    try { if (communityChannel) communityChannel.postMessage(event); } catch (error) {}
+    if (navigator.onLine === false) {
+      state.communityQueue.push(event);
+      saveCommunityQueue();
+      setCommunityNotice(COMMUNITY_QUEUED);
+    } else {
+      net(COMMUNITY_POST, { method: "POST", body: JSON.stringify(event) }).then(function () {
+        setCommunityNotice(COMMUNITY_SYNCED);
+        renderAll();
+      }).catch(function () {
+        state.communityQueue.push(event);
+        saveCommunityQueue();
+        setCommunityNotice(COMMUNITY_QUEUED);
+        renderAll();
+      });
+    }
+    renderAll();
+  }
+
+  function flushCommunityQueue() {
+    if (state.communityFlushing || navigator.onLine === false || !state.communityQueue.length) return;
+    state.communityFlushing = true;
+    const event = state.communityQueue[0];
+    net(COMMUNITY_POST, { method: "POST", body: JSON.stringify(event) }).then(function () {
+      state.communityQueue.shift();
+      saveCommunityQueue();
+      state.communityFlushing = false;
+      setCommunityNotice(COMMUNITY_SYNCED);
+      renderAll();
+      if (state.communityQueue.length) flushCommunityQueue();
+    }).catch(function () {
+      state.communityFlushing = false;
+      setCommunityNotice(COMMUNITY_QUEUED);
+      renderAll();
+    });
+  }
+
+  function refreshCommunity(manual) {
+    const jobs = [fetch("./community-reports.json").then(function (response) {
+      if (!response.ok) throw new Error("seed");
+      return response.json();
+    }).catch(function () { return null; })];
+    if (!SHOT && navigator.onLine !== false) {
+      jobs.push(net(COMMUNITY_FEED).then(function (text) { return JSON.parse(text); }).catch(function () { return null; }));
+      jobs.push(net(COMMUNITY_RELAY).then(function (body) { return body; }).catch(function () { return null; }));
+    }
+    return Promise.all(jobs).then(function (parts) {
+      if (parts[0]) absorbCommunityFeed(parts[0]);
+      if (parts[1]) absorbCommunityFeed(parts[1]);
+      if (typeof parts[2] === "string") absorbCommunityRelay(parts[2]);
+      saveCommunity();
+      drawCommunity();
+      if (manual) toast("Live conditions updated");
+      renderAll();
+    }).catch(function () {
+      if (manual) toast("Live conditions stayed on this device");
+    });
+  }
+
+  function confirmCommunity(id) {
+    if (!id) return;
+    publishCommunity({ v: 1, op: "confirm", opId: "c-" + Date.now().toString(36) + "-" + String(id).slice(0, 12), id: id });
+  }
+
+  function clearCommunity(id) {
+    if (!id) return;
+    publishCommunity({ v: 1, op: "clear", opId: "x-" + Date.now().toString(36) + "-" + String(id).slice(0, 12), id: id, time: Date.now() });
+  }
+
+  function communityBanner(trail) {
+    if (!trail) return null;
+    const rows = state.community.filter(function (item) { return item.trailId === trail.id && !item.cleared; });
+    if (rows.some(function (item) { return item.status === "Gate Locked"; })) {
+      return { kind: "gate", text: "🔒 GATE LOCKED (USER REPORT)" };
+    }
+    if (rows.some(function (item) { return item.status !== "Open & Clear" && item.status.indexOf("Pad") < 0; })) {
+      return { kind: "obstacle", text: "⚠️ OBSTACLE REPORTED" };
+    }
+    return null;
+  }
+
+  function liveFlagHtml() {
+    const flag = communityBanner(selected());
+    if (!flag) return "";
+    return '<div class="live-flag ' + flag.kind + '">' + flag.text + "</div>";
+  }
+
+  function communityListHtml(trail) {
+    const rows = state.community.filter(function (item) { return item.trailId === trail.id && !item.cleared; })
+      .sort(function (a, b) { return b.time - a.time; })
+      .slice(0, 8);
+    const cards = rows.map(function (item) {
+      return '<div class="community-card"><b>' + esc(reportLabel(item.status)) + "</b><small>" + esc(item.rig) + " · " + esc(new Date(item.time).toLocaleString()) + '</small><div class="community-actions"><button type="button" data-act="still-here" data-id="' + esc(item.id) + '">👍 Still Here (' + item.confirmCount + ')</button><button type="button" data-act="mark-cleared" data-id="' + esc(item.id) + '">✅ Cleared / Gate Open</button></div></div>';
+    }).join("");
+    const noticeClass = state.communityNotice.indexOf("Synced") >= 0 ? "sync-ok" : "sync-wait";
+    const notice = state.communityNotice ? '<div class="sub ' + noticeClass + '">' + esc(state.communityNotice) + "</div>" : "";
+    const empty = cards ? "" : '<div class="sub">No active community reports on this trail.</div>';
+    return '<div class="community"><button type="button" data-act="refresh-live">↻ Refresh Live Conditions</button>' + notice + cards + empty + "</div>";
+  }
+
+  function drawCommunity() {
+    if (!communityLayer) return;
+    communityLayer.clearLayers();
+    state.community.forEach(function (item) {
+      if (item.cleared || !Number.isFinite(item.lat) || !Number.isFinite(item.lon)) return;
+      const gate = item.status === "Gate Locked";
+      const icon = L.divIcon({
+        className: "community-pin" + (gate ? " gate" : ""),
+        html: "<span>" + esc(reportLabel(item.status)) + "</span>",
+        iconAnchor: [18, 12]
+      });
+      const popup = '<div class="community-pop"><b>' + esc(reportLabel(item.status)) + "</b><div>" + esc(item.rig) + '</div><button type="button" data-act="still-here" data-id="' + esc(item.id) + '">👍 Still Here (' + item.confirmCount + ')</button><button type="button" data-act="mark-cleared" data-id="' + esc(item.id) + '">✅ Cleared / Gate Open</button></div>';
+      L.marker([item.lat, item.lon], { icon: icon, zIndexOffset: 640 }).bindPopup(popup).addTo(communityLayer);
+    });
+  }
+
+  function installCommunityChannel() {
+    try {
+      communityChannel = new BroadcastChannel("trailforge-community");
+      communityChannel.onmessage = function (event) {
+        if (!event || !event.data) return;
+        applyCommunityEvent(event.data);
+        saveCommunity();
+        drawCommunity();
+        renderAll();
+      };
+    } catch (error) { /* This WebView has no BroadcastChannel. */ }
+  }
+
+  function applyTripCode(text) {
+    const raw = String(text || "").trim();
+    let count = 0;
+    const marker = "|R|";
+    const at = raw.lastIndexOf(marker);
+    if (at >= 0) {
+      raw.slice(at + marker.length).split("|")[0].split(";").forEach(function (piece) {
+        const bits = piece.split(",");
+        if (bits.length < 4) return;
+        const lat = Number(bits[0]);
+        const lon = Number(bits[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        absorbCommunityReport({
+          id: "qr-" + bits[3] + "-" + lat.toFixed(4) + "-" + bits[2],
+          trailId: bits[3],
+          lat: lat,
+          lon: lon,
+          status: statusFromCode(bits[2]),
+          kind: "hazard",
+          rig: "Trip package",
+          time: Date.now(),
+          confirmCount: 1,
+          cleared: false,
+          note: "From a trailhead QR scan"
+        });
+        count += 1;
+      });
+      saveCommunity();
+    }
+    if (raw.indexOf("TF1|") === 0) {
+      const line = (raw.split("|")[2] || "").split(";").map(function (pair) {
+        const bits = pair.split(",");
+        return { lat: Number(bits[0]), lon: Number(bits[1]), snapped: false, trailId: null };
+      }).filter(function (point) { return Number.isFinite(point.lat) && Number.isFinite(point.lon); });
+      if (line.length >= 2) {
+        state.plot = line;
+        state.plotting = true;
+        state.drawer = "plot";
+        drawPlot();
+      }
+    }
+    drawCommunity();
+    renderAll();
+    toast(count ? "Trip package added " + count + " community pins" : "Trip code applied");
+  }
+
   function queueReport(status) {
     const trail = selected();
     if (!trail || REPORTS.indexOf(status) < 0) return;
+    const now = Date.now();
     state.reports.unshift({
       trailId: trail.id,
       status: status,
-      time: Date.now(),
+      time: now,
       lat: state.fix ? state.fix.lat : trail.lat,
       lon: state.fix ? state.fix.lon : trail.lon
     });
     state.reports = state.reports.slice(0, 40);
     localStorage.setItem("tf-reports", JSON.stringify(state.reports));
-    toast(status + " queued on this device");
-    renderSheet();
+    const report = {
+      id: "r-" + now.toString(36) + "-" + Math.floor(Math.random() * 1e6).toString(36),
+      trailId: trail.id,
+      lat: state.fix ? state.fix.lat : trail.lat,
+      lon: state.fix ? state.fix.lon : trail.lon,
+      status: status,
+      kind: "condition",
+      rig: state.rig.name || "Overland rig",
+      time: now,
+      confirmCount: 1,
+      cleared: false,
+      note: ""
+    };
+    if (status === "Open & Clear") {
+      state.community.filter(function (item) { return item.trailId === trail.id && !item.cleared; }).forEach(function (item) {
+        publishCommunity({ v: 1, op: "clear", opId: "open-" + report.id + "-" + item.id, id: item.id, time: now });
+      });
+    }
+    publishCommunity({ v: 1, op: "upsert", opId: report.id, report: report });
   }
 
   function nearestVertex(latlng) {
@@ -3066,6 +3470,30 @@
       const lat = Number(nodes[index].getAttribute("lat"));
       const lon = Number(nodes[index].getAttribute("lon"));
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      if (local === "wpt") {
+        const named = nodes[index].getElementsByTagName("name")[0];
+        const title = named && named.textContent ? named.textContent : "";
+        if (title.indexOf("TFCR|") === 0) {
+          const parts = title.split("|");
+          if (parts.length >= 5) {
+            absorbCommunityReport({
+              id: "gpx-" + parts[2] + "-" + lat.toFixed(4),
+              trailId: parts[2],
+              lat: lat,
+              lon: lon,
+              status: parts[1],
+              kind: "hazard",
+              rig: "Trip package",
+              time: Date.now(),
+              confirmCount: Number(parts[3]) || 1,
+              cleared: parts[4] === "1",
+              note: "From a trip package"
+            });
+            saveCommunity();
+          }
+          continue;
+        }
+      }
       const hit = nearestVertex({ lat: lat, lng: lon });
       points.push({ lat: lat, lon: lon, snapped: false, trailId: hit ? hit.trailId : null });
     }
@@ -3502,6 +3930,27 @@
     persistHazards();
     drawDropped();
     closeHazardSheet();
+    const trail = selected();
+    const near = nearestVertex({ lat: pin.lat, lng: pin.lon });
+    const status = kind === "gate" ? "Gate Locked" : kind === "tree" ? "Downed Tree" : kind === "pad" ? "Verified Pad" : "Washout";
+    publishCommunity({
+      v: 1,
+      op: "upsert",
+      opId: pin.id,
+      report: {
+        id: pin.id,
+        trailId: trail ? trail.id : (near && near.trailId) || "custom",
+        lat: pin.lat,
+        lon: pin.lon,
+        status: status,
+        kind: "hazard",
+        rig: state.rig.name || "Overland rig",
+        time: pin.time,
+        confirmCount: 1,
+        cleared: false,
+        note: String(pin.note || label).slice(0, 140)
+      }
+    });
     toast(label + " dropped at MY GPS");
   }
 
@@ -3538,6 +3987,17 @@
     state.dropped.forEach(function (pin) {
       marks.push({ lat: pin.lat, lon: pin.lon, name: pin.name, sym: pin.kind || "Hazard", type: "hazard", desc: (pin.note || "") + (pin.elevFt != null ? " " + pin.elevFt + " ft" : "") });
     });
+    state.community.forEach(function (item) {
+      if (item.cleared) return;
+      marks.push({
+        lat: item.lat,
+        lon: item.lon,
+        name: "TFCR|" + item.status + "|" + item.trailId + "|" + item.confirmCount + "|0",
+        sym: "Community",
+        type: "community",
+        desc: item.rig + " " + item.status
+      });
+    });
     if (state.convoy) marks.push({ lat: state.fix ? state.fix.lat : (trail ? trail.lat : 0), lon: state.fix ? state.fix.lon : (trail ? trail.lon : 0), name: state.convoy, sym: "Convoy", type: "convoy", desc: "Local convoy status" });
     return marks.filter(function (mark) { return Number.isFinite(mark.lat) && Number.isFinite(mark.lon); });
   }
@@ -3557,11 +4017,16 @@
 
   function tripCompact(name, points) {
     let sample = points.slice();
+    const hazards = state.community.filter(function (item) { return !item.cleared; }).slice(0, 12);
+    const hazardText = hazards.length ? "|R|" + hazards.map(function (item) {
+      return item.lat.toFixed(4) + "," + item.lon.toFixed(4) + "," + communityCode(item) + "," + item.trailId;
+    }).join(";") : "";
     let text = "";
     while (sample.length) {
       text = "TF1|" + name + "|" + sample.map(function (point) { return point.lat.toFixed(4) + "," + point.lon.toFixed(4); }).join(";");
       if (state.convoy) text += "|C|" + state.convoy;
-      if (text.length <= 900 || sample.length <= 4) break;
+      text += hazardText;
+      if (text.length <= 1400 || sample.length <= 4) break;
       sample = sample.filter(function (_, index) { return index % 2 === 0; });
     }
     return text;
@@ -3609,16 +4074,19 @@
   function shareTrip() {
     const trail = selected();
     const points = tripLine();
-    if (points.length < 2 && !state.dropped.length) { toast("Select a trail or plot a route first"); return; }
+    const sharedPins = state.community.some(function (item) { return !item.cleared; });
+    if (points.length < 2 && !state.dropped.length && !sharedPins) { toast("Select a trail or plot a route first"); return; }
     const name = state.plot.length >= 2 ? "Custom route" : corridorLabel(trail || { name: "TrailForge trip" });
     const xml = gpxXml(name, points.length ? points : [{ lat: state.fix ? state.fix.lat : 0, lon: state.fix ? state.fix.lon : 0 }], collectWaypoints(trail));
     downloadText(xml, "TrailForge-trip.gpx", "application/gpx+xml");
     const compact = tripCompact(name, points.length ? points : collectWaypoints(trail));
     paintQr(compact);
+    const code = document.getElementById("tripCode");
+    if (code) code.value = compact;
     const modal = document.getElementById("qrModal");
     if (modal) modal.hidden = false;
     const caption = document.getElementById("qrCaption");
-    if (caption) caption.textContent = name + (state.convoy ? " · " + state.convoy : "");
+    if (caption) caption.textContent = name + (state.convoy ? " · " + state.convoy : "") + " · community pins included";
     if (navigator.share) navigator.share({ title: name, text: compact }).catch(function () {});
     toast("Trip package ready");
   }
@@ -3688,6 +4156,7 @@
     parcelLayer = L.layerGroup().addTo(map);
     hazardLayer = L.layerGroup().addTo(map);
     hazardPinLayer = L.layerGroup().addTo(map);
+    communityLayer = L.layerGroup().addTo(map);
     plotLayer = L.layerGroup().addTo(map);
     map.on("dragstart", function () { state.follow = false; });
     map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); });
@@ -3739,7 +4208,16 @@
       if (Math.abs(pitch) > 50) pitch -= Math.sign(pitch) * 90;
       onAttitude({ pitch: pitch, roll: event.gamma || 0, heading: event.webkitCompassHeading || event.alpha });
     });
-    window.addEventListener("online", function () { state.online = true; });
+    window.addEventListener("online", function () {
+      state.online = true;
+      flushCommunityQueue();
+    });
+    window.addEventListener("storage", function (event) {
+      if (event.key !== "tf-community" || !event.newValue) return;
+      try { state.community = JSON.parse(event.newValue); } catch (error) { return; }
+      drawCommunity();
+      renderAll();
+    });
     window.addEventListener("offline", function () { state.online = false; });
     const landscape = window.matchMedia("(orientation: landscape)");
     if (landscape.addEventListener) landscape.addEventListener("change", function () {
@@ -3767,6 +4245,7 @@
       if (file) attachHazardPhoto(file);
     });
     installHost();
+    installCommunityChannel();
     setMuted(state.muted);
     renderAll();
     syncSmaTiles();
@@ -3775,6 +4254,7 @@
     bootShot();
     scheduleParcels();
     refreshMvum(selected());
+    refreshCommunity(false);
     setTimeout(function () {
       map.invalidateSize();
       if (state.route && !state.follow) frameRoute();

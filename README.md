@@ -60,9 +60,9 @@ Trail cards also carry USFS / BLM agency labels and a gate status string.
 
 | Product | Product ID | Price |
 | --- | --- | --- |
-| TrailForge Pro Annual (7-day free trial) | `com.edwardshin.trailforge.pro.annual` | $24.99 / year |
-| Lifetime Overland Founders Pass | `com.edwardshin.trailforge.founders.lifetime` | $59.99 one time |
-| Weekend Expedition Monthly | `com.edwardshin.trailforge.pro.monthly` | $4.99 / month |
+| TrailForge Pro Annual (MOST POPULAR, 7-day free trial) | `com.edwardshin.trailforge.pro.annual` | $24.99 / year |
+| Founders Lifetime Pass | `com.edwardshin.trailforge.founders.lifetime` | $149.99 one time (One-Time • 6-Yr Value) |
+| Weekend Pass | `com.edwardshin.trailforge.pro.monthly` | $4.99 / month |
 
 Listing copy, keywords, and review notes are in `APP_STORE_CONNECT_LISTING.md`, `APP_STORE_SUBMISSION_GUIDE.md`, and `PRIVACY_POLICY_AND_REVIEW_NOTES.md`.
 

@@ -14,6 +14,8 @@ permissions:
 
 jobs:
   testflight:
+    # macos-15 matches the Xcode used by the committed project. This workflow file stays
+    # on the push path filter so a merge that also changes Android still starts TestFlight.
     runs-on: macos-15
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
