@@ -43,7 +43,9 @@
     billing: { ready: false, pro: false, products: [] },
     routeGen: 0,
     scanGen: 0,
-    lastReroute: 0
+    lastReroute: 0,
+    aim: null,
+    targetCopy: ""
   };
 
   const pendingNet = new Map();
@@ -602,11 +604,65 @@
     syncMap();
   }
 
+  function formatPair(point) {
+    if (!point || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lon))) return null;
+    const lat = Number(point.lat);
+    const lon = Number(point.lon);
+    const ns = lat >= 0 ? "N" : "S";
+    const ew = lon >= 0 ? "E" : "W";
+    return Math.abs(lat).toFixed(5) + "° " + ns + ", " + Math.abs(lon).toFixed(5) + "° " + ew;
+  }
+
+  function targetPoint() {
+    if (state.route && state.route.destination) return state.route.destination;
+    if (state.routing && state.aim) return state.aim;
+    const trail = selected();
+    if (!trail) return null;
+    if (state.mode === "camp") {
+      const pads = spotsFor(trail).filter(function (spot) { return spot.slope < 3; });
+      if (pads.length) return pads.slice().sort(function (a, b) { return a.slope - b.slope; })[0];
+    }
+    return trailhead(trail);
+  }
+
+  function copyText(text) {
+    function done() { toast("Target copied"); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+      return;
+    }
+    fallbackCopy(text, done);
+  }
+
+  function fallbackCopy(text, done) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    try {
+      document.execCommand("copy");
+      done();
+    } catch (error) {
+      toast(text);
+    }
+    area.remove();
+  }
+
   function updateHud() {
     const speed = state.fix && state.fix.speedMps != null && state.fix.speedMps >= 0 ? Math.round(state.fix.speedMps * 2.2369362920544) : 0;
     const alt = state.fix && state.fix.altitudeM != null ? Math.round(state.fix.altitudeM * 3.280839895).toLocaleString("en-US") : "—";
     document.getElementById("speedRead").textContent = state.fix ? String(speed) : "—";
     document.getElementById("altRead").textContent = alt;
+    const gpsText = state.fix ? formatPair(state.fix) : null;
+    const aimText = formatPair(targetPoint());
+    state.targetCopy = aimText ? "TARGET: " + aimText : "";
+    const gpsRead = document.querySelector("#myGpsRead b");
+    const targetRead = document.querySelector("#targetRead b");
+    if (gpsRead) gpsRead.textContent = gpsText || "—";
+    if (targetRead) targetRead.textContent = aimText || "—";
     const psi = airDown();
     const warn = Math.abs(state.roll) >= 25 || Math.abs(state.pitch) >= 25;
     const pill = document.getElementById("clinPill");
@@ -1122,7 +1178,9 @@
     const originWasGPS = !!(state.fix && !state.fix.shotOnly);
     const origin = state.fix || { lat: trailhead(trail).lat, lon: trailhead(trail).lon };
     state.routing = true;
+    state.aim = spot;
     state.selectedId = spot.trailID || state.selectedId;
+    updateHud();
     renderTop();
     let options = [];
     try {
@@ -1195,6 +1253,7 @@
   function endRoute() {
     state.routeGen += 1;
     state.route = null;
+    state.aim = null;
     state.follow = false;
     state.routing = false;
     state.showSteps = false;
@@ -1421,6 +1480,11 @@
       return;
     }
     if (act === "end") { endRoute(); return; }
+    if (act === "copy-target") {
+      if (!state.targetCopy) { toast("No target yet."); return; }
+      copyText(state.targetCopy);
+      return;
+    }
     if (act === "surface") { state.surface = button.dataset.id; updateHud(); renderSheet(); return; }
     if (act === "locker") {
       state.rig.hasRearLocker = button.dataset.id === "rear";
