@@ -1,0 +1,27 @@
+name: Build & Upload TrailForge Overland to TestFlight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen & Generate .xcodeproj
+        run: |
+          brew install xcodegen
+          cd ios-app
+          xcodegen generate
+
+      - name: Verify Swift Compile (Simulator Smoke Test)
+        run: |
+          cd ios-app
+          xcodebuild -project TrailForgeOverland.xcodeproj \
+            -scheme TrailForgeOverland \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            CODE_SIGNING_ALLOWED=NO build

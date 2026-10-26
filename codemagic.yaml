@@ -1,0 +1,39 @@
+workflows:
+  ios-appstore-release:
+    name: TrailForge Overland — Cloud iOS Build & TestFlight Upload
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect:Codemagic_AppStoreConnect
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.edwardshin.trailforge
+      vars:
+        BUNDLE_ID: "com.edwardshin.trailforge"
+        XCODE_PROJECT: "TrailForgeOverland.xcodeproj"
+        XCODE_SCHEME: "TrailForgeOverland"
+      xcode: latest
+    scripts:
+      - name: Generate Xcode Project via XcodeGen
+        script: |
+          cd ios-app
+          brew install xcodegen
+          xcodegen generate
+      - name: Set up code signing settings on Xcode project
+        script: |
+          cd ios-app
+          xcode-project use-profiles
+      - name: Build .ipa for App Store & TestFlight
+        script: |
+          cd ios-app
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - ios-app/build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false

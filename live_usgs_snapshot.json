@@ -1,0 +1,20 @@
+{
+  "09010500": {
+    "name": "COLORADO RIVER BELOW BAKER GULCH NR GRAND LAKE, CO",
+    "time": "2026-10-25T03:45:00.000-06:00",
+    "00060": "11.9",
+    "00065": "4.08"
+  },
+  "09180500": {
+    "name": "COLORADO RIVER NEAR CISCO, UT",
+    "time": "2026-10-25T03:00:00.000-06:00",
+    "00060": "8940",
+    "00065": "4.84"
+  },
+  "10261500": {
+    "name": "MOJAVE R A LO NARROWS NR VICTORVILLE CA",
+    "time": "2026-10-25T02:45:00.000-07:00",
+    "00060": "3.69",
+    "00065": "7.16"
+  }
+}
