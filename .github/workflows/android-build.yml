@@ -58,6 +58,9 @@ jobs:
               exit 1
             fi
             echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > trailforge-release.jks
+            STORE_PASS="${TRAILFORGE_STORE_PASSWORD}"
+            KEY_PASS="${TRAILFORGE_KEY_PASSWORD}"
+            ALIAS="${TRAILFORGE_KEY_ALIAS:-trailforge}"
           else
             STORE_PASS="${TRAILFORGE_STORE_PASSWORD:-trailforge-ci-keystore}"
             KEY_PASS="${TRAILFORGE_KEY_PASSWORD:-$STORE_PASS}"
@@ -72,29 +75,18 @@ jobs:
               -storepass "${STORE_PASS}" \
               -keypass "${KEY_PASS}" \
               -dname "CN=TrailForge Overland, OU=Android, O=KrokeM Outdoors, L=Seattle, ST=Washington, C=US"
-            echo "TRAILFORGE_STORE_PASSWORD=${STORE_PASS}" >> "$GITHUB_ENV"
-            echo "TRAILFORGE_KEY_PASSWORD=${KEY_PASS}" >> "$GITHUB_ENV"
-            echo "TRAILFORGE_KEY_ALIAS=${ALIAS}" >> "$GITHUB_ENV"
           fi
-          echo "TRAILFORGE_STORE_FILE=${GITHUB_WORKSPACE}/android-app/trailforge-release.jks" >> "$GITHUB_ENV"
+          {
+            echo "TRAILFORGE_STORE_FILE=${GITHUB_WORKSPACE}/android-app/trailforge-release.jks"
+            echo "TRAILFORGE_STORE_PASSWORD=${STORE_PASS}"
+            echo "TRAILFORGE_KEY_PASSWORD=${KEY_PASS}"
+            echo "TRAILFORGE_KEY_ALIAS=${ALIAS}"
+          } >> "$GITHUB_ENV"
 
       - name: Build signed release APK and AAB
         working-directory: android-app
-        env:
-          TRAILFORGE_STORE_FILE: ${{ github.workspace }}/android-app/trailforge-release.jks
-          TRAILFORGE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          TRAILFORGE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          TRAILFORGE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          if [ -z "${TRAILFORGE_STORE_PASSWORD}" ]; then
-            STORE_PASS="$(grep '^TRAILFORGE_STORE_PASSWORD=' "$GITHUB_ENV" | tail -n 1 | cut -d= -f2-)"
-            KEY_PASS="$(grep '^TRAILFORGE_KEY_PASSWORD=' "$GITHUB_ENV" | tail -n 1 | cut -d= -f2-)"
-            ALIAS="$(grep '^TRAILFORGE_KEY_ALIAS=' "$GITHUB_ENV" | tail -n 1 | cut -d= -f2-)"
-            export TRAILFORGE_STORE_PASSWORD="${STORE_PASS}"
-            export TRAILFORGE_KEY_PASSWORD="${KEY_PASS}"
-            export TRAILFORGE_KEY_ALIAS="${ALIAS}"
-          fi
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleRelease bundleRelease
           mkdir -p "${GITHUB_WORKSPACE}/dist"

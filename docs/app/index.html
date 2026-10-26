@@ -47,7 +47,7 @@
     .step.on { color: white; font-weight: 700; }
     #stage { flex: 1 1 auto; min-height: 180px; position: relative; }
     #map { position: absolute; inset: 0; background: #0c1b27; }
-    .hud-left, .hud-read, .legend, .clin-pill { position: absolute; z-index: 500; }
+    .hud-left, .hud-read, .legend, .clin-pill, .coords { position: absolute; z-index: 500; }
     .hud-left { top: 8px; left: 8px; display: flex; flex-direction: column; gap: 6px; max-width: 214px; }
     .hud-left button, .clin-pill, .legend { background: rgba(8, 16, 28, 0.78); backdrop-filter: blur(8px); }
     .hud-left button { border: 0; border-radius: 999px; text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 800; }
@@ -55,7 +55,13 @@
     .hud-read div { background: rgba(0, 0, 0, 0.58); border-radius: 12px; min-width: 68px; text-align: center; padding: 6px 8px; }
     .hud-read b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; font-weight: 800; }
     .hud-read span, .legend, .clin-pill { font-size: 10px; color: #c5d5e4; letter-spacing: 0.04em; }
-    .legend { left: 8px; bottom: 46px; display: flex; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; }
+    .legend { left: 8px; bottom: 102px; display: flex; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; }
+    .coords { left: 8px; right: 8px; bottom: 40px; display: grid; gap: 4px; }
+    .coords .line { display: flex; align-items: baseline; gap: 6px; width: 100%; margin: 0; border: 0; border-radius: 10px; background: rgba(7, 16, 24, 0.84); backdrop-filter: blur(8px); padding: 5px 8px; text-align: left; color: #e8f1f8; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; }
+    .coords .k { flex: 0 0 auto; color: #7dd3fc; font-size: 10px; letter-spacing: 0.08em; }
+    .coords b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
+    .coords button.line { cursor: pointer; touch-action: manipulation; }
+    .coords button.line:active { background: rgba(62, 203, 255, 0.24); }
     .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
     .legend .g { background: var(--green); } .legend .o { background: var(--amber); } .legend .r { background: var(--red); }
     .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 7px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; }
@@ -164,6 +170,10 @@
       <div class="hud-read">
         <div><b id="speedRead">—</b><span>mph</span></div>
         <div><b id="altRead">—</b><span>ft</span></div>
+      </div>
+      <div class="coords" id="coordsHud">
+        <div class="line" id="myGpsRead"><span class="k">MY GPS:</span><b>—</b></div>
+        <button type="button" class="line" id="targetRead" data-act="copy-target" aria-label="Copy target coordinates"><span class="k">TARGET:</span><b>—</b></button>
       </div>
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
       <div class="clin-pill" id="clinPill">Roll 0° / Pitch 0° · Air Down —</div>
