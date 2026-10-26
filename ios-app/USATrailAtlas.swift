@@ -2,6 +2,8 @@ import CoreLocation
 import Foundation
 
 enum USATrailAtlas {
+    static let corridorDisclaimer = "Independent public-road overland corridor compiled from public USFS, BLM, and state highway data. Not affiliated with, endorsed by, or sponsored by Backcountry Discovery Routes®."
+
     static let all: [OverlandTrail] = specs.map(make)
 
     static var states: [String] {
@@ -37,7 +39,8 @@ enum USATrailAtlas {
             coordinates: coordinates,
             flatCamps: camps,
             isBDR: spec.bdr,
-            alsoStates: spec.alsoStates
+            alsoStates: spec.alsoStates,
+            legalStatus: TrailLegal.status(agency: spec.agency, corridor: spec.bdr)
         )
     }
 }
@@ -87,9 +90,9 @@ private let specs: [AtlasSpec] = [
     AtlasSpec(id: "morrison", name: "Morrison Jeep Trail", region: "Bighorn NF, WY", agency: "USFS", state: "WY", lat: 44.320, lon: -107.250, miles: 18.0, elev: 9200, clearance: 10.0, canopy: 10.0, water: 14, locker: true, snow: 10, km: 16),
     AtlasSpec(id: "magruder", name: "Magruder Corridor", region: "Nez Perce-Clearwater, ID / MT", agency: "USFS", state: "ID", lat: 45.700, lon: -114.850, miles: 101.0, elev: 7600, clearance: 9.0, canopy: 11.0, water: 18, locker: false, km: 70),
     AtlasSpec(id: "lolo", name: "Lolo Motorway", region: "Clearwater NF, ID", agency: "USFS", state: "ID", lat: 46.450, lon: -115.350, miles: 90.0, elev: 7000, clearance: 9.2, canopy: 10.0, water: 12, locker: false, km: 60),
-    AtlasSpec(id: "wabdr", name: "WABDR — Washington Backcountry Discovery Route", region: "Stevenson to Chopaka, WA", agency: "Backcountry Discovery Routes", state: "WA", lat: 47.300, lon: -120.500, miles: 575.0, elev: 5500, clearance: 8.5, canopy: 11.0, water: 12, locker: false, km: 40, bdr: true),
-    AtlasSpec(id: "obdr", name: "ORBDR — Oregon Backcountry Discovery Route", region: "Lakeview to Cascade Locks, OR", agency: "Backcountry Discovery Routes", state: "OR", lat: 43.800, lon: -121.200, miles: 755.0, elev: 7000, clearance: 8.5, canopy: 12.0, water: 10, locker: false, km: 40, bdr: true),
-    AtlasSpec(id: "steens", name: "Steens Mountain & Alvord Desert BDR-X", region: "Fields to Steens Loop, OR", agency: "Backcountry Discovery Routes", state: "OR", lat: 42.620, lon: -118.650, miles: 260.0, elev: 9773, clearance: 8.8, canopy: 13.0, water: 8, locker: false, snow: 4, km: 40, bdr: true),
+    AtlasSpec(id: "wabdr", name: "WA Backcountry Corridor (WABDR Ref)", region: "Stevenson to Chopaka, WA", agency: "Public USFS, BLM, and state roads", state: "WA", lat: 47.300, lon: -120.500, miles: 575.0, elev: 5500, clearance: 8.5, canopy: 11.0, water: 12, locker: false, km: 40, bdr: true),
+    AtlasSpec(id: "obdr", name: "OR Backcountry Corridor (ORBDR Ref)", region: "Lakeview to Cascade Locks, OR", agency: "Public USFS, BLM, and state roads", state: "OR", lat: 43.800, lon: -121.200, miles: 755.0, elev: 7000, clearance: 8.5, canopy: 12.0, water: 10, locker: false, km: 40, bdr: true),
+    AtlasSpec(id: "steens", name: "Steens & Alvord Corridor (BDR-X Ref)", region: "Fields to Steens Loop, OR", agency: "Public USFS, BLM, and state roads", state: "OR", lat: 42.620, lon: -118.650, miles: 260.0, elev: 9773, clearance: 8.8, canopy: 13.0, water: 8, locker: false, snow: 4, km: 40, bdr: true),
     AtlasSpec(id: "jarbidge", name: "Jarbidge Canyon", region: "Jarbidge Wilderness edge, NV", agency: "USFS Humboldt-Toiyabe", state: "NV", lat: 41.880, lon: -115.430, miles: 22.0, elev: 7800, clearance: 9.5, canopy: 10.5, water: 16, locker: false, km: 20),
     AtlasSpec(id: "titus", name: "Titus Canyon", region: "Death Valley, NV / CA", agency: "NPS", state: "NV", lat: 36.820, lon: -117.170, miles: 27.0, elev: 5200, clearance: 8.5, canopy: 14.0, water: 0, locker: false, km: 24),
     AtlasSpec(id: "chloride", name: "Chloride Canyon", region: "Gila / Black Range, NM", agency: "USFS", state: "NM", lat: 33.340, lon: -107.680, miles: 16.0, elev: 6800, clearance: 9.4, canopy: 11.0, water: 10, locker: false, km: 14),
@@ -140,23 +143,23 @@ private let specs: [AtlasSpec] = [
     AtlasSpec(id: "arcadia", name: "Arcadia Management Area", region: "Arcadia, RI", agency: "State", state: "RI", lat: 41.570, lon: -71.720, miles: 8.0, elev: 400, clearance: 8.0, canopy: 11.0, water: 6, locker: false, km: 8),
     AtlasSpec(id: "francis-marion", name: "Francis Marion Forest Roads", region: "Francis Marion NF, SC", agency: "USFS", state: "SC", lat: 33.200, lon: -79.650, miles: 18.0, elev: 60, clearance: 8.2, canopy: 11.0, water: 10, locker: false, km: 14),
     AtlasSpec(id: "lincoln-gap", name: "Lincoln Gap Road", region: "Green Mountains, VT", agency: "Town / USFS", state: "VT", lat: 44.100, lon: -72.930, miles: 9.0, elev: 2420, clearance: 8.4, canopy: 10.5, water: 8, locker: false, km: 8),
-    AtlasSpec(id: "cabdr-s", name: "CABDR-South — Southern California BDR", region: "Winterhaven to Benton, CA", agency: "Backcountry Discovery Routes", state: "CA", lat: 35.200, lon: -116.800, miles: 820.0, elev: 7900, clearance: 8.6, canopy: 13.0, water: 6, locker: false, bdr: true),
-    AtlasSpec(id: "cabdr-n", name: "CABDR-North — Northern California BDR", region: "Benton to New Pine Creek, CA", agency: "Backcountry Discovery Routes", state: "CA", lat: 39.900, lon: -120.600, miles: 940.0, elev: 8500, clearance: 8.6, canopy: 11.0, water: 12, locker: false, bdr: true),
-    AtlasSpec(id: "nvbdr", name: "NVBDR — Nevada Backcountry Discovery Route", region: "Searchlight to Jarbidge, NV", agency: "Backcountry Discovery Routes", state: "NV", lat: 38.500, lon: -116.200, miles: 886.0, elev: 7500, clearance: 8.5, canopy: 14.0, water: 4, locker: false, bdr: true),
-    AtlasSpec(id: "azbdr", name: "AZBDR — Arizona Backcountry Discovery Route", region: "Coronado Memorial to Page, AZ", agency: "Backcountry Discovery Routes", state: "AZ", lat: 34.200, lon: -111.400, miles: 750.0, elev: 7900, clearance: 8.6, canopy: 13.0, water: 8, locker: false, bdr: true),
-    AtlasSpec(id: "utbdr", name: "UTBDR — Utah Backcountry Discovery Route", region: "Mexican Hat to Garden City, UT", agency: "Backcountry Discovery Routes", state: "UT", lat: 39.400, lon: -110.400, miles: 871.0, elev: 9000, clearance: 8.6, canopy: 13.0, water: 8, locker: false, bdr: true),
-    AtlasSpec(id: "idbdr", name: "IDBDR — Idaho Backcountry Discovery Route", region: "Jarbidge to Porthill, ID", agency: "Backcountry Discovery Routes", state: "ID", lat: 45.400, lon: -115.600, miles: 1250.0, elev: 7800, clearance: 8.8, canopy: 11.0, water: 16, locker: false, bdr: true),
-    AtlasSpec(id: "cobdr", name: "COBDR — Colorado Backcountry Discovery Route", region: "Four Corners to Baggs, CO", agency: "Backcountry Discovery Routes", state: "CO", lat: 39.000, lon: -107.200, miles: 675.0, elev: 12100, clearance: 8.8, canopy: 12.0, water: 12, locker: false, snow: 6, bdr: true),
-    AtlasSpec(id: "nmbdr", name: "NMBDR — New Mexico Backcountry Discovery Route", region: "Texas border to Antonito, NM", agency: "Backcountry Discovery Routes", state: "NM", lat: 34.400, lon: -106.800, miles: 1202.0, elev: 9000, clearance: 8.6, canopy: 13.0, water: 8, locker: false, bdr: true),
-    AtlasSpec(id: "wybdr", name: "WYBDR — Wyoming Backcountry Discovery Route", region: "Baggs to the Montana border, WY", agency: "Backcountry Discovery Routes", state: "WY", lat: 43.200, lon: -108.400, miles: 915.0, elev: 9600, clearance: 8.6, canopy: 13.0, water: 10, locker: false, snow: 8, bdr: true),
-    AtlasSpec(id: "mtbdr", name: "MTBDR — Montana Backcountry Discovery Route", region: "West Yellowstone to Roosville, MT", agency: "Backcountry Discovery Routes", state: "MT", lat: 46.800, lon: -113.200, miles: 932.0, elev: 7500, clearance: 8.6, canopy: 12.0, water: 14, locker: false, snow: 6, bdr: true),
-    AtlasSpec(id: "sdbdrx", name: "Black Hills BDR-X", region: "Custer, Deadwood & Spearfish, SD", agency: "Backcountry Discovery Routes", state: "SD", lat: 44.050, lon: -103.650, miles: 360.0, elev: 7200, clearance: 8.4, canopy: 12.0, water: 8, locker: false, bdr: true),
-    AtlasSpec(id: "reddesert-bdrx", name: "Red Desert BDR-X", region: "Rock Springs to South Pass, WY", agency: "Backcountry Discovery Routes", state: "WY", lat: 42.000, lon: -109.100, miles: 245.0, elev: 7800, clearance: 8.4, canopy: 14.0, water: 0, locker: false, bdr: true),
-    AtlasSpec(id: "mabdr", name: "MABDR — Mid-Atlantic Backcountry Discovery Route", region: "Damascus, VA to the New York border", agency: "Backcountry Discovery Routes", state: "VA", lat: 39.200, lon: -78.800, miles: 1080.0, elev: 4400, clearance: 8.5, canopy: 10.5, water: 14, locker: false, bdr: true, alsoStates: ["WV", "MD", "PA"]),
-    AtlasSpec(id: "nebdr", name: "NEBDR — North East Backcountry Discovery Route", region: "Hancock, NY to Coburn Gore, ME", agency: "Backcountry Discovery Routes", state: "NY", lat: 43.600, lon: -72.400, miles: 1350.0, elev: 3800, clearance: 8.5, canopy: 10.5, water: 14, locker: false, bdr: true, alsoStates: ["CT", "MA", "VT", "NH", "ME"]),
-    AtlasSpec(id: "sebdr", name: "SEBDR — South East Backcountry Discovery Route", region: "Navarre Beach, FL to Damascus, VA", agency: "Backcountry Discovery Routes", state: "FL", lat: 33.800, lon: -84.200, miles: 1300.0, elev: 4400, clearance: 8.5, canopy: 10.5, water: 14, locker: false, bdr: true, alsoStates: ["AL", "GA", "TN", "NC", "VA"]),
-    AtlasSpec(id: "pawilds-bdrx", name: "PA Wilds BDR-X", region: "State College & the Pennsylvania Wilds", agency: "Backcountry Discovery Routes", state: "PA", lat: 41.200, lon: -77.800, miles: 290.0, elev: 2400, clearance: 8.4, canopy: 10.5, water: 12, locker: false, bdr: true),
-    AtlasSpec(id: "chatta-bdrx", name: "Chattahoochee BDR-X", region: "Helen, Suches & Blue Ridge, GA", agency: "Backcountry Discovery Routes", state: "GA", lat: 34.780, lon: -83.700, miles: 235.0, elev: 4400, clearance: 8.4, canopy: 10.5, water: 10, locker: false, bdr: true)
+    AtlasSpec(id: "cabdr-s", name: "Southern CA Backcountry Corridor (CABDR-S Ref)", region: "Winterhaven to Benton, CA", agency: "Public USFS, BLM, and state roads", state: "CA", lat: 35.200, lon: -116.800, miles: 820.0, elev: 7900, clearance: 8.6, canopy: 13.0, water: 6, locker: false, bdr: true),
+    AtlasSpec(id: "cabdr-n", name: "Northern CA Backcountry Corridor (CABDR-N Ref)", region: "Benton to New Pine Creek, CA", agency: "Public USFS, BLM, and state roads", state: "CA", lat: 39.900, lon: -120.600, miles: 940.0, elev: 8500, clearance: 8.6, canopy: 11.0, water: 12, locker: false, bdr: true),
+    AtlasSpec(id: "nvbdr", name: "NV Backcountry Corridor (NVBDR Ref)", region: "Searchlight to Jarbidge, NV", agency: "Public USFS, BLM, and state roads", state: "NV", lat: 38.500, lon: -116.200, miles: 886.0, elev: 7500, clearance: 8.5, canopy: 14.0, water: 4, locker: false, bdr: true),
+    AtlasSpec(id: "azbdr", name: "AZ Backcountry Corridor (AZBDR Ref)", region: "Coronado Memorial to Page, AZ", agency: "Public USFS, BLM, and state roads", state: "AZ", lat: 34.200, lon: -111.400, miles: 750.0, elev: 7900, clearance: 8.6, canopy: 13.0, water: 8, locker: false, bdr: true),
+    AtlasSpec(id: "utbdr", name: "UT Backcountry Corridor (UTBDR Ref)", region: "Mexican Hat to Garden City, UT", agency: "Public USFS, BLM, and state roads", state: "UT", lat: 39.400, lon: -110.400, miles: 871.0, elev: 9000, clearance: 8.6, canopy: 13.0, water: 8, locker: false, bdr: true),
+    AtlasSpec(id: "idbdr", name: "ID Backcountry Corridor (IDBDR Ref)", region: "Jarbidge to Porthill, ID", agency: "Public USFS, BLM, and state roads", state: "ID", lat: 45.400, lon: -115.600, miles: 1250.0, elev: 7800, clearance: 8.8, canopy: 11.0, water: 16, locker: false, bdr: true),
+    AtlasSpec(id: "cobdr", name: "CO Backcountry Corridor (COBDR Ref)", region: "Four Corners to Baggs, CO", agency: "Public USFS, BLM, and state roads", state: "CO", lat: 39.000, lon: -107.200, miles: 675.0, elev: 12100, clearance: 8.8, canopy: 12.0, water: 12, locker: false, snow: 6, bdr: true),
+    AtlasSpec(id: "nmbdr", name: "NM Backcountry Corridor (NMBDR Ref)", region: "Texas border to Antonito, NM", agency: "Public USFS, BLM, and state roads", state: "NM", lat: 34.400, lon: -106.800, miles: 1202.0, elev: 9000, clearance: 8.6, canopy: 13.0, water: 8, locker: false, bdr: true),
+    AtlasSpec(id: "wybdr", name: "WY Backcountry Corridor (WYBDR Ref)", region: "Baggs to the Montana border, WY", agency: "Public USFS, BLM, and state roads", state: "WY", lat: 43.200, lon: -108.400, miles: 915.0, elev: 9600, clearance: 8.6, canopy: 13.0, water: 10, locker: false, snow: 8, bdr: true),
+    AtlasSpec(id: "mtbdr", name: "MT Backcountry Corridor (MTBDR Ref)", region: "West Yellowstone to Roosville, MT", agency: "Public USFS, BLM, and state roads", state: "MT", lat: 46.800, lon: -113.200, miles: 932.0, elev: 7500, clearance: 8.6, canopy: 12.0, water: 14, locker: false, snow: 6, bdr: true),
+    AtlasSpec(id: "sdbdrx", name: "Black Hills Corridor (BDR-X Ref)", region: "Custer, Deadwood & Spearfish, SD", agency: "Public USFS, BLM, and state roads", state: "SD", lat: 44.050, lon: -103.650, miles: 360.0, elev: 7200, clearance: 8.4, canopy: 12.0, water: 8, locker: false, bdr: true),
+    AtlasSpec(id: "reddesert-bdrx", name: "Red Desert Corridor (BDR-X Ref)", region: "Rock Springs to South Pass, WY", agency: "Public USFS, BLM, and state roads", state: "WY", lat: 42.000, lon: -109.100, miles: 245.0, elev: 7800, clearance: 8.4, canopy: 14.0, water: 0, locker: false, bdr: true),
+    AtlasSpec(id: "mabdr", name: "Mid-Atlantic Backcountry Corridor (MABDR Ref)", region: "Damascus, VA to the New York border", agency: "Public USFS, BLM, and state roads", state: "VA", lat: 39.200, lon: -78.800, miles: 1080.0, elev: 4400, clearance: 8.5, canopy: 10.5, water: 14, locker: false, bdr: true, alsoStates: ["WV", "MD", "PA"]),
+    AtlasSpec(id: "nebdr", name: "Northeast Backcountry Corridor (NEBDR Ref)", region: "Hancock, NY to Coburn Gore, ME", agency: "Public USFS, BLM, and state roads", state: "NY", lat: 43.600, lon: -72.400, miles: 1350.0, elev: 3800, clearance: 8.5, canopy: 10.5, water: 14, locker: false, bdr: true, alsoStates: ["CT", "MA", "VT", "NH", "ME"]),
+    AtlasSpec(id: "sebdr", name: "Southeast Backcountry Corridor (SEBDR Ref)", region: "Navarre Beach, FL to Damascus, VA", agency: "Public USFS, BLM, and state roads", state: "FL", lat: 33.800, lon: -84.200, miles: 1300.0, elev: 4400, clearance: 8.5, canopy: 10.5, water: 14, locker: false, bdr: true, alsoStates: ["AL", "GA", "TN", "NC", "VA"]),
+    AtlasSpec(id: "pawilds-bdrx", name: "PA Wilds Corridor (BDR-X Ref)", region: "State College & the Pennsylvania Wilds", agency: "Public USFS, BLM, and state roads", state: "PA", lat: 41.200, lon: -77.800, miles: 290.0, elev: 2400, clearance: 8.4, canopy: 10.5, water: 12, locker: false, bdr: true),
+    AtlasSpec(id: "chatta-bdrx", name: "Chattahoochee Corridor (BDR-X Ref)", region: "Helen, Suches & Blue Ridge, GA", agency: "Public USFS, BLM, and state roads", state: "GA", lat: 34.780, lon: -83.700, miles: 235.0, elev: 4400, clearance: 8.4, canopy: 10.5, water: 10, locker: false, bdr: true)
 ]
 
 private let handRoutes: [String: [CLLocationCoordinate2D]] = [
@@ -711,68 +714,68 @@ private let bdrCoordinates: [String: [CLLocationCoordinate2D]] = [
 
 private let bdrCamps: [String: [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)]] = [
     "wabdr": [
-        (name: "WABDR Packwood Pad", lat: 46.590, lon: -121.640, slopeDeg: 1.6, starlinkPct: 84),
-        (name: "WABDR Ellensburg Bench", lat: 46.980, lon: -120.620, slopeDeg: 1.8, starlinkPct: 88),
-        (name: "WABDR Chelan Flats", lat: 47.820, lon: -120.040, slopeDeg: 1.4, starlinkPct: 86),
+        (name: "WA Corridor Packwood Pad", lat: 46.590, lon: -121.640, slopeDeg: 1.6, starlinkPct: 84),
+        (name: "WA Corridor Ellensburg Bench", lat: 46.980, lon: -120.620, slopeDeg: 1.8, starlinkPct: 88),
+        (name: "WA Corridor Chelan Flats", lat: 47.820, lon: -120.040, slopeDeg: 1.4, starlinkPct: 86),
     ],
     "obdr": [
-        (name: "ORBDR Lakeview Pad", lat: 42.170, lon: -120.300, slopeDeg: 1.5, starlinkPct: 82),
-        (name: "ORBDR Christmas Valley Pad", lat: 43.220, lon: -120.640, slopeDeg: 1.2, starlinkPct: 90),
-        (name: "ORBDR Detroit Pad", lat: 44.720, lon: -122.120, slopeDeg: 2.2, starlinkPct: 74),
+        (name: "OR Corridor Lakeview Pad", lat: 42.170, lon: -120.300, slopeDeg: 1.5, starlinkPct: 82),
+        (name: "OR Corridor Christmas Valley Pad", lat: 43.220, lon: -120.640, slopeDeg: 1.2, starlinkPct: 90),
+        (name: "OR Corridor Detroit Pad", lat: 44.720, lon: -122.120, slopeDeg: 2.2, starlinkPct: 74),
     ],
     "steens": [
         (name: "Alvord Desert Pad", lat: 42.520, lon: -118.470, slopeDeg: 1.2, starlinkPct: 92),
         (name: "Frenchglen Pad", lat: 42.810, lon: -118.890, slopeDeg: 1.8, starlinkPct: 74),
     ],
     "cabdr-s": [
-        (name: "CABDR-S Glamis Pad", lat: 32.980, lon: -115.040, slopeDeg: 1.3, starlinkPct: 88),
-        (name: "CABDR-S Barstow Pad", lat: 34.860, lon: -117.050, slopeDeg: 1.6, starlinkPct: 86),
-        (name: "CABDR-S Lone Pine Pad", lat: 36.590, lon: -118.090, slopeDeg: 1.8, starlinkPct: 84),
+        (name: "S. CA Corridor Glamis Pad", lat: 32.980, lon: -115.040, slopeDeg: 1.3, starlinkPct: 88),
+        (name: "S. CA Corridor Barstow Pad", lat: 34.860, lon: -117.050, slopeDeg: 1.6, starlinkPct: 86),
+        (name: "S. CA Corridor Lone Pine Pad", lat: 36.590, lon: -118.090, slopeDeg: 1.8, starlinkPct: 84),
     ],
     "cabdr-n": [
-        (name: "CABDR-N Bridgeport Pad", lat: 38.240, lon: -119.200, slopeDeg: 1.7, starlinkPct: 80),
-        (name: "CABDR-N Quincy Pad", lat: 39.920, lon: -120.920, slopeDeg: 1.9, starlinkPct: 78),
-        (name: "CABDR-N Susanville Pad", lat: 40.400, lon: -120.680, slopeDeg: 1.5, starlinkPct: 84),
+        (name: "N. CA Corridor Bridgeport Pad", lat: 38.240, lon: -119.200, slopeDeg: 1.7, starlinkPct: 80),
+        (name: "N. CA Corridor Quincy Pad", lat: 39.920, lon: -120.920, slopeDeg: 1.9, starlinkPct: 78),
+        (name: "N. CA Corridor Susanville Pad", lat: 40.400, lon: -120.680, slopeDeg: 1.5, starlinkPct: 84),
     ],
     "nvbdr": [
-        (name: "NVBDR Pahrump Pad", lat: 36.190, lon: -115.950, slopeDeg: 1.4, starlinkPct: 90),
-        (name: "NVBDR Tonopah Pad", lat: 38.050, lon: -117.200, slopeDeg: 1.6, starlinkPct: 86),
-        (name: "NVBDR Austin Pad", lat: 39.470, lon: -117.090, slopeDeg: 2.1, starlinkPct: 76),
+        (name: "NV Corridor Pahrump Pad", lat: 36.190, lon: -115.950, slopeDeg: 1.4, starlinkPct: 90),
+        (name: "NV Corridor Tonopah Pad", lat: 38.050, lon: -117.200, slopeDeg: 1.6, starlinkPct: 86),
+        (name: "NV Corridor Austin Pad", lat: 39.470, lon: -117.090, slopeDeg: 2.1, starlinkPct: 76),
     ],
     "azbdr": [
-        (name: "AZBDR Sonoita Pad", lat: 31.660, lon: -110.680, slopeDeg: 1.8, starlinkPct: 84),
-        (name: "AZBDR Young Pad", lat: 34.090, lon: -110.950, slopeDeg: 2.0, starlinkPct: 78),
-        (name: "AZBDR Flagstaff Bench", lat: 35.180, lon: -111.620, slopeDeg: 1.6, starlinkPct: 86),
+        (name: "AZ Corridor Sonoita Pad", lat: 31.660, lon: -110.680, slopeDeg: 1.8, starlinkPct: 84),
+        (name: "AZ Corridor Young Pad", lat: 34.090, lon: -110.950, slopeDeg: 2.0, starlinkPct: 78),
+        (name: "AZ Corridor Flagstaff Bench", lat: 35.180, lon: -111.620, slopeDeg: 1.6, starlinkPct: 86),
     ],
     "utbdr": [
-        (name: "UTBDR Blanding Pad", lat: 37.600, lon: -109.500, slopeDeg: 1.5, starlinkPct: 86),
-        (name: "UTBDR Moab Bench", lat: 38.550, lon: -109.520, slopeDeg: 1.8, starlinkPct: 88),
-        (name: "UTBDR Duchesne Pad", lat: 40.140, lon: -110.420, slopeDeg: 1.4, starlinkPct: 82),
+        (name: "UT Corridor Blanding Pad", lat: 37.600, lon: -109.500, slopeDeg: 1.5, starlinkPct: 86),
+        (name: "UT Corridor Moab Bench", lat: 38.550, lon: -109.520, slopeDeg: 1.8, starlinkPct: 88),
+        (name: "UT Corridor Duchesne Pad", lat: 40.140, lon: -110.420, slopeDeg: 1.4, starlinkPct: 82),
     ],
     "idbdr": [
-        (name: "IDBDR Featherville Pad", lat: 43.480, lon: -115.290, slopeDeg: 1.9, starlinkPct: 74),
-        (name: "IDBDR Yellow Pine Pad", lat: 44.940, lon: -115.520, slopeDeg: 2.2, starlinkPct: 70),
-        (name: "IDBDR Sandpoint Pad", lat: 48.250, lon: -116.520, slopeDeg: 1.6, starlinkPct: 84),
+        (name: "ID Corridor Featherville Pad", lat: 43.480, lon: -115.290, slopeDeg: 1.9, starlinkPct: 74),
+        (name: "ID Corridor Yellow Pine Pad", lat: 44.940, lon: -115.520, slopeDeg: 2.2, starlinkPct: 70),
+        (name: "ID Corridor Sandpoint Pad", lat: 48.250, lon: -116.520, slopeDeg: 1.6, starlinkPct: 84),
     ],
     "cobdr": [
-        (name: "COBDR Telluride Bench", lat: 37.920, lon: -107.830, slopeDeg: 2.4, starlinkPct: 80),
-        (name: "COBDR Buena Vista Pad", lat: 38.820, lon: -106.160, slopeDeg: 1.7, starlinkPct: 86),
-        (name: "COBDR Steamboat Pad", lat: 40.460, lon: -106.850, slopeDeg: 1.8, starlinkPct: 82),
+        (name: "CO Corridor Telluride Bench", lat: 37.920, lon: -107.830, slopeDeg: 2.4, starlinkPct: 80),
+        (name: "CO Corridor Buena Vista Pad", lat: 38.820, lon: -106.160, slopeDeg: 1.7, starlinkPct: 86),
+        (name: "CO Corridor Steamboat Pad", lat: 40.460, lon: -106.850, slopeDeg: 1.8, starlinkPct: 82),
     ],
     "nmbdr": [
-        (name: "NMBDR Cloudcroft Pad", lat: 32.940, lon: -105.720, slopeDeg: 2.0, starlinkPct: 80),
-        (name: "NMBDR Reserve Pad", lat: 33.690, lon: -108.730, slopeDeg: 1.6, starlinkPct: 78),
-        (name: "NMBDR Chama Pad", lat: 36.880, lon: -106.600, slopeDeg: 1.8, starlinkPct: 76),
+        (name: "NM Corridor Cloudcroft Pad", lat: 32.940, lon: -105.720, slopeDeg: 2.0, starlinkPct: 80),
+        (name: "NM Corridor Reserve Pad", lat: 33.690, lon: -108.730, slopeDeg: 1.6, starlinkPct: 78),
+        (name: "NM Corridor Chama Pad", lat: 36.880, lon: -106.600, slopeDeg: 1.8, starlinkPct: 76),
     ],
     "wybdr": [
-        (name: "WYBDR Rawlins Pad", lat: 41.770, lon: -107.260, slopeDeg: 1.4, starlinkPct: 88),
-        (name: "WYBDR South Pass Pad", lat: 42.480, lon: -108.760, slopeDeg: 1.7, starlinkPct: 84),
-        (name: "WYBDR Dubois Pad", lat: 43.510, lon: -109.600, slopeDeg: 1.9, starlinkPct: 78),
+        (name: "WY Corridor Rawlins Pad", lat: 41.770, lon: -107.260, slopeDeg: 1.4, starlinkPct: 88),
+        (name: "WY Corridor South Pass Pad", lat: 42.480, lon: -108.760, slopeDeg: 1.7, starlinkPct: 84),
+        (name: "WY Corridor Dubois Pad", lat: 43.510, lon: -109.600, slopeDeg: 1.9, starlinkPct: 78),
     ],
     "mtbdr": [
-        (name: "MTBDR Ennis Pad", lat: 45.330, lon: -111.700, slopeDeg: 1.5, starlinkPct: 82),
-        (name: "MTBDR Lincoln Pad", lat: 46.930, lon: -112.650, slopeDeg: 1.8, starlinkPct: 76),
-        (name: "MTBDR Whitefish Pad", lat: 48.390, lon: -114.360, slopeDeg: 1.6, starlinkPct: 84),
+        (name: "MT Corridor Ennis Pad", lat: 45.330, lon: -111.700, slopeDeg: 1.5, starlinkPct: 82),
+        (name: "MT Corridor Lincoln Pad", lat: 46.930, lon: -112.650, slopeDeg: 1.8, starlinkPct: 76),
+        (name: "MT Corridor Whitefish Pad", lat: 48.390, lon: -114.360, slopeDeg: 1.6, starlinkPct: 84),
     ],
     "sdbdrx": [
         (name: "Black Hills Custer Pad", lat: 43.750, lon: -103.570, slopeDeg: 1.7, starlinkPct: 86),
@@ -783,19 +786,19 @@ private let bdrCamps: [String: [(name: String, lat: Double, lon: Double, slopeDe
         (name: "Farson Pad", lat: 42.090, lon: -109.420, slopeDeg: 1.5, starlinkPct: 86),
     ],
     "mabdr": [
-        (name: "MABDR Paint Bank Pad", lat: 37.560, lon: -80.240, slopeDeg: 2.1, starlinkPct: 76),
-        (name: "MABDR Moorefield Pad", lat: 39.040, lon: -78.990, slopeDeg: 1.6, starlinkPct: 82),
-        (name: "MABDR Wellsboro Pad", lat: 41.730, lon: -77.320, slopeDeg: 1.8, starlinkPct: 78),
+        (name: "Mid-Atlantic Corridor Paint Bank Pad", lat: 37.560, lon: -80.240, slopeDeg: 2.1, starlinkPct: 76),
+        (name: "Mid-Atlantic Corridor Moorefield Pad", lat: 39.040, lon: -78.990, slopeDeg: 1.6, starlinkPct: 82),
+        (name: "Mid-Atlantic Corridor Wellsboro Pad", lat: 41.730, lon: -77.320, slopeDeg: 1.8, starlinkPct: 78),
     ],
     "nebdr": [
-        (name: "NEBDR Kent Pad", lat: 41.740, lon: -73.500, slopeDeg: 1.7, starlinkPct: 80),
-        (name: "NEBDR Woodstock Pad", lat: 43.600, lon: -72.540, slopeDeg: 2.0, starlinkPct: 74),
-        (name: "NEBDR Rangeley Pad", lat: 44.940, lon: -70.670, slopeDeg: 1.8, starlinkPct: 76),
+        (name: "Northeast Corridor Kent Pad", lat: 41.740, lon: -73.500, slopeDeg: 1.7, starlinkPct: 80),
+        (name: "Northeast Corridor Woodstock Pad", lat: 43.600, lon: -72.540, slopeDeg: 2.0, starlinkPct: 74),
+        (name: "Northeast Corridor Rangeley Pad", lat: 44.940, lon: -70.670, slopeDeg: 1.8, starlinkPct: 76),
     ],
     "sebdr": [
-        (name: "SEBDR Munson Pad", lat: 30.840, lon: -86.890, slopeDeg: 1.4, starlinkPct: 88),
-        (name: "SEBDR Ellijay Pad", lat: 34.680, lon: -84.500, slopeDeg: 2.2, starlinkPct: 78),
-        (name: "SEBDR Hot Springs Pad", lat: 35.870, lon: -82.850, slopeDeg: 1.9, starlinkPct: 76),
+        (name: "Southeast Corridor Munson Pad", lat: 30.840, lon: -86.890, slopeDeg: 1.4, starlinkPct: 88),
+        (name: "Southeast Corridor Ellijay Pad", lat: 34.680, lon: -84.500, slopeDeg: 2.2, starlinkPct: 78),
+        (name: "Southeast Corridor Hot Springs Pad", lat: 35.870, lon: -82.850, slopeDeg: 1.9, starlinkPct: 76),
     ],
     "pawilds-bdrx": [
         (name: "PA Wilds Renovo Pad", lat: 41.310, lon: -77.770, slopeDeg: 1.6, starlinkPct: 74),

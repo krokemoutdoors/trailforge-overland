@@ -60,6 +60,7 @@ struct OverlandTrail: Identifiable {
     var flatCamps: [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] = []
     var isBDR: Bool = false
     var alsoStates: [String] = []
+    var legalStatus: String = "local"
 
     func containsState(_ code: String) -> Bool {
         state == code || alsoStates.contains(code)
