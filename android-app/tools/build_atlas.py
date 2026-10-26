@@ -248,6 +248,53 @@ def main() -> None:
                 }
             )
 
+    bdrs = json.loads((Path(__file__).with_name("bdr_routes.json")).read_text())
+    specs_by_id = {spec["id"]: spec for spec in specs}
+    for item in bdrs:
+        points = item["waypoints"]
+        if not 15 <= len(points) <= 25:
+            raise SystemExit(f"{item['id']} has {len(points)} waypoints, expected 15-25")
+        if any(camp["slope"] >= 3 for camp in item["camps"]):
+            raise SystemExit(f"{item['id']} camp is not a <3° pad")
+        mid = points[len(points) // 2]
+        spec = specs_by_id.get(item["id"])
+        if spec is None:
+            spec = {
+                "id": item["id"],
+                "name": item["name"],
+                "region": item["region"],
+                "agency": "Backcountry Discovery Routes",
+                "state": item["home"],
+                "lat": mid[0],
+                "lon": mid[1],
+                "miles": item["miles"],
+                "elev": item["elev"],
+                "clearance": 8.5,
+                "canopy": 12.0,
+                "water": 8,
+                "locker": False,
+                "gate": "OPEN",
+                "snow": item["snow"],
+                "flow": 0,
+                "km": int(round(item["miles"] * 1.609)),
+                "signature": True,
+            }
+            specs.append(spec)
+            specs_by_id[item["id"]] = spec
+        else:
+            spec["name"] = item["name"]
+            spec["region"] = item["region"]
+            spec["agency"] = "Backcountry Discovery Routes"
+            spec["miles"] = item["miles"]
+            spec["lat"] = mid[0]
+            spec["lon"] = mid[1]
+            spec["snow"] = item["snow"]
+        spec["bdr"] = True
+        spec["states"] = item["states"]
+        spec["bdrOrder"] = item["order"]
+        hand_routes[item["id"]] = points
+        hand_camps[item["id"]] = item["camps"]
+
     ordered_states = sorted(NAMES, key=lambda code: NAMES[code])
     payload = {
         "specs": specs + extras,
