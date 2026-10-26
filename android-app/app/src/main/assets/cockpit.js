@@ -29,6 +29,23 @@
     fix: null,
     pitch: 0,
     roll: 0,
+    rawPitch: 0,
+    rawRoll: 0,
+    gx: null,
+    gy: null,
+    gz: null,
+    clinZero: loadClinZero(),
+    autoPitch: null,
+    nativeAttAt: 0,
+    lastMotionAt: 0,
+    rollLimit: (function () {
+      const saved = Number(localStorage.getItem("tf-roll-limit"));
+      return saved >= 8 && saved <= 45 ? saved : 25;
+    })(),
+    places: [],
+    placePin: null,
+    placeBusy: false,
+    placeTimer: null,
     compass: null,
     perm: true,
     follow: false,
@@ -118,6 +135,8 @@
   let darkLayer;
   let osmLayer;
   let identifyGen = 0;
+  let placeSearchGen = 0;
+  let placeLayer;
   let hazardPhoto = "";
   let hazardNote = "";
   let scrubMarker;
@@ -598,10 +617,10 @@
     const remaining = remainingMeters(state.route);
     const seconds = remainingSeconds(state.route, remaining);
     const eta = formatClock(new Date(Date.now() + seconds * 1000));
-    const slope = spot.kind === "pad" ? spot.slope.toFixed(1) + "°" : spot.kind === "parcel" ? Number(spot.acres || 0).toFixed(1) + " ac" : "Trailhead";
-    const sky = spot.kind === "pad" ? spot.starlink + "%" : spot.kind === "parcel" ? (spot.zoning || "—") : "—";
+    const slope = spot.kind === "pad" ? spot.slope.toFixed(1) + "°" : spot.kind === "parcel" ? Number(spot.acres || 0).toFixed(1) + " ac" : spot.kind === "place" ? "Place" : "Trailhead";
+    const sky = spot.kind === "pad" ? spot.starlink + "%" : (spot.kind === "parcel" || spot.kind === "place") ? (spot.zoning || "—") : "—";
     const slopeLabel = spot.kind === "pad" ? "pad slope" : spot.kind === "parcel" ? "lot size" : "destination";
-    const skyLabel = spot.kind === "pad" ? "Starlink" : spot.kind === "parcel" ? "zoning" : "sky";
+    const skyLabel = spot.kind === "pad" ? "Starlink" : spot.kind === "parcel" ? "zoning" : spot.kind === "place" ? "address" : "sky";
     return '<div class="route-stats"><div><b id="rbSlope">' + esc(slope) + "</b><span>" + slopeLabel + '</span></div><div><b id="rbSky">' + esc(sky) + "</b><span>" + skyLabel + '</span></div><div><b id="rbEta">' + esc(formatDuration(seconds)) + "</b><span>ETA " + esc(eta) + '</span></div><div><b id="rbMiles">' + esc(formatDistance(remaining)) + '</b><span>remaining</span></div></div><div class="actions"><button type="button" class="primary' + (state.follow ? " on" : "") + '" data-act="follow">Follow GPS</button><button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">End Route ✕</button></div>';
   }
 
@@ -637,7 +656,12 @@
     const trail = selected();
     const telemetry = profileHtml(trail) + telemetryHtml(trail);
     const convoy = '<div class="convoy"><button type="button" data-act="convoy" data-id="🛑 Stopping Ahead">🛑 Stopping Ahead</button><button type="button" data-act="convoy" data-id="🛞 Airing Down">🛞 Airing Down</button><button type="button" data-act="convoy" data-id="🆘 Stuck — Need Winch/Strap">🆘 Stuck — Need Winch/Strap</button><button type="button" data-act="convoy" data-id="🔒 Gate Locked — Turn Around">🔒 Gate Locked — Turn Around</button></div>';
-    return '<input class="search" id="search" placeholder="Search trails or state" value="' + esc(state.query) + '" /><div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
+    const placeRows = (state.places || []).map(function (place) {
+      const away = state.fix ? " · " + miles(state.fix, place).toFixed(1) + " mi from MY GPS" : "";
+      return '<div class="place-card"><button type="button" class="row" data-act="place-route" data-id="' + esc(place.id) + '"><span class="meta"><b>' + esc(place.name) + "</b><small>" + esc(place.address || "") + esc(away) + '</small></span></button><div class="actions"><button type="button" data-act="place-show" data-id="' + esc(place.id) + '">Show on Map</button><button type="button" class="primary" data-act="place-route" data-id="' + esc(place.id) + '">Route Here</button></div></div>';
+    }).join("");
+    const places = (state.placeBusy || placeRows) ? '<div class="status">Places &amp; Addresses</div>' + (state.placeBusy ? '<div class="status">Searching addresses and stores…</div>' : "") + placeRows : "";
+    return '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
   }
 
   function profileHtml(trail) {
@@ -711,7 +735,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><b id="psiRead">' + psi.front + "F / " + psi.rear + 'R</b><span>Air-down PSI · ' + esc(state.surface) + '</span><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + "°</div></div></div>" + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.3.0 · build 9<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><b id="psiRead">' + psi.front + "F / " + psi.rear + 'R</b><span>Air-down PSI · ' + esc(state.surface) + '</span><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + '°</div><div class="actions"><button type="button" data-act="zero-clinometer">Zero / Calibrate</button><button type="button" data-act="reset-clinometer">Reset</button></div></div></div><label class="field"><span>Roll warning <b id="rollLimitRead">' + Math.round(state.rollLimit) + '°</b></span><input type="range" min="8" max="45" step="1" data-roll-limit value="' + state.rollLimit + '" aria-label="Roll warning limit" /></label>' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.4.0 · build 10<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -752,6 +776,7 @@
     if (state.route && state.route.destination) return state.route.destination;
     if (state.routing && state.aim) return state.aim;
     if (state.parcel) return state.parcel;
+    if (state.placePin) return state.placePin;
     const trail = selected();
     if (!trail) return null;
     if (state.mode === "camp") {
@@ -802,10 +827,14 @@
     const parcelToggle = document.getElementById("parcelToggle");
     if (parcelToggle) parcelToggle.classList.toggle("on", state.parcelsOn);
     const psi = airDown();
-    const warn = Math.abs(state.roll) >= 25 || Math.abs(state.pitch) >= 25;
+    const limit = state.rollLimit || 25;
+    const warn = Math.abs(state.roll) >= limit || Math.abs(state.pitch) >= limit;
     const pill = document.getElementById("clinPill");
-    pill.classList.toggle("warn", warn);
-    pill.textContent = "Roll " + Math.round(state.roll) + "° / Pitch " + Math.round(state.pitch) + "° · Air Down " + psi.front + "F / " + psi.rear + "R PSI";
+    if (pill) pill.classList.toggle("warn", warn);
+    const clinRead = document.getElementById("clinRead");
+    if (clinRead) clinRead.textContent = "Roll " + Math.round(state.roll) + "° / Pitch " + Math.round(state.pitch) + "° · Air Down " + psi.front + "F / " + psi.rear + "R PSI";
+    const clinBar = document.getElementById("clinBar");
+    if (clinBar) clinBar.style.transform = "rotate(" + (-state.roll).toFixed(1) + "deg) translateY(" + (Math.max(-18, Math.min(18, state.pitch)) * 0.35).toFixed(1) + "px)";
     const horizon = document.getElementById("horizon");
     if (horizon) horizon.style.transform = "rotate(" + state.roll.toFixed(1) + "deg) translateY(" + (state.pitch * 0.6).toFixed(1) + "px)";
     const tilt = document.getElementById("tiltRead");
@@ -820,7 +849,9 @@
       } else turn.innerHTML = "<span>NEXT TURN</span><b>—</b>";
     }
     const tiltCard = document.getElementById("dashTilt");
-    if (tiltCard) tiltCard.innerHTML = "<span>ROLL / PITCH</span><b>" + Math.round(state.roll) + "° / " + Math.round(state.pitch) + "°</b>";
+    if (tiltCard) tiltCard.classList.toggle("warn", warn);
+    const tiltRead = document.getElementById("dashTiltRead");
+    if (tiltRead) tiltRead.textContent = Math.round(state.roll) + "° / " + Math.round(state.pitch) + "°";
     const gpsCard = document.getElementById("dashGps");
     if (gpsCard) gpsCard.innerHTML = "<span>MY GPS</span><b>" + esc(gpsText || "—") + "</b><small>" + (state.fix ? speed + " mph" : "") + "</small>";
     const targetCard = document.getElementById("dashTarget");
@@ -896,6 +927,7 @@
     drawRoute();
     updatePuck();
     drawPlot();
+    drawPlacePin();
     syncOverlays();
   }
 
@@ -1514,16 +1546,159 @@
     if (SHOT && state.attitudeLocked) return;
     if (state.thermal && Date.now() - state.lastAtt < 500) return;
     state.lastAtt = Date.now();
-    const pitch = Number(data.pitch) || 0;
-    const roll = Number(data.roll) || 0;
-    state.pitch += (pitch - state.pitch) * 0.28;
-    state.roll += (roll - state.roll) * 0.28;
+    if (!data.web) state.nativeAttAt = Date.now();
+    let pitch = Number(data.pitch) || 0;
+    let roll = Number(data.roll) || 0;
+    if (Number.isFinite(Number(data.sx)) && Number.isFinite(Number(data.sy)) && Number.isFinite(Number(data.sz))) {
+      state.gx = Number(data.sx);
+      state.gy = Number(data.sy);
+      state.gz = Number(data.sz);
+      const angles = gravityAngles(state.gx, state.gy, state.gz);
+      roll = angles.roll;
+      pitch = angles.pitch;
+    } else {
+      state.rawRoll = roll;
+      state.rawPitch = pitch;
+      const leveled = levelAttitude(roll, pitch);
+      roll = leveled.roll;
+      pitch = leveled.pitch;
+    }
+    state.pitch += (pitch - state.pitch) * 0.22;
+    state.roll += (roll - state.roll) * 0.22;
     if (data.heading != null && Number.isFinite(Number(data.heading))) state.compass = Number(data.heading);
     updateHud();
     if (state.fix && !(state.fix.speedMps > 1.2) && state.compass != null) {
       state.fix.heading = state.compass;
       updatePuck();
     }
+  }
+
+  function unitGravity(x, y, z) {
+    const mag = Math.sqrt(x * x + y * y + z * z) || 1;
+    return { x: x / mag, y: y / mag, z: z / mag };
+  }
+
+  function levelAttitude(rawRoll, rawPitch) {
+    const zero = state.clinZero;
+    if (zero && Number.isFinite(zero.sx)) return { roll: rawRoll, pitch: rawPitch };
+    if (zero && Number.isFinite(zero.roll)) {
+      return { roll: rawRoll - zero.roll, pitch: rawPitch - zero.pitch };
+    }
+    if (state.autoPitch == null) state.autoPitch = rawPitch;
+    return { roll: rawRoll, pitch: rawPitch - state.autoPitch };
+  }
+
+  function gravityAngles(sx, sy, sz) {
+    const gravity = unitGravity(sx, sy, sz);
+    const rawRoll = Math.atan2(gravity.x, Math.sqrt(gravity.y * gravity.y + gravity.z * gravity.z)) * 180 / Math.PI;
+    const rawPitch = Math.atan2(-gravity.z, -gravity.y) * 180 / Math.PI;
+    state.rawRoll = rawRoll;
+    state.rawPitch = rawPitch;
+    const zero = state.clinZero;
+    if (zero && Number.isFinite(zero.sx) && Number.isFinite(zero.sy) && Number.isFinite(zero.sz)) {
+      return relativeGravity(gravity, unitGravity(zero.sx, zero.sy, zero.sz));
+    }
+    return levelAttitude(rawRoll, rawPitch);
+  }
+
+  function relativeGravity(gravity, down) {
+    let right = { x: 1 - down.x * down.x, y: 0 - down.x * down.y, z: 0 - down.x * down.z };
+    let rightLen = Math.sqrt(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (rightLen < 0.25) {
+      const up = { x: 0 - down.y * down.x, y: 1 - down.y * down.y, z: 0 - down.y * down.z };
+      const upLen = Math.sqrt(up.x * up.x + up.y * up.y + up.z * up.z);
+      right = upLen < 0.05 ? { x: 1, y: 0, z: 0 } : { x: up.x / upLen, y: up.y / upLen, z: up.z / upLen };
+    } else {
+      right = { x: right.x / rightLen, y: right.y / rightLen, z: right.z / rightLen };
+    }
+    let forward = {
+      x: right.y * down.z - right.z * down.y,
+      y: right.z * down.x - right.x * down.z,
+      z: right.x * down.y - right.y * down.x
+    };
+    if (forward.y < 0) forward = { x: -forward.x, y: -forward.y, z: -forward.z };
+    const alongDown = gravity.x * down.x + gravity.y * down.y + gravity.z * down.z;
+    const alongRight = gravity.x * right.x + gravity.y * right.y + gravity.z * right.z;
+    const alongForward = gravity.x * forward.x + gravity.y * forward.y + gravity.z * forward.z;
+    return {
+      roll: Math.atan2(alongRight, alongDown) * 180 / Math.PI,
+      pitch: Math.atan2(-alongForward, alongDown) * 180 / Math.PI
+    };
+  }
+
+  function loadClinZero() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("tf-clinometer-zero") || "null");
+      if (!parsed || typeof parsed !== "object") return null;
+      if (Number.isFinite(Number(parsed.sx)) && Number.isFinite(Number(parsed.sy)) && Number.isFinite(Number(parsed.sz))) {
+        return { sx: Number(parsed.sx), sy: Number(parsed.sy), sz: Number(parsed.sz) };
+      }
+      if (Number.isFinite(Number(parsed.roll)) && Number.isFinite(Number(parsed.pitch))) {
+        return { roll: Number(parsed.roll), pitch: Number(parsed.pitch) };
+      }
+    } catch (error) { /* Keep the live attitude until the driver taps Zero. */ }
+    return null;
+  }
+
+  function requestMotionPermission() {
+    const jobs = [];
+    const Orientation = window.DeviceOrientationEvent;
+    const Motion = window.DeviceMotionEvent;
+    if (Orientation && typeof Orientation.requestPermission === "function") {
+      jobs.push(Orientation.requestPermission().catch(function () { return "denied"; }));
+    }
+    if (Motion && typeof Motion.requestPermission === "function") {
+      jobs.push(Motion.requestPermission().catch(function () { return "denied"; }));
+    }
+    return Promise.all(jobs);
+  }
+
+  function zeroClinometer() {
+    requestMotionPermission().then(function () {
+      if (Number.isFinite(state.gx) && Number.isFinite(state.gy) && Number.isFinite(state.gz)) {
+        state.clinZero = { sx: state.gx, sy: state.gy, sz: state.gz };
+      } else {
+        state.clinZero = { roll: state.rawRoll || 0, pitch: state.rawPitch || 0 };
+      }
+      state.autoPitch = null;
+      try { localStorage.setItem("tf-clinometer-zero", JSON.stringify(state.clinZero)); } catch (error) {}
+      state.roll = 0;
+      state.pitch = 0;
+      updateHud();
+      toast("Clinometer zeroed");
+    });
+  }
+
+  function resetClinometer() {
+    state.clinZero = null;
+    state.autoPitch = null;
+    try { localStorage.removeItem("tf-clinometer-zero"); } catch (error) {}
+    updateHud();
+    toast("Clinometer calibration cleared");
+  }
+
+  function screenAngleDeg() {
+    const orientation = window.screen && window.screen.orientation;
+    const angle = orientation && typeof orientation.angle === "number" ? orientation.angle : Number(window.orientation || 0);
+    if (!Number.isFinite(angle)) return 0;
+    return ((angle % 360) + 360) % 360;
+  }
+
+  function remapScreenGravity(x, y, z) {
+    const angle = screenAngleDeg();
+    if (angle === 90) return { x: -y, y: x, z: z };
+    if (angle === 270) return { x: y, y: -x, z: z };
+    if (angle === 180) return { x: -x, y: -y, z: z };
+    return { x: x, y: y, z: z };
+  }
+
+  function ingestWebGravity(x, y, z, heading) {
+    if (state.nativeAttAt && Date.now() - state.nativeAttAt < 1200) {
+      if (heading != null && Number.isFinite(Number(heading))) state.compass = Number(heading);
+      return;
+    }
+    const screenG = remapScreenGravity(x, y, z);
+    onAttitude({ pitch: 0, roll: 0, heading: heading, sx: screenG.x, sy: screenG.y, sz: screenG.z, web: true });
   }
 
   async function loadTelemetry() {
@@ -1719,6 +1894,18 @@
       state.dash = dashOn() ? "off" : "on";
       localStorage.setItem("tf-dash", state.dash);
       applyChrome();
+      return;
+    }
+    if (act === "zero-clinometer") { zeroClinometer(); return; }
+    if (act === "reset-clinometer") { resetClinometer(); return; }
+    if (act === "search-place") {
+      clearTimeout(state.placeTimer);
+      searchPlaces(state.query, true);
+      return;
+    }
+    if (act === "place-show" || act === "place-route") {
+      const hit = (state.places || []).find(function (place) { return place.id === button.dataset.id; });
+      if (hit) showPlace(hit, act === "place-route");
       return;
     }
     if (act === "recenter") {
@@ -2349,20 +2536,174 @@
       county: "Clark County, WA",
       zoning: zoning,
       parcelId: parcelId,
-      source: "Clark County LandRecords",
+      source: "Clark County taxlots",
       live: true
     };
   }
 
+  const PAD_URL = "https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name_PADUS/FeatureServer/0/query";
+  const PLSS_ALIQUOT_URL = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer/3/query";
+  const PLSS_SECTION_URL = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer/2/query";
+  const WILDERNESS_URL = "https://services1.arcgis.com/ERdCHt0sNM6dENSD/arcgis/rest/services/Wilderness_Areas_in_the_United_States/FeatureServer/0/query";
+  const TRIBAL_URL = "https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/AIANNHA_v1/FeatureServer/0/query";
+  const CLARK_TAXLOT_URL = "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/TaxlotsPublic/MapServer/0/query";
+  const CLARK_STATE_URL = "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/PublicLandState/MapServer/0/query";
+  const CLARK_COUNTY_URL = "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/CountyLandsbyOwner/MapServer/0/query";
+  const PARCEL_CATALOG = [
+    { state: "WA", id: "wa", source: "Washington current parcels", url: "https://services.arcgis.com/jsIt88o09Q0r1j8h/ArcGIS/rest/services/Current_Parcels/FeatureServer/0/query" },
+    { state: "CO", id: "co", source: "Colorado public parcels", url: "https://gis.colorado.gov/public/rest/services/Address_and_Parcel/Colorado_Public_Parcels/FeatureServer/0/query" },
+    { state: "MT", id: "mt", source: "Montana cadastral", url: "https://services.arcgis.com/qnjIrwR8z5Izc0ij/arcgis/rest/services/Cadastral_Application_Support/FeatureServer/5/query" },
+    { state: "WY", id: "wy", source: "Wyoming parcels", url: "https://services3.arcgis.com/r0iJ85SKZ4zAzz3P/arcgis/rest/services/Wyoming_Parcels_for_2026/FeatureServer/0/query" },
+    { state: "ID", id: "id-ada", source: "Ada County parcels", url: "https://services2.arcgis.com/dgGjZc6xAH5m5JyP/arcgis/rest/services/Parcels/FeatureServer/5/query", minLat: 43.25, maxLat: 43.85, minLon: -116.65, maxLon: -115.95 },
+    { state: "OR", id: "or-metro", source: "Portland Metro taxlots", url: "https://services2.arcgis.com/McQ0OlIABe29rJJy/arcgis/rest/services/Taxlots_with_Right_of_Way_Public/FeatureServer/3/query", minLat: 45.20, maxLat: 45.75, minLon: -123.20, maxLon: -122.15 },
+    { state: "NV", id: "nv-washoe", source: "Washoe County parcels", url: "https://wcgisweb.washoecounty.us/arcgis/rest/services/OpenData/OpenData/MapServer/0/query", minLat: 39.15, maxLat: 41.99, minLon: -120.60, maxLon: -119.00 },
+    { state: "AZ", id: "az-maricopa", source: "Maricopa County parcels", url: "https://gis.maricopa.gov/arcgis/rest/services/IndividualService/Parcel/MapServer/1/query", minLat: 32.50, maxLat: 34.10, minLon: -113.35, maxLon: -111.00 },
+    { state: "NM", id: "nm-bern", source: "Bernalillo County parcels", url: "https://services.arcgis.com/CWv1abTnC3urn4bV/arcgis/rest/services/berncoparcels_forIDO/FeatureServer/0/query", minLat: 34.70, maxLat: 35.40, minLon: -107.15, maxLon: -106.15 },
+    { state: "NC", id: "nc", source: "North Carolina parcels", url: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/1/query" },
+    { state: "NY", id: "ny", source: "New York tax parcels", url: "https://services6.arcgis.com/EbVsqZ18sv1kVJ3k/arcgis/rest/services/NYS_Tax_Parcels_Public/FeatureServer/1/query" },
+    { state: "NJ", id: "nj", source: "New Jersey parcels", url: "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Parcels_Composite_NJ_WM/FeatureServer/0/query" },
+    { state: "IN", id: "in", source: "Indiana parcels", url: "https://gisdata.in.gov/server/rest/services/Hosted/Parcel_Boundaries_of_Indiana_Current/FeatureServer/0/query" },
+    { state: "VA", id: "va", source: "Virginia parcels", url: "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VA_Parcels/FeatureServer/0/query" },
+    { state: "WV", id: "wv", source: "West Virginia parcels", url: "https://services.wvgis.wvu.edu/arcgis/rest/services/Planning_Cadastre/WV_Parcels/MapServer/0/query" },
+    { state: "MD", id: "md", source: "Maryland parcels", url: "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0/query" },
+    { state: "MA", id: "ma", source: "Massachusetts tax parcels", url: "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query" },
+    { state: "ME", id: "me", source: "Maine parcels", url: "https://services1.arcgis.com/RbMX0mRVOFNTdLzd/arcgis/rest/services/Maine_Parcels_Organized_Towns/FeatureServer/10/query" },
+    { state: "VT", id: "vt", source: "Vermont parcels", url: "https://services1.arcgis.com/BkFxaEFNwHqX3tAw/arcgis/rest/services/FS_VCGI_OPENDATA_Cadastral_VTPARCELS_poly_standardized_parcels_SP_v1/FeatureServer/0/query" },
+    { state: "CT", id: "ct", source: "Connecticut parcels", url: "https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_CAMA_and_Parcel_Layer/FeatureServer/0/query" },
+    { state: "NH", id: "nh", source: "New Hampshire parcels", url: "https://nhgeodata.unh.edu/hosting/rest/services/Hosted/CAD_ParcelMosaic/FeatureServer/1/query" },
+    { state: "DE", id: "de", source: "Delaware parcels", url: "https://enterprise.firstmap.delaware.gov/arcgis/rest/services/PlanningCadastre/DE_StateParcels/FeatureServer/0/query" },
+    { state: "ND", id: "nd", source: "North Dakota parcels", url: "https://services1.arcgis.com/GOcSXpzwBHyk2nog/arcgis/rest/services/NDGISHUB_Parcels/FeatureServer/0/query" },
+    { state: "MN", id: "mn", source: "Minnesota parcels", url: "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_mngeo/plan_parcels_open/FeatureServer/1/query" },
+    { state: "AR", id: "ar", source: "Arkansas parcels", url: "https://gis.arkansas.gov/arcgis/rest/services/FEATURESERVICES/Planning_Cadastre/FeatureServer/6/query" },
+    { state: "AK", id: "ak", source: "Alaska parcels", url: "https://services1.arcgis.com/7HDiw78fcUiM2BWn/arcgis/rest/services/AK_Parcels/FeatureServer/0/query" },
+    { state: "HI", id: "hi", source: "Hawaii parcels", url: "https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/MapServer/25/query" },
+    { state: "PA", id: "pa-bucks", source: "Bucks County parcels", url: "https://services3.arcgis.com/SP47Tddf7RK32lBU/arcgis/rest/services/Bucks_County_Parcels/FeatureServer/0/query", minLat: 40.05, maxLat: 40.60, minLon: -75.40, maxLon: -74.70 },
+    { state: "PA", id: "pa-chester", source: "Chester County parcels", url: "https://services.arcgis.com/G4S1dGvn7PIgYd6Y/arcgis/rest/services/Parcels_owners/FeatureServer/0/query", minLat: 39.72, maxLat: 40.25, minLon: -76.15, maxLon: -75.35 },
+    { state: "PA", id: "pa-mont", source: "Montgomery County parcels", url: "https://services1.arcgis.com/kOChldNuKsox8qZD/arcgis/rest/services/Montgomery_County_Parcels/FeatureServer/0/query", minLat: 40.00, maxLat: 40.50, minLon: -75.70, maxLon: -74.95 },
+    { state: "TX", id: "tx", source: "Texas StratMap parcels", url: "https://feature.geographic.texas.gov/arcgis/rest/services/Parcels/stratmap24_land_parcels_48/MapServer/0/query", fallback: "https://feature.geographic.texas.gov/arcgis/rest/services/Parcels/stratmap_land_parcels/MapServer/0/query" }
+  ];
+  const OWNER_FIELDS = ["ownname", "ownername1", "ownername", "PRIMARY_OWNER", "OWNER", "owner", "DEEDHOLDER", "Own_Name", "Mang_Name", "Unit_Nm", "Loc_Nm", "PubLandOwner", "OwnerName", "PACSOwner", "forestname", "NAME", "AGENCY", "STEWARD"];
+  const ADDR_FIELDS = ["SitusAddrsFull", "SITUS_ADDRESS", "locationad", "PARCEL_ADDR", "PROP_LOC", "SITUSADD", "PropertyFullStreetAddress", "SITEADDR", "ADDRESS", "SitusAddress", "addr_line1"];
+  const APN_FIELDS = ["PARCEL_ID_NR", "parcel_id", "parcelnb", "parno", "PRINT_KEY", "PAMS_PIN", "state_parcel_id", "PARCELID", "GISPID", "ACCTID", "MAP_PAR_ID", "STATE_ID", "SPAN", "Parcel_ID", "PIN", "UniqueGISID", "state_pin", "tmk_txt", "UPC", "APN", "PLSSID", "Prop_id"];
+  const ACRE_FIELDS = ["GISAcres", "GIS_Acres", "gisacres", "GISACRE", "acreage", "CALC_ACRES", "landgrossa", "GISAc", "ACRES", "RECRDAREATX"];
+  const VALUE_FIELDS = ["FULL_MARKET_VAL", "parval", "actualvalu", "total_value", "totalval", "TotalValue", "taxtotval", "mkttotval"];
+  const LEGAL_FIELDS = ["legal", "LEGALDESC", "SECDIVTXT", "SECDIVLAB", "FRSTDIVLAB", "TWNSHPLAB", "LegalShort"];
+  const COUNTY_FIELDS = ["CountyName", "COUNTY_NAME", "COUNTY", "county"];
+
+  function arcgisPointURL(base, point, offset) {
+    const sep = base.indexOf("?") >= 0 ? "&" : "?";
+    return base + sep + "geometry=" + point.lon + "," + point.lat + "&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&outSR=4326&maxAllowableOffset=" + (offset || 0.004) + "&resultRecordCount=2&f=json";
+  }
+
+  function fieldByNames(attrs, names) {
+    const wanted = {};
+    names.forEach(function (name) { wanted[String(name).toLowerCase()] = true; });
+    const keys = Object.keys(attrs || {});
+    for (let index = 0; index < keys.length; index += 1) {
+      if (!wanted[keys[index].toLowerCase()]) continue;
+      const value = attrs[keys[index]];
+      if (value == null) continue;
+      const text = String(value).trim();
+      const upper = text.toUpperCase();
+      if (!text || upper === "NULL" || upper === "<NULL>" || upper === "NONE" || text === "0") continue;
+      return text;
+    }
+    return "";
+  }
+
+  function esriParcelFromFeature(feature, meta, index) {
+    const attrs = feature.attributes || feature;
+    const ring = esriLatLngRing(feature.geometry);
+    const ownerRaw = fieldByNames(attrs, OWNER_FIELDS);
+    const owner = /^(null|private|unknown|none|not available)$/i.test(ownerRaw) ? "" : ownerRaw;
+    const address = fieldByNames(attrs, ADDR_FIELDS);
+    const parcelId = fieldByNames(attrs, APN_FIELDS);
+    const legal = fieldByNames(attrs, LEGAL_FIELDS);
+    const county = fieldByNames(attrs, COUNTY_FIELDS);
+    let acres = null;
+    ACRE_FIELDS.forEach(function (key) {
+      if (acres != null) return;
+      const number = Number(String(fieldByNames(attrs, [key])).replace(/,/g, ""));
+      if (Number.isFinite(number) && number > 0.02 && number < 8000000) acres = number;
+    });
+    if (ring && acres == null) acres = polygonAcres(ring);
+    const center = ring && ring.length ? ringCentroidLatLng(ring) : { lat: null, lon: null };
+    if (!ring && !address && !parcelId && !owner) return null;
+    const blob = owner + " " + (meta.source || "") + " " + legal;
+    let kind = meta.kind || "private";
+    if (/wilderness|national forest|forest service|\busfs\b/i.test(blob)) kind = "usfs";
+    else if (/bureau of land|\bblm\b/i.test(blob)) kind = "blm";
+    else if (/national park|\bnps\b/i.test(blob)) kind = "nps";
+    else if (/tribal|reservation|dnr|state park|state forest/i.test(blob)) kind = "state";
+    return {
+      id: (meta.id || "lot") + "-" + (parcelId || index),
+      ring: ring,
+      lat: center.lat,
+      lon: center.lon,
+      acres: acres,
+      kind: kind,
+      owner: owner || (address ? "Private Residential Lot — " + address : ""),
+      agency: meta.source || "",
+      address: address,
+      county: county,
+      zoning: legal,
+      parcelId: parcelId,
+      source: meta.source || "",
+      live: true
+    };
+  }
+
+  function catalogMatches(item, point) {
+    if (item.state !== stateCode(point.lat, point.lon)) return false;
+    if (item.minLat == null) return true;
+    return point.lat >= item.minLat && point.lat <= item.maxLat && point.lon >= item.minLon && point.lon <= item.maxLon;
+  }
+
+  async function esriLotsAt(url, point, meta) {
+    const data = await readGis(url);
+    if (!data || data.down || !data.features) return [];
+    return data.features.map(function (feature, index) {
+      return esriParcelFromFeature(feature, meta, index);
+    }).filter(Boolean);
+  }
+
+  async function authoritativeLots(point) {
+    const jobs = [
+      esriLotsAt(arcgisPointURL(PAD_URL, point, 0.05), point, { id: "padus", source: "USGS PAD-US", kind: "state" }),
+      esriLotsAt(arcgisPointURL(PLSS_ALIQUOT_URL, point, 0.002), point, { id: "plss", source: "BLM PLSS CadNSDI", kind: "private" }),
+      esriLotsAt(arcgisPointURL(PLSS_SECTION_URL, point, 0.01), point, { id: "plss-sec", source: "BLM PLSS sections", kind: "private" }),
+      esriLotsAt(arcgisPointURL(WILDERNESS_URL, point, 0.05), point, { id: "wild", source: "National Wilderness Areas", kind: "usfs" }),
+      esriLotsAt(arcgisPointURL(TRIBAL_URL, point, 0.05), point, { id: "tribal", source: "Census AIANNHA tribal lands", kind: "state" })
+    ];
+    PARCEL_CATALOG.forEach(function (item) {
+      if (!catalogMatches(item, point)) return;
+      jobs.push(esriLotsAt(arcgisPointURL(item.url, point, 0.004), point, { id: item.id, source: item.source, kind: "private" }).then(function (rows) {
+        if ((rows && rows.length) || !item.fallback) return rows || [];
+        return esriLotsAt(arcgisPointURL(item.fallback, point, 0.004), point, { id: item.id + "-fb", source: item.source, kind: "private" });
+      }));
+    });
+    const groups = await Promise.all(jobs.map(function (job) { return job.catch(function () { return []; }); }));
+    const lots = [];
+    groups.forEach(function (rows) { (rows || []).forEach(function (lot) { if (lot) lots.push(lot); }); });
+    return lots;
+  }
+
   async function clarkLots(point) {
-    const geometry = encodeURIComponent(JSON.stringify({ x: point.lon, y: point.lat, spatialReference: { wkid: 4326 } }));
-    const extent = (point.lon - 0.02) + "," + (point.lat - 0.015) + "," + (point.lon + 0.02) + "," + (point.lat + 0.015);
-    const identify = "https://gis.clark.wa.gov/arcgisfed2/rest/services/MAPSOnline/LandRecords/MapServer/identify?geometry=" + geometry + "&geometryType=esriGeometryPoint&sr=4326&layers=all&tolerance=6&mapExtent=" + extent + "&imageDisplay=400,400,96&returnGeometry=true&f=json";
+    if (!inClark(point)) return { down: false, lots: [] };
     try {
-      const data = await readGis(identify);
-      if (!data || data.down) return { down: true, lots: [] };
-      const results = data.results || data.features || [];
-      const lots = results.map(clarkParcelFromFeature).filter(Boolean).slice(0, 4);
+      const tax = await readGis(arcgisPointURL(CLARK_TAXLOT_URL, point, 0.0008));
+      if (!tax || tax.down) return { down: true, lots: [] };
+      const extras = await Promise.all([
+        readGis(arcgisPointURL(CLARK_STATE_URL, point, 0.004)).catch(function () { return null; }),
+        readGis(arcgisPointURL(CLARK_COUNTY_URL, point, 0.004)).catch(function () { return null; })
+      ]);
+      const lots = (tax.features || []).map(function (feature, index) {
+        return esriParcelFromFeature(feature, { id: "clark", source: "Clark County taxlots", kind: "private" }, index);
+      }).concat(((extras[0] && extras[0].features) || []).map(function (feature, index) {
+        return esriParcelFromFeature(feature, { id: "clark-public", source: "Clark County public land", kind: "state" }, index);
+      })).concat(((extras[1] && extras[1].features) || []).map(function (feature, index) {
+        return esriParcelFromFeature(feature, { id: "clark-county", source: "Clark County lands", kind: "state" }, index);
+      })).filter(Boolean).slice(0, 6);
       return { down: false, lots: lots };
     } catch (error) {
       return { down: true, lots: [] };
@@ -2475,7 +2816,14 @@
     let clarkDown = false;
     const jobs = [
       usfsAt(point, true).then(function (forest) { if (forest && forest.ring) cells.push(forest); }).catch(function () {}),
-      osmFootprints(map.getBounds()).then(function (lots) { lots.forEach(function (lot) { cells.push(lot); }); }).catch(function () {})
+      osmFootprints(map.getBounds()).then(function (lots) { lots.forEach(function (lot) { cells.push(lot); }); }).catch(function () {}),
+      authoritativeLots(point).then(function (lots) {
+        (lots || []).slice(0, 8).forEach(function (lot) {
+          if (!lot.ring) return;
+          if (lot.lat == null) { lot.lat = point.lat; lot.lon = point.lon; }
+          cells.push(lot);
+        });
+      }).catch(function () {})
     ];
     if (inClark(point)) {
       jobs.push(clarkLots(point).then(function (result) {
@@ -2492,7 +2840,7 @@
     if (generation !== state.parcelGen || !state.parcelsOn) return;
     state.parcelCells = cells.filter(function (lot) { return lot.ring && lot.ring.length >= 3; });
     drawParcels();
-    if (clarkDown) showParcelNote("Clark County LandRecords is not responding. No tax lot was invented.");
+    if (clarkDown) showParcelNote("Clark County taxlots are not responding. No tax lot was invented.");
     else if (!state.parcelCells.length) showParcelNote("No published parcel polygon in this view.");
     else showParcelNote("");
     if (state.parcel && state.parcel.ring) {
@@ -2509,15 +2857,17 @@
     let census = {};
     let address = {};
     let clark = null;
+    let authoritative = [];
     await Promise.all([
       smaIdentify(point).then(function (value) { sma = value; }).catch(function () {}),
       usfsAt(point, !hit || !hit.ring).then(function (value) { forest = value; }).catch(function () {}),
       censusPlace(point).then(function (value) { census = value || {}; }).catch(function () {}),
       nominatimAddress(point).then(function (value) { address = value || {}; }).catch(function () {}),
-      inClark(point) ? clarkLots(point).then(function (value) { clark = value; }).catch(function () { clark = { down: true, lots: [] }; }) : Promise.resolve()
+      inClark(point) ? clarkLots(point).then(function (value) { clark = value; }).catch(function () { clark = { down: true, lots: [] }; }) : Promise.resolve(),
+      authoritativeLots(point).then(function (value) { authoritative = value || []; }).catch(function () { authoritative = []; })
     ]);
     if (generation !== identifyGen || !state.parcelsOn) return;
-    if (clark && clark.down) showParcelNote("Clark County LandRecords is not responding. No tax lot was invented.");
+    if (clark && clark.down) showParcelNote("Clark County taxlots are not responding. No tax lot was invented.");
     const clarkLot = clark && (clark.lots || []).find(function (lot) { return lot.ring && pointInRing(lat, lon, lot.ring); }) || (clark && clark.lots && clark.lots[0]);
     const street = formatStreet(address);
     const county = (census.county) || (address.county ? address.county + (census.state ? ", " + census.state : "") : "") || (hit && hit.county) || "";
@@ -2547,7 +2897,7 @@
       card.address = clarkLot.address || card.address;
       card.county = "Clark County, WA";
       if (clarkLot.owner && clarkLot.owner.indexOf("Private Residential") !== 0) card.owner = clarkLot.owner;
-      sources.push("Clark County LandRecords");
+      sources.push("Clark County taxlots");
     }
     if (forest) {
       card.kind = "usfs";
@@ -2570,6 +2920,33 @@
     } else if (sma && sma.private) {
       sources.push("BLM Surface Management Agency");
       if (!card.owner) card.kind = "private";
+    }
+    const taxLot = (authoritative || []).find(function (lot) {
+      return lot.parcelId && (!lot.ring || pointInRing(lat, lon, lot.ring));
+    });
+    const publicLot = (authoritative || []).find(function (lot) {
+      return lot.kind && lot.kind !== "private" && (!lot.ring || pointInRing(lat, lon, lot.ring));
+    });
+    const chosenLot = taxLot || (!card.parcelId ? publicLot : null);
+    if (chosenLot && (chosenLot.parcelId || !card.parcelId)) {
+      if (chosenLot.ring) card.ring = chosenLot.ring;
+      if (chosenLot.parcelId) card.parcelId = chosenLot.parcelId;
+      if (chosenLot.address) card.address = chosenLot.address;
+      if (chosenLot.acres) card.acres = chosenLot.acres;
+      if (chosenLot.zoning) card.zoning = chosenLot.zoning || card.zoning;
+      if (chosenLot.county) card.county = chosenLot.county;
+      if (chosenLot.owner) card.owner = chosenLot.owner;
+      if (chosenLot.kind && chosenLot.kind !== "private") {
+        card.kind = chosenLot.kind;
+        card.agency = chosenLot.agency || chosenLot.source;
+        card.badge = chosenLot.kind === "usfs" ? "U.S. FOREST SERVICE" : chosenLot.kind === "blm" ? "BLM PUBLIC LAND" : "PUBLIC LAND";
+      }
+      sources.push(chosenLot.source);
+      authoritative.forEach(function (lot) {
+        if (lot.ring && !state.parcelCells.some(function (cell) { return cell.id === lot.id; })) {
+          state.parcelCells = state.parcelCells.concat([lot]);
+        }
+      });
     }
     if (address.org && card.kind === "private") {
       card.owner = address.org;
@@ -4101,6 +4478,110 @@
     if (state.convoy) toast(state.convoy);
   }
 
+  function schedulePlaceSearch() {
+    clearTimeout(state.placeTimer);
+    const query = state.query.trim();
+    if (query.length < 3) return;
+    state.placeTimer = setTimeout(function () { searchPlaces(query, false); }, 400);
+  }
+
+  async function searchPlaces(query, routeFirst) {
+    const trimmed = String(query || "").trim();
+    if (trimmed.length < 3) {
+      if (routeFirst) toast("Enter at least 3 characters to search an address or store.");
+      return;
+    }
+    const generation = ++placeSearchGen;
+    state.placeBusy = true;
+    if (state.mode === "drive") renderSheet();
+    let hits = [];
+    try { hits = await fetchPlaceHits(trimmed); } catch (error) { hits = []; }
+    if (generation !== placeSearchGen) return;
+    state.placeBusy = false;
+    state.places = hits.slice(0, 6);
+    if (state.mode === "drive") renderSheet();
+    if (routeFirst && state.places[0]) showPlace(state.places[0], true);
+    else if (routeFirst) toast("No address or store matched that search.");
+  }
+
+  async function fetchPlaceHits(query) {
+    const encoded = encodeURIComponent(query);
+    const nominatimURL = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&countrycodes=us&q=" + encoded;
+    const censusURL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=" + encoded + "&benchmark=Public_AR_Current&format=json";
+    const pair = await Promise.all([
+      readGis(nominatimURL).catch(function () { return null; }),
+      readGis(censusURL).catch(function () { return null; })
+    ]);
+    const hits = [];
+    const nominatim = Array.isArray(pair[0]) ? pair[0] : [];
+    nominatim.forEach(function (row, index) {
+      const lat = Number(row.lat);
+      const lon = Number(row.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+      if (hits.some(function (hit) { return meters(hit, { lat: lat, lon: lon }) < 150; })) return;
+      const display = row.display_name || "";
+      const name = row.name || display.split(",")[0] || query;
+      hits.push({ id: "osm-" + index + "-" + lat.toFixed(4), name: name, address: display || name, lat: lat, lon: lon });
+    });
+    const matches = pair[1] && pair[1].result && pair[1].result.addressMatches || [];
+    matches.forEach(function (row, index) {
+      const coords = row.coordinates || {};
+      const lat = Number(coords.y);
+      const lon = Number(coords.x);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+      if (hits.some(function (hit) { return meters(hit, { lat: lat, lon: lon }) < 150; })) return;
+      const address = row.matchedAddress || query;
+      hits.push({ id: "census-" + index + "-" + lat.toFixed(4), name: address.split(",")[0] || address, address: address, lat: lat, lon: lon });
+    });
+    if (state.fix) hits.sort(function (a, b) { return miles(state.fix, a) - miles(state.fix, b); });
+    return hits;
+  }
+
+  function showPlace(hit, route) {
+    if (!hit) return;
+    state.placePin = { id: hit.id, name: hit.name, address: hit.address, lat: hit.lat, lon: hit.lon };
+    state.aim = state.placePin;
+    if (state.parcelsOn) identifyParcel(hit.lat, hit.lon, null);
+    if (!route) {
+      if (map) map.setView([hit.lat, hit.lon], Math.max(map.getZoom(), 15));
+      drawPlacePin(true);
+      updateHud();
+      toast(hit.name);
+      return;
+    }
+    const trail = selected();
+    beginRoute({
+      id: hit.id,
+      trailID: trail ? trail.id : state.selectedId,
+      name: hit.name,
+      lat: hit.lat,
+      lon: hit.lon,
+      slope: 0,
+      starlink: 0,
+      kind: "place",
+      acres: 0,
+      zoning: hit.address || "Address"
+    });
+    setTimeout(function () { drawPlacePin(true); }, 450);
+  }
+
+  function drawPlacePin(openPopup) {
+    if (!placeLayer) return;
+    placeLayer.clearLayers();
+    const pin = state.placePin;
+    if (!pin || !Number.isFinite(Number(pin.lat)) || !Number.isFinite(Number(pin.lon))) return;
+    const icon = L.divIcon({
+      className: "place-pin",
+      html: "<span>📍 " + esc(pin.name || "Place") + "</span>",
+      iconAnchor: [14, 12]
+    });
+    const marker = L.marker([pin.lat, pin.lon], { icon: icon, zIndexOffset: 740 }).bindPopup(
+      "<b>" + esc(pin.name || "Place") + "</b><br>" + esc(pin.address || "") + "<br>" + Number(pin.lat).toFixed(5) + ", " + Number(pin.lon).toFixed(5)
+    );
+    marker.addTo(placeLayer);
+    if (openPopup) marker.openPopup();
+  }
+
   function boot() {
     state.trails = buildBuiltins();
     map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 3, maxZoom: 19 });
@@ -4157,6 +4638,7 @@
     hazardLayer = L.layerGroup().addTo(map);
     hazardPinLayer = L.layerGroup().addTo(map);
     communityLayer = L.layerGroup().addTo(map);
+    placeLayer = L.layerGroup().addTo(map);
     plotLayer = L.layerGroup().addTo(map);
     map.on("dragstart", function () { state.follow = false; });
     map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); });
@@ -4179,7 +4661,21 @@
         state.query = event.target.value;
         const list = pickerTrails();
         if (!list.some(function (trail) { return trail.id === state.selectedId; }) && list[0]) state.selectedId = list[0].id;
+        if (state.query.trim().length < 3) {
+          state.places = [];
+          state.placeBusy = false;
+        }
+        schedulePlaceSearch();
         renderAll();
+        return;
+      }
+      if (event.target.hasAttribute("data-roll-limit")) {
+        const limit = Number(event.target.value);
+        state.rollLimit = limit >= 8 && limit <= 45 ? limit : 25;
+        localStorage.setItem("tf-roll-limit", String(state.rollLimit));
+        const read = document.getElementById("rollLimitRead");
+        if (read) read.textContent = Math.round(state.rollLimit) + "°";
+        updateHud();
         return;
       }
       if (event.target.dataset.overlay) {
@@ -4200,13 +4696,33 @@
       renderTop();
       syncMap();
     });
+    window.addEventListener("devicemotion", function (event) {
+      if (SHOT) return;
+      const gravity = event.accelerationIncludingGravity;
+      if (!gravity || gravity.x == null || gravity.y == null || gravity.z == null) return;
+      state.lastMotionAt = Date.now();
+      ingestWebGravity(gravity.x, gravity.y, gravity.z, state.compass);
+    });
     window.addEventListener("deviceorientation", function (event) {
       if (SHOT) return;
-      if (window.TrailForgeSpeech && state.compass != null) return;
       if (event.beta == null) return;
-      let pitch = event.beta;
-      if (Math.abs(pitch) > 50) pitch -= Math.sign(pitch) * 90;
-      onAttitude({ pitch: pitch, roll: event.gamma || 0, heading: event.webkitCompassHeading || event.alpha });
+      const heading = event.webkitCompassHeading || event.alpha;
+      if (Date.now() - state.lastMotionAt < 800) {
+        if (heading != null && Number.isFinite(Number(heading))) state.compass = Number(heading);
+        return;
+      }
+      const beta = event.beta * Math.PI / 180;
+      const gamma = event.gamma * Math.PI / 180;
+      const gx = Math.sin(gamma);
+      const gy = -Math.cos(gamma) * Math.sin(beta);
+      const gz = -Math.cos(beta) * Math.cos(gamma);
+      ingestWebGravity(gx, gy, gz, heading);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" || !event.target || event.target.id !== "search") return;
+      event.preventDefault();
+      clearTimeout(state.placeTimer);
+      searchPlaces(state.query, true);
     });
     window.addEventListener("online", function () {
       state.online = true;

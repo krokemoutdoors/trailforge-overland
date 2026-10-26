@@ -29,6 +29,18 @@ struct NavOption: Identifiable {
     let steps: [NavStep]
 }
 
+struct PlaceHit: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let address: String
+    let latitude: Double
+    let longitude: Double
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
 struct ActiveCampRoute {
     var destination: CampSpot
     var options: [NavOption]
@@ -76,6 +88,11 @@ struct MainCockpitView: View {
     @State private var mode: CockpitMode = .drive
     @State private var selectedTrailID: String = "imogene"
     @State private var trailQuery: String = ""
+    @State private var placeHits: [PlaceHit] = []
+    @State private var placeSearchGeneration = 0
+    @State private var placeSearchBusy = false
+    @State private var placeSearchNote = ""
+    @State private var searchedPlace: PlaceHit?
     @State private var regionFilter: String = "near"
     @State private var offlineSaved: Bool = true
     @State private var showProPaywall: Bool = false
@@ -273,6 +290,11 @@ struct MainCockpitView: View {
         hasher.combine(community.feedToken)
         hasher.combine(profileIndex)
         hasher.combine(mapHazards.map(\.id).joined(separator: ","))
+        hasher.combine(searchedPlace?.id)
+        if let searchedPlace {
+            hasher.combine(searchedPlace.latitude)
+            hasher.combine(searchedPlace.longitude)
+        }
         return hasher.finalize()
     }
 
@@ -468,9 +490,11 @@ struct MainCockpitView: View {
                 parcelsCollapsedForFollow = false
             }
         }
-        .onChange(of: trailQuery) { _, _ in
-            guard !pickerTrails.contains(where: { $0.id == selectedTrailID }), let first = pickerTrails.first else { return }
-            selectedTrailID = first.id
+        .onChange(of: trailQuery) { _, newValue in
+            if !pickerTrails.contains(where: { $0.id == selectedTrailID }), let first = pickerTrails.first {
+                selectedTrailID = first.id
+            }
+            schedulePlaceSearch(newValue)
         }
         .onChange(of: telemetry.isScanningTrails) { _, scanning in
             guard !scanning else { return }
@@ -708,8 +732,36 @@ struct MainCockpitView: View {
 
     private var driveControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Search trails or state", text: $trailQuery)
-                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                TextField("Search trails, state, address, or store", text: $trailQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.search)
+                    .onSubmit { submitPlaceSearch() }
+                Button("Search Address / Place") { submitPlaceSearch() }
+                    .font(.caption2.bold())
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+            }
+            if placeSearchBusy {
+                Text("Searching addresses and stores…")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !placeSearchNote.isEmpty {
+                Text(placeSearchNote)
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
+            if !placeHits.isEmpty {
+                Text("Places & Addresses")
+                    .font(.caption.bold())
+                    .foregroundColor(.cyan)
+                VStack(spacing: 8) {
+                    ForEach(placeHits) { hit in
+                        placeResultRow(hit)
+                    }
+                }
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     filterPill("Near Me", tag: "near")
@@ -1415,6 +1467,204 @@ struct MainCockpitView: View {
         liveNextStepDistanceText = formatDistance(meters(from: user, to: target))
     }
 
+    private var clinometerHot: Bool {
+        abs(motionManager.rollDegrees) >= motionManager.rollWarningLimit
+            || abs(motionManager.pitchDegrees) >= motionManager.rollWarningLimit
+    }
+
+    private var clinometerStrip: some View {
+        HStack(spacing: 8) {
+            clinometerHorizon
+                .frame(width: 54, height: 22)
+            Text("Roll \(formatAngle(motionManager.rollDegrees))°  •  Pitch \(formatAngle(motionManager.pitchDegrees))°")
+                .font(.caption.monospacedDigit().bold())
+                .foregroundColor(clinometerHot ? .red : .cyan)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Button("Zero") { motionManager.calibrateZero() }
+                .font(.caption2.bold())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.cyan)
+                .foregroundColor(.black)
+                .clipShape(Capsule())
+                .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.78))
+        .clipShape(Capsule())
+    }
+
+    private func clinometerCard(zeroTitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                clinometerHorizon
+                    .frame(width: 72, height: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Roll \(formatAngle(motionManager.rollDegrees))°  •  Pitch \(formatAngle(motionManager.pitchDegrees))°")
+                        .font(.headline.monospacedDigit())
+                        .foregroundColor(clinometerHot ? .red : .cyan)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Text(motionManager.isCalibrated ? "Calibrated to your mount" : "Auto baseline for this mount angle")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            HStack(spacing: 8) {
+                Button(zeroTitle) { motionManager.calibrateZero() }
+                    .font(.caption.bold())
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+                Button("Reset Calibration") { motionManager.resetCalibration() }
+                    .font(.caption.bold())
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var clinometerHorizon: some View {
+        ZStack {
+            Capsule()
+                .fill(Color.white.opacity(0.18))
+            Capsule()
+                .fill(clinometerHot ? Color.red : Color.cyan)
+                .frame(width: 36, height: 4)
+                .rotationEffect(.degrees(-motionManager.rollDegrees))
+                .offset(y: CGFloat(max(-16, min(16, motionManager.pitchDegrees))) * 0.35)
+        }
+        .clipped()
+    }
+
+    private func formatAngle(_ value: Double) -> String {
+        String(format: "%.0f", value)
+    }
+
+    private func placeResultRow(_ hit: PlaceHit) -> some View {
+        let distance: String = {
+            guard let user = locationTracker.userCoordinate else { return "" }
+            return String(format: " · %.1f mi from MY GPS", miles(from: user, to: hit.coordinate))
+        }()
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                openPlace(hit, route: true)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hit.name)
+                        .font(.subheadline.bold())
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text(hit.address + distance)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            HStack(spacing: 8) {
+                Button("Route Here") { openPlace(hit, route: true) }
+                    .font(.caption2.bold())
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+                Button("View on Map") { openPlace(hit, route: false) }
+                    .font(.caption2.bold())
+                    .buttonStyle(.bordered)
+                mapsMenu(placeSpot(hit))
+            }
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func schedulePlaceSearch(_ raw: String) {
+        placeSearchGeneration += 1
+        let generation = placeSearchGeneration
+        let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 3 else {
+            placeHits = []
+            placeSearchBusy = false
+            placeSearchNote = ""
+            return
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard generation == placeSearchGeneration else { return }
+            await searchPlaces(query, generation: generation, routeFirst: false)
+        }
+    }
+
+    private func submitPlaceSearch() {
+        placeSearchGeneration += 1
+        let generation = placeSearchGeneration
+        let query = trailQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 3 else {
+            placeSearchNote = "Enter at least 3 characters to search an address or store."
+            return
+        }
+        Task {
+            await searchPlaces(query, generation: generation, routeFirst: true)
+        }
+    }
+
+    private func searchPlaces(_ query: String, generation: Int, routeFirst: Bool) async {
+        placeSearchBusy = true
+        let hits = await PlaceLookup.fetch(
+            query: query,
+            near: locationTracker.userCoordinate ?? mapCenter,
+            user: locationTracker.userCoordinate,
+            nationwide: PlaceLookup.prefersNationwide(query)
+        )
+        guard generation == placeSearchGeneration else { return }
+        placeSearchBusy = false
+        placeHits = hits
+        if hits.isEmpty {
+            placeSearchNote = routeFirst ? "No address or store matched that search." : ""
+            return
+        }
+        placeSearchNote = ""
+        if routeFirst, let first = hits.first {
+            openPlace(first, route: true)
+        }
+    }
+
+    private func placeSpot(_ hit: PlaceHit) -> CampSpot {
+        CampSpot(
+            id: "place-\(hit.id)",
+            trailID: activeTrail.id,
+            name: hit.name,
+            lat: hit.latitude,
+            lon: hit.longitude,
+            slopeDeg: 0,
+            starlinkPct: 0,
+            kind: .trailhead
+        )
+    }
+
+    private func openPlace(_ hit: PlaceHit, route: Bool) {
+        searchedPlace = hit
+        selectedCampSpot = placeSpot(hit)
+        followRoute = false
+        withAnimation {
+            pushCamera(.region(MKCoordinateRegion(
+                center: hit.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+            )))
+        }
+        if showParcelLayer {
+            parcelService.inspect(at: hit.coordinate)
+        }
+        guard route else { return }
+        let spot = placeSpot(hit)
+        Task { await beginRoute(to: spot) }
+    }
+
     private func coordinatesBar(filled: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             coordinateLine(title: "MY GPS", coordinate: locationTracker.userCoordinate, token: "gps", fallback: "Acquiring GPS...")
@@ -1536,6 +1786,9 @@ struct MainCockpitView: View {
             }
             VStack(spacing: 8) {
                 topCluster
+                if !showGloveRow {
+                    clinometerStrip
+                }
                 if plotMode {
                     Text(nextSegmentFreehand ? "Plotter • next segment is freehand" : "Plotter • next segment snaps to the trail")
                         .font(.caption2.bold())
@@ -1555,7 +1808,7 @@ struct MainCockpitView: View {
             .padding(.top, 8)
             HStack {
                 Spacer()
-                rightRail
+                rightRail(showGloveRow)
             }
             .padding(.trailing, 8)
             .padding(.top, 64)
@@ -1588,6 +1841,7 @@ struct MainCockpitView: View {
             hazardOpacity: hazardOverlayOpacity,
             starlinkOpacity: starlinkOverlayOpacity,
             hazards: mapHazards,
+            searchedPlace: searchedPlace,
             plotLine: plottedLine,
             plotMarkers: plotPoints,
             scrub: scrubCoordinate,
@@ -1613,12 +1867,8 @@ struct MainCockpitView: View {
         .equatable()
     }
 
-    private var rightRail: some View {
+    private func rightRail(_ showGloveRow: Bool) -> some View {
         VStack(spacing: 8) {
-            railButton(followHeading ? "location.north.line.fill" : "location.fill", active: followHeading) {
-                cycleCameraMode()
-            }
-            .accessibilityLabel(followHeading ? "Follow heading" : "Center on GPS")
             railButton("square.3.layers.3d.down.right", active: showLayers) {
                 showLayers = true
             }
@@ -1636,10 +1886,12 @@ struct MainCockpitView: View {
                 detent = .half
             }
             .accessibilityLabel("Inspect point parcel")
-            railButton("camera.fill", active: showHazardSheet) {
-                showHazardSheet = true
+            if !showGloveRow {
+                railButton("camera.fill", active: showHazardSheet) {
+                    showHazardSheet = true
+                }
+                .accessibilityLabel("Drop hazard pin")
             }
-            .accessibilityLabel("Drop hazard pin")
             railButton("moon.fill", active: nightVision) {
                 nightVision.toggle()
             }
@@ -1699,7 +1951,6 @@ struct MainCockpitView: View {
             gloveButton("Parcels", system: showParcelLayer ? "square.split.2x2.fill" : "square.dashed") {
                 toggleParcelLayer()
             }
-            gloveButton("Hazard", system: "camera.fill") { showHazardSheet = true }
         }
     }
 
@@ -1756,9 +2007,7 @@ struct MainCockpitView: View {
                     .font(.caption.bold())
             }
             let psi = rigStore.recommendedAirDownPSI(surface: "rock", beadlocks: false)
-            Text("Roll \(Int(motionManager.rollDegrees))°  •  Pitch \(Int(motionManager.pitchDegrees))°")
-                .font(.title3.monospacedDigit().bold())
-                .foregroundColor(abs(motionManager.rollDegrees) >= 25 ? .red : .cyan)
+            clinometerCard(zeroTitle: "Zero Clinometer")
             Text("Air Down \(psi.front)F / \(psi.rear)R PSI")
                 .font(.headline)
                 .foregroundColor(.mint)
@@ -1850,7 +2099,18 @@ struct MainCockpitView: View {
     }
 
     private var rigPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let psi = rigStore.recommendedAirDownPSI(surface: "rock", beadlocks: false)
+        return VStack(alignment: .leading, spacing: 10) {
+            clinometerCard(zeroTitle: "Zero / Calibrate Level")
+            Text("Air Down \(psi.front)F / \(psi.rear)R PSI")
+                .font(.headline)
+                .foregroundColor(.mint)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Roll Warning Limit \(Int(motionManager.rollWarningLimit))°")
+                    .font(.caption.bold())
+                Slider(value: $motionManager.rollWarningLimit, in: 8...45, step: 1)
+                    .tint(.cyan)
+            }
             HStack {
                 Stepper("Tires: \(Int(rigStore.profile.tireInches))\"", value: $rigStore.profile.tireInches, in: 29...37, step: 1)
                 Toggle("Locker", isOn: $rigStore.profile.hasRearLocker)
@@ -2748,6 +3008,157 @@ private final class CameraGate: ObservableObject {
     var userLongitude: Double?
 }
 
+private enum PlaceLookup {
+    static func prefersNationwide(_ query: String) -> Bool {
+        if query.contains(",") { return true }
+        if query.range(of: #"\b\d{5}(?:-\d{4})?\b"#, options: .regularExpression) != nil { return true }
+        let tokens = query.split(whereSeparator: { $0.isWhitespace })
+        if let last = tokens.last, last.count == 2, stateCodes.contains(last.uppercased()) {
+            return true
+        }
+        let lower = query.lowercased()
+        return stateNames.contains { lower.contains($0) }
+    }
+
+    static func fetch(query: String, near: CLLocationCoordinate2D, user: CLLocationCoordinate2D?, nationwide: Bool) async -> [PlaceHit] {
+        let mapHits = await mapKitHits(query: query, near: near, nationwide: nationwide)
+        let resolved = mapHits.isEmpty ? await geocoderHits(query: query) : mapHits
+        let hits = resolved.isEmpty ? await nominatimHits(query: query) : resolved
+        return Array(ranked(hits, user: user).prefix(6))
+    }
+
+    private static func mapKitHits(query: String, near: CLLocationCoordinate2D, nationwide: Bool) async -> [PlaceHit] {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.resultTypes = [.address, .pointOfInterest]
+        if !nationwide {
+            request.region = MKCoordinateRegion(
+                center: near,
+                span: MKCoordinateSpan(latitudeDelta: 1.4, longitudeDelta: 1.4)
+            )
+        }
+        do {
+            let response = try await MKLocalSearch(request: request).start()
+            return response.mapItems.enumerated().compactMap { index, item in
+                let placemark = item.placemark
+                let coordinate = placemark.coordinate
+                guard abs(coordinate.latitude) > 0.01 || abs(coordinate.longitude) > 0.01 else { return nil }
+                let street = [placemark.subThoroughfare, placemark.thoroughfare].compactMap { $0 }.joined(separator: " ")
+                let cityLine = [placemark.locality, placemark.administrativeArea, placemark.postalCode].compactMap { $0 }.joined(separator: " ")
+                let address = [street, cityLine].filter { !$0.isEmpty }.joined(separator: ", ")
+                let name = item.name ?? placemark.name ?? (address.isEmpty ? "Place" : address)
+                return PlaceHit(
+                    id: "mapkit-\(index)-\(String(format: "%.4f-%.4f", coordinate.latitude, coordinate.longitude))",
+                    name: name,
+                    address: address.isEmpty ? name : address,
+                    latitude: coordinate.latitude,
+                    longitude: coordinate.longitude
+                )
+            }
+        } catch {
+            return []
+        }
+    }
+
+    private static func geocoderHits(query: String) async -> [PlaceHit] {
+        do {
+            let marks = try await CLGeocoder().geocodeAddressString(query)
+            return marks.enumerated().compactMap { index, placemark in
+                guard let coordinate = placemark.location?.coordinate else { return nil }
+                let street = [placemark.subThoroughfare, placemark.thoroughfare].compactMap { $0 }.joined(separator: " ")
+                let cityLine = [placemark.locality, placemark.administrativeArea, placemark.postalCode].compactMap { $0 }.joined(separator: " ")
+                let address = [street, cityLine].filter { !$0.isEmpty }.joined(separator: ", ")
+                let name = placemark.name ?? (address.isEmpty ? query : address)
+                return PlaceHit(
+                    id: "geo-\(index)-\(String(format: "%.4f-%.4f", coordinate.latitude, coordinate.longitude))",
+                    name: name,
+                    address: address.isEmpty ? name : address,
+                    latitude: coordinate.latitude,
+                    longitude: coordinate.longitude
+                )
+            }
+        } catch {
+            return []
+        }
+    }
+
+    private static func nominatimHits(query: String) async -> [PlaceHit] {
+        var components = URLComponents(string: "https://nominatim.openstreetmap.org/search")
+        components?.queryItems = [
+            URLQueryItem(name: "format", value: "jsonv2"),
+            URLQueryItem(name: "addressdetails", value: "1"),
+            URLQueryItem(name: "limit", value: "6"),
+            URLQueryItem(name: "countrycodes", value: "us"),
+            URLQueryItem(name: "q", value: query)
+        ]
+        guard let url = components?.url else { return [] }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        request.setValue("TrailForgeOverland/1.0 (address search)", forHTTPHeaderField: "User-Agent")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return [] }
+            guard let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+            return rows.enumerated().compactMap { index, row in
+                guard let lat = doubleValue(row["lat"]), let lon = doubleValue(row["lon"]) else { return nil }
+                let name = (row["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let display = (row["display_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let title = (name?.isEmpty == false ? name! : display.components(separatedBy: ",").first) ?? query
+                return PlaceHit(
+                    id: "osm-\(index)-\(String(format: "%.4f-%.4f", lat, lon))",
+                    name: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                    address: display.isEmpty ? title : display,
+                    latitude: lat,
+                    longitude: lon
+                )
+            }
+        } catch {
+            return []
+        }
+    }
+
+    private static func ranked(_ hits: [PlaceHit], user: CLLocationCoordinate2D?) -> [PlaceHit] {
+        var unique: [PlaceHit] = []
+        for hit in hits {
+            let duplicate = unique.contains { existing in
+                abs(existing.latitude - hit.latitude) < 0.0015 && abs(existing.longitude - hit.longitude) < 0.0015
+            }
+            if !duplicate { unique.append(hit) }
+        }
+        guard let user else { return unique }
+        return unique.sorted { lhs, rhs in
+            CLLocation(latitude: user.latitude, longitude: user.longitude).distance(
+                from: CLLocation(latitude: lhs.latitude, longitude: lhs.longitude)
+            ) < CLLocation(latitude: user.latitude, longitude: user.longitude).distance(
+                from: CLLocation(latitude: rhs.latitude, longitude: rhs.longitude)
+            )
+        }
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let text = value as? String { return Double(text) }
+        return nil
+    }
+
+    private static let stateCodes: Set<String> = [
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
+        "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY",
+        "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV",
+        "WI", "WY", "DC"
+    ]
+
+    private static let stateNames = [
+        "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware",
+        "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky",
+        "louisiana", "maine", "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+        "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey", "new mexico",
+        "new york", "north carolina", "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania",
+        "rhode island", "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont",
+        "virginia", "washington", "west virginia", "wisconsin", "wyoming"
+    ]
+}
+
 private struct StableRouteMap: View, Equatable {
     @Binding var cameraPosition: MapCameraPosition
     var sceneToken: Int
@@ -2772,6 +3183,7 @@ private struct StableRouteMap: View, Equatable {
     var hazardOpacity: Double
     var starlinkOpacity: Double
     var hazards: [MapHazard]
+    var searchedPlace: PlaceHit?
     var plotLine: [CLLocationCoordinate2D]
     var plotMarkers: [CLLocationCoordinate2D]
     var scrub: CLLocationCoordinate2D?
@@ -2858,6 +3270,23 @@ private struct StableRouteMap: View, Equatable {
             }
             ForEach(parcels) { parcel in
                 parcelOverlay(parcel)
+            }
+            if let place = searchedPlace {
+                Annotation(place.name, coordinate: place.coordinate) {
+                    VStack(spacing: 2) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white, .orange)
+                        Text(place.name)
+                            .font(.caption2.bold())
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.82))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                }
             }
             if let route {
                 routeStroke(route)

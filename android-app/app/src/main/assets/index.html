@@ -82,8 +82,10 @@
     .lot-top button { border: 0; background: transparent; color: white; font-size: 16px; }
     .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
     .legend .g { background: var(--green); } .legend .o { background: var(--amber); } .legend .r { background: var(--red); }
-    .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 7px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; }
-    .clin-pill.warn { color: var(--red); }
+    .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 6px 8px 6px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; display: flex; align-items: center; gap: 8px; }
+    .clin-pill.warn, #dashTilt.warn b { color: var(--red); }
+    .clin-pill i { width: 28px; height: 4px; border-radius: 999px; background: currentColor; display: inline-block; flex: 0 0 auto; }
+    .clin-pill button, #dashTilt button { border: 0; border-radius: 999px; background: var(--cyan); color: #041018; font-size: 11px; font-weight: 800; padding: 4px 8px; }
     #dock { flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--line); }
     #detents { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
     #detents button { flex: 1 1 auto; border: 0; border-radius: 999px; background: #13202e; color: #d5e2ee; font-size: 12px; font-weight: 800; min-height: 36px; padding: 8px 6px; }
@@ -160,6 +162,7 @@
     #app[data-dash="1"] #sheet { display: block !important; max-height: none; }
     #app[data-dash="1"] .modes button, #app[data-dash="1"] .actions button, #app[data-dash="1"] .reports button, #app[data-dash="1"] #detents button { min-height: 48px; font-size: 14px; }
     #app[data-dash="1"] #rail button { width: 56px; height: 56px; font-size: 22px; }
+    #app[data-dash="1"] #rail button[data-act="hazard"] { display: none !important; }
     #app[data-night="1"] #map { filter: sepia(1) saturate(4) hue-rotate(-40deg) brightness(0.55); }
     #app[data-night="1"] .hud-read b, #app[data-night="1"] #dashHud b, #app[data-night="1"] .fit-title, #app[data-night="1"] .coords b { color: #ffb020; }
     #app[data-night="1"] .clin-pill, #app[data-night="1"] #dashHud span { color: #ff8a3d; }
@@ -186,6 +189,15 @@
     .modes button { flex: 1; background: #13202e; color: #d5e2ee; font-size: 12px; padding: 9px 4px; }
     .modes button.on { background: var(--cyan); color: #041018; }
     .search { width: 100%; border: 0; border-radius: 10px; background: #13202e; padding: 9px 10px; margin-bottom: 8px; }
+    .search-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+    .search-row .search { flex: 1; width: auto; margin-bottom: 0; }
+    .search-go { border: 0; border-radius: 10px; background: var(--cyan); color: #041018; font-weight: 800; padding: 9px 10px; white-space: nowrap; }
+    .place-card { background: #101c2b; border-radius: 12px; padding: 8px; margin: 6px 0; }
+    .place-card .meta b, .place-card .meta small { display: block; }
+    .place-card .meta small { color: var(--muted); font-size: 11px; white-space: normal; }
+    .place-card .actions { padding: 6px 0 0; }
+    .place-pin { background: transparent; border: 0; }
+    .place-pin span { display: inline-block; background: #ff9f1a; color: #1c1402; font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 999px; white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
     .chips, .pills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 8px; }
     .chips::-webkit-scrollbar, .pills::-webkit-scrollbar { display: none; }
     .chip, .trail-pill { flex: 0 0 auto; background: rgba(255,255,255,0.08); color: white; font-size: 11px; padding: 7px 10px; }
@@ -294,10 +306,9 @@
         <button type="button" class="line" id="targetRead" data-act="copy-target" aria-label="Copy target coordinates"><span class="k">TARGET:</span><b>—</b></button>
       </div>
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
-      <div class="clin-pill" id="clinPill">Roll 0° / Pitch 0° · Air Down —</div>
+      <div class="clin-pill" id="clinPill"><i id="clinBar"></i><span id="clinRead">Roll 0° / Pitch 0° · Air Down —</span><button type="button" data-act="zero-clinometer">Zero</button></div>
       <div class="lot-card" id="lotCard" hidden></div>
       <nav id="rail" aria-label="Map tools">
-        <button type="button" data-act="recenter" title="Recenter / Heading" aria-label="Recenter / Heading">⌖</button>
         <button type="button" data-act="layers" title="Layers &amp; Opacity Drawer" aria-label="Layers and Opacity Drawer">▦</button>
         <button type="button" data-act="plot" title="Custom Route Plotter" aria-label="Custom Route Plotter">✎</button>
         <button type="button" data-act="corridor" title="5-Mile Corridor Offline Download" aria-label="5-Mile Corridor Offline Download">↓</button>
@@ -365,7 +376,7 @@
       </aside>
       <div id="dashHud">
         <div class="corner tl" id="dashTurn"><span>NEXT TURN</span><b>—</b></div>
-        <div class="corner tr" id="dashTilt"><span>ROLL / PITCH</span><b>0° / 0°</b></div>
+        <div class="corner tr" id="dashTilt"><span>ROLL / PITCH</span><b id="dashTiltRead">0° / 0°</b><button type="button" data-act="zero-clinometer">Zero Clinometer</button></div>
         <div class="corner bl" id="dashGps"><span>MY GPS</span><b>—</b></div>
         <button type="button" class="corner br" id="dashTarget" data-act="copy-target" aria-label="Copy target coordinates"><span>TARGET</span><b>—</b></button>
         <button type="button" class="corner bc" id="dashHazard" data-act="hazard" aria-label="Drop hazard pin">📸 / 🎙️ Drop Hazard Pin</button>
