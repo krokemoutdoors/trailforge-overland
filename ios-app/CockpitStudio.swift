@@ -131,6 +131,18 @@ struct OfflineCorridorPack: Codable, Identifiable {
     var nominalMegabytes: Int
     var savedAt: Date
     var vertexCount: Int
+    var areaSqMiles: Int? = nil
+    var minLat: Double? = nil
+    var maxLat: Double? = nil
+    var minLon: Double? = nil
+    var maxLon: Double? = nil
+
+    var areaBadge: String {
+        guard minLat != nil, maxLat != nil, minLon != nil, maxLon != nil else {
+            return "\(tier) • \(vertexCount) pts • saved on this iPhone"
+        }
+        return "\(name) • \(tier)"
+    }
 }
 
 struct RideSample: Identifiable {
@@ -266,9 +278,9 @@ enum CockpitStore {
         (decode([ParcelSnapshot].self, key: parcelsKey) ?? []).map(\.parcel)
     }
 
-    static func saveParcels(_ parcels: [PropertyParcel]) {
+    static func saveParcels(_ parcels: [PropertyParcel], limit: Int = 18) {
         guard !parcels.isEmpty else { return }
-        encode(parcels.prefix(18).map(ParcelSnapshot.init), key: parcelsKey)
+        encode(parcels.prefix(max(1, limit)).map(ParcelSnapshot.init), key: parcelsKey)
     }
 
     static func loadHazards() -> [DroppedHazard] {

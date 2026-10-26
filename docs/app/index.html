@@ -121,7 +121,8 @@
     #layerDrawer .field { margin-top: 6px; }
     .pack { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; background: #13202e; border-radius: 10px; padding: 8px; margin-top: 6px; }
     .pack small { grid-column: 1; color: var(--muted); font-size: 10px; }
-    .pack button { grid-column: 2; grid-row: 1 / span 2; border: 0; border-radius: 999px; background: #163044; color: white; font-size: 11px; font-weight: 800; padding: 6px 8px; }
+    .pack button, .pack-actions button { border: 0; border-radius: 999px; background: #163044; color: white; font-size: 11px; font-weight: 800; padding: 6px 8px; }
+    .pack-actions { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: 4px; }
     .profile { background: #101c2b; border-radius: 12px; padding: 8px; margin: 8px 0; }
     .profile-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 12px; }
     .profile-top span, .obs-key { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -356,8 +357,17 @@
           <label class="field"><span>Wildfires &amp; Stream Gauges <b data-read="hazards">80%</b></span><input type="range" min="0" max="100" step="1" value="80" data-overlay="hazards" aria-label="Wildfire and stream gauge opacity" /></label>
         </section>
         <section data-panel="corridor" hidden>
-          <div class="drawer-label">5-MILE BUFFER</div>
-          <div class="sub">USGS National Map public-domain tiles only. Standard Topo or Max Satellite, saved on this device along the selected trail, backcountry corridor, or active GPS route.</div>
+          <div class="drawer-label">AREA SIZE</div>
+          <div class="sub">Pan the map. 30, 100, and 250 sq mi boxes stay centered on the screen. Current Map View downloads the exact bounds on screen.</div>
+          <div class="seg" id="packAreaSeg" style="margin-top:8px;flex-wrap:wrap">
+            <button type="button" data-act="pack-area" data-id="corridor">5-Mi Route Corridor</button>
+            <button type="button" data-act="pack-area" data-id="sq30">30 sq mi Area</button>
+            <button type="button" data-act="pack-area" data-id="sq100">100 sq mi Area</button>
+            <button type="button" data-act="pack-area" data-id="sq250">250 sq mi Area</button>
+            <button type="button" data-act="pack-area" data-id="view">Current Map View</button>
+          </div>
+          <div class="sub" id="packEstimate"></div>
+          <div class="drawer-label">TILES</div>
           <div class="seg" style="margin-top:8px">
             <button type="button" data-act="pack-kind" data-id="topo">Standard Topo</button>
             <button type="button" data-act="pack-kind" data-id="satellite">Max Satellite</button>

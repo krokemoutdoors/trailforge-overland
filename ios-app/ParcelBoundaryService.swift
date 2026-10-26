@@ -156,8 +156,8 @@ final class ParcelBoundaryService: ObservableObject {
         }
     }
 
-    func replace(_ next: [PropertyParcel]) {
-        parcels = Array(next.prefix(18))
+    func replace(_ next: [PropertyParcel], limit: Int = 18) {
+        parcels = Array(next.prefix(max(1, limit)))
         if let selectedID, !parcels.contains(where: { $0.id == selectedID }) {
             self.selectedID = nil
         }
@@ -165,6 +165,20 @@ final class ParcelBoundaryService: ObservableObject {
 
     func parcel(at coordinate: CLLocationCoordinate2D) -> PropertyParcel? {
         parcels.first { $0.contains(coordinate) }
+    }
+}
+
+enum ParcelGridFetcher {
+    /// Loads public-land and county parcels on a grid so an offline area pack covers the box.
+    static func load(across points: [CLLocationCoordinate2D]) async -> [PropertyParcel] {
+        var merged: [String: PropertyParcel] = [:]
+        for point in points {
+            let loaded = await ParcelGIS.load(around: point)
+            for parcel in loaded {
+                merged[parcel.id] = parcel
+            }
+        }
+        return Array(merged.values)
     }
 }
 

@@ -139,6 +139,12 @@ struct MainCockpitView: View {
     @State private var downloadProgress: Double = 0
     @State private var downloadRunning = false
     @State private var offlineTier = "Standard Topo + Parcels"
+    @AppStorage("trailforge.offlineArea") private var offlineArea = "corridor"
+    @State private var screenCenter = CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352)
+    @State private var visibleRegion = MKCoordinateRegion(
+        center: CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352),
+        span: MKCoordinateSpan(latitudeDelta: 0.10, longitudeDelta: 0.10)
+    )
     @State private var gpxDraft = ""
     @State private var remoteHazards: [MapHazard] = []
     @State private var lastHazardFetch: CLLocationCoordinate2D?
@@ -237,7 +243,7 @@ struct MainCockpitView: View {
             return []
         }
         guard showParcelLayer else { return [] }
-        return Array(parcelService.parcels.prefix(18))
+        return Array(parcelService.parcels.prefix(48))
     }
 
     private var targetCoordinate: CLLocationCoordinate2D? {
@@ -311,6 +317,14 @@ struct MainCockpitView: View {
             hasher.combine(droppedPin.latitude)
             hasher.combine(droppedPin.longitude)
         }
+        hasher.combine(offlineArea)
+        if let box = liveOfflineBox() {
+            hasher.combine(Int(box.minLat * 1000))
+            hasher.combine(Int(box.maxLat * 1000))
+            hasher.combine(Int(box.minLon * 1000))
+            hasher.combine(Int(box.maxLon * 1000))
+        }
+        hasher.combine(offlinePacks.compactMap(\.minLat).map { String(format: "%.3f", $0) }.joined(separator: ","))
         return hasher.finalize()
     }
 
@@ -1437,6 +1451,8 @@ struct MainCockpitView: View {
             parcelService.refresh(around: center)
             refreshHazards(around: center)
         }
+        screenCenter = center
+        visibleRegion = region
         if meters(from: mapCenter, to: center) > 40 {
             mapCenter = center
         }
@@ -1888,8 +1904,13 @@ struct MainCockpitView: View {
             savedMarkers: savedMarkers,
             droppedPin: droppedPin?.coordinate,
             scrub: scrubCoordinate,
+            liveOfflineRing: liveOfflineBox()?.ring ?? [],
+            savedOfflineRings: savedOfflineRings,
             onCameraEnd: { region in
                 handleCameraEnd(region)
+            },
+            onCameraPreview: { region in
+                trackScreen(region)
             },
             onSpot: { spot in
                 Task { await beginRoute(to: spot) }
@@ -2262,25 +2283,34 @@ struct MainCockpitView: View {
         ZStack(alignment: .bottom) {
             Color.black.opacity(0.28)
                 .ignoresSafeArea()
-                .onTapGesture { showOffline = false }
+                .allowsHitTesting(false)
+            ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("5-Mile Route Corridor")
+                    Text("Offline Maps — Area Box & Route Corridor")
                         .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Close") { showOffline = false }
                         .font(.caption.bold())
                 }
-                Text("Saves this route, its camps, crux pins, and a live USFS boundary snapshot. The download keeps going in the background and posts a notification when the file is on this iPhone.")
+                Text("Pan the map. A 30, 100, or 250 sq mi box stays centered on the screen. Current Map View uses the exact bounds on screen.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                Picker("Pack", selection: $offlineTier) {
-                    Text("Route + USFS snapshot").tag("Route + USFS snapshot")
-                    Text("Route + parcels + hazards").tag("Route + parcels + hazards")
+                offlineAreaPicker
+                Text(offlineEstimateLine)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(.cyan)
+                    .fixedSize(horizontal: false, vertical: true)
+                if offlineArea == "corridor" {
+                    Picker("Pack", selection: $offlineTier) {
+                        Text("Route + USFS snapshot").tag("Route + USFS snapshot")
+                        Text("Route + parcels + hazards").tag("Route + parcels + hazards")
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
-                Button(downloadRunning ? "Saving corridor…" : "Download 5-Mile Corridor") {
-                    downloadCorridor()
+                Button(downloadRunning ? "Saving offline pack…" : offlineDownloadTitle) {
+                    downloadOffline()
                 }
                 .font(.headline)
                 .buttonStyle(.borderedProminent)
@@ -2289,32 +2319,99 @@ struct MainCockpitView: View {
                 ProgressView(value: downloadRunning ? downloadProgress : (offlinePacks.isEmpty ? 0.0 : 1.0))
                     .tint(.cyan)
                 if offlinePacks.isEmpty {
-                    Text("No saved corridor packs yet.")
+                    Text("No saved offline packs yet.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(offlinePacks) { pack in
-                        HStack {
+                        HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(pack.name)
                                     .font(.caption.bold())
-                                    .lineLimit(1)
-                                Text("\(pack.tier) • \(pack.vertexCount) pts • saved on this iPhone")
+                                    .lineLimit(2)
+                                Text(pack.areaBadge)
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
-                                    .lineLimit(2)
+                                    .lineLimit(3)
                             }
-                            Spacer()
-                            Button("Remove") { removePack(pack.id) }
-                                .font(.caption2.bold())
+                            Spacer(minLength: 8)
+                            VStack(spacing: 6) {
+                                if pack.minLat != nil {
+                                    Button("Focus on Map") { focusPack(pack) }
+                                        .font(.caption2.bold())
+                                }
+                                Button("Remove") { removePack(pack.id) }
+                                    .font(.caption2.bold())
+                            }
                         }
                     }
                 }
             }
             .padding(16)
+            }
+            .frame(maxHeight: 520)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 18))
             .padding()
+        }
+    }
+
+    private var offlineAreaPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("AREA SIZE")
+                .font(.caption2.bold())
+                .foregroundColor(.secondary)
+            ForEach(offlineAreaChoices, id: \.id) { choice in
+                Button(choice.title) { offlineArea = choice.id }
+                    .font(.caption.bold())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(offlineArea == choice.id ? Color.cyan : Color.white.opacity(0.12))
+                    .foregroundColor(offlineArea == choice.id ? .black : .white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    private var offlineAreaChoices: [(id: String, title: String)] {
+        let viewMiles = Int(OfflineAreaBox.visible(visibleRegion).squareMiles.rounded())
+        return [
+            ("corridor", "5-Mi Route Corridor"),
+            ("sq30", "30 sq mi Area"),
+            ("sq100", "100 sq mi Area"),
+            ("sq250", "250 sq mi Area"),
+            ("view", "Current Screen View (~\(viewMiles) sq mi)")
+        ]
+    }
+
+    private var offlineDownloadTitle: String {
+        guard let box = liveOfflineBox() else { return "Download 5-Mile Corridor" }
+        if offlineArea == "view" {
+            return "Download Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
+        }
+        return "Download \(offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : 30) sq mi Area"
+    }
+
+    private var offlineEstimateLine: String {
+        guard let box = liveOfflineBox() else {
+            return "5-mile buffer along the selected trail or active GPS route. Route, camps, crux pins, and a USFS snapshot."
+        }
+        let zooms = offlineZooms(for: box)
+        let tiles = OfflineAreaMath.tileCount(for: box, zooms: zooms)
+        let lookups = parcelGridCount(for: box)
+        let trails = trailsInside(box).count
+        let mb = max(4, tiles * 18 / 1024)
+        let label = offlineArea == "view"
+            ? "Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
+            : "\(offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : 30) sq mi Area"
+        return "\(label) · ~\(tiles) tiles · \(lookups) parcel lookups · \(trails) trails · ~\(mb) MB"
+    }
+
+    private var savedOfflineRings: [[CLLocationCoordinate2D]] {
+        offlinePacks.compactMap { pack in
+            guard let minLat = pack.minLat, let maxLat = pack.maxLat, let minLon = pack.minLon, let maxLon = pack.maxLon else { return nil }
+            return OfflineAreaBox(minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon).ring
         }
     }
 
@@ -3378,6 +3475,14 @@ struct MainCockpitView: View {
         publishCommunity()
     }
 
+    private func downloadOffline() {
+        if let box = liveOfflineBox() {
+            downloadArea(box)
+        } else {
+            downloadCorridor()
+        }
+    }
+
     private func downloadCorridor() {
         guard !downloadRunning else { return }
         downloadRunning = true
@@ -3394,6 +3499,96 @@ struct MainCockpitView: View {
             offlinePacks = packs
             downloadProgress = 1
             downloadRunning = false
+        }
+    }
+
+    private func downloadArea(_ box: OfflineAreaBox) {
+        guard !downloadRunning else { return }
+        downloadRunning = true
+        downloadProgress = 0.2
+        let satellite = basemap != .standard
+        let miles = Int(box.squareMiles.rounded())
+        let preset = offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : offlineArea == "sq30" ? 30 : miles
+        let label = offlineArea == "view" ? "Current Screen View (~\(miles) sq mi)" : "\(preset) sq mi Area"
+        let tier = (satellite ? "Satellite" : "Topo") + " + Parcels + Trails"
+        let spec = OfflineAreaDownload(
+            box: box,
+            areaSqMiles: preset,
+            label: label,
+            satellite: satellite,
+            gridColumns: offlineArea == "sq250" || box.squareMiles > 45 ? 4 : 3,
+            trails: trailsInside(box),
+            hazards: mapHazards.filter { box.contains($0.point) },
+            dropped: hazardPins.filter { box.contains($0.coordinate) }
+        )
+        CorridorDownloader.shared.start(trail: activeTrail, track: activeTrail.coordinates, hazards: spec.dropped, tier: tier, area: spec) { pack in
+            var packs = CockpitStore.loadPacks()
+            packs.insert(pack, at: 0)
+            CockpitStore.savePacks(Array(packs.prefix(12)))
+            offlinePacks = Array(packs.prefix(12))
+            let cached = CockpitStore.loadParcels()
+            if !cached.isEmpty {
+                parcelService.replace(cached, limit: 80)
+            }
+            downloadProgress = 1
+            downloadRunning = false
+        }
+    }
+
+    private func liveOfflineBox() -> OfflineAreaBox? {
+        switch offlineArea {
+        case "sq30":
+            return .square(center: screenCenter, squareMiles: 30)
+        case "sq100":
+            return .square(center: screenCenter, squareMiles: 100)
+        case "sq250":
+            return .square(center: screenCenter, squareMiles: 250)
+        case "view":
+            return .visible(visibleRegion)
+        default:
+            return nil
+        }
+    }
+
+    private func offlineZooms(for box: OfflineAreaBox) -> [Int] {
+        if offlineArea == "sq30" || box.squareMiles <= 45 { return [11, 12, 13, 14, 15] }
+        return [11, 12, 13, 14]
+    }
+
+    private func parcelGridCount(for box: OfflineAreaBox) -> Int {
+        let columns = offlineArea == "sq250" || box.squareMiles > 45 ? 4 : 3
+        return columns * columns
+    }
+
+    private func trailsInside(_ box: OfflineAreaBox) -> [OverlandTrail] {
+        Array(USATrailAtlas.all.filter { trail in
+            box.contains(trail.centerCoordinate) || trail.coordinates.contains(where: box.contains)
+        }.prefix(40))
+    }
+
+    private func trackScreen(_ region: MKCoordinateRegion) {
+        guard offlineArea != "corridor" else { return }
+        let moved = meters(from: screenCenter, to: region.center)
+        let spanChanged = abs(region.span.latitudeDelta - visibleRegion.span.latitudeDelta) > 0.002
+            || abs(region.span.longitudeDelta - visibleRegion.span.longitudeDelta) > 0.002
+        guard moved > 35 || spanChanged else { return }
+        screenCenter = region.center
+        visibleRegion = region
+        if moved > 40 {
+            mapCenter = region.center
+        }
+    }
+
+    private func focusPack(_ pack: OfflineCorridorPack) {
+        guard let minLat = pack.minLat, let maxLat = pack.maxLat, let minLon = pack.minLon, let maxLon = pack.maxLon else { return }
+        let box = OfflineAreaBox(minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
+        showOffline = false
+        screenCenter = box.center
+        visibleRegion = box.region
+        pushCamera(.region(box.region))
+        if let parcels = CorridorDownloader.parcels(in: pack.id), !parcels.isEmpty {
+            parcelService.replace(parcels, limit: 80)
+            CockpitStore.saveParcels(parcels, limit: 80)
         }
     }
 
@@ -3759,7 +3954,10 @@ private struct StableRouteMap: View, Equatable {
     var savedMarkers: [SavedMarker]
     var droppedPin: CLLocationCoordinate2D?
     var scrub: CLLocationCoordinate2D?
+    var liveOfflineRing: [CLLocationCoordinate2D]
+    var savedOfflineRings: [[CLLocationCoordinate2D]]
     var onCameraEnd: (MKCoordinateRegion) -> Void
+    var onCameraPreview: (MKCoordinateRegion) -> Void
     var onSpot: (CampSpot) -> Void
     var onInspect: (CLLocationCoordinate2D) -> Void
     var onSelectParcel: (String) -> Void
@@ -3832,6 +4030,16 @@ private struct StableRouteMap: View, Equatable {
             if recordedLine.count >= 2 {
                 MapPolyline(coordinates: recordedLine)
                     .stroke(Color(red: 0.93, green: 0.11, blue: 0.36), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+            }
+            ForEach(savedOfflineRings.indices, id: \.self) { index in
+                MapPolyline(coordinates: savedOfflineRings[index])
+                    .stroke(Color.yellow.opacity(0.9), style: StrokeStyle(lineWidth: 2, dash: [4, 6]))
+            }
+            if liveOfflineRing.count >= 4 {
+                MapPolygon(coordinates: liveOfflineRing)
+                    .foregroundStyle(Color.cyan.opacity(0.14))
+                MapPolyline(coordinates: liveOfflineRing)
+                    .stroke(Color.cyan, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
             }
             if let droppedPin {
                 Annotation("Dropped Pin", coordinate: droppedPin) {
@@ -3939,6 +4147,9 @@ private struct StableRouteMap: View, Equatable {
             MapUserLocationButton()
             MapCompass()
             MapScaleView()
+        }
+        .onMapCameraChange(frequency: .continuous) { context in
+            onCameraPreview(context.region)
         }
         .onMapCameraChange(frequency: .onEnd) { context in
             onCameraEnd(context.region)

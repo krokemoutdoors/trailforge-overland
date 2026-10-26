@@ -2,6 +2,7 @@ import AVFoundation
 import CoreImage
 import CoreLocation
 import Foundation
+import MapKit
 import UIKit
 import UserNotifications
 
@@ -412,6 +413,108 @@ final class HazardNoteRecorder: NSObject, ObservableObject {
     }
 }
 
+struct OfflineAreaBox: Equatable {
+    var minLat: Double
+    var maxLat: Double
+    var minLon: Double
+    var maxLon: Double
+
+    var center: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
+    }
+
+    var squareMiles: Double {
+        let mid = (minLat + maxLat) / 2
+        let height = (maxLat - minLat) * 111_320 / 1609.344
+        let width = (maxLon - minLon) * 111_320 * cos(mid * .pi / 180) / 1609.344
+        return max(0, height * width)
+    }
+
+    var corners: [CLLocationCoordinate2D] {
+        [
+            CLLocationCoordinate2D(latitude: minLat, longitude: minLon),
+            CLLocationCoordinate2D(latitude: minLat, longitude: maxLon),
+            CLLocationCoordinate2D(latitude: maxLat, longitude: maxLon),
+            CLLocationCoordinate2D(latitude: maxLat, longitude: minLon)
+        ]
+    }
+
+    var ring: [CLLocationCoordinate2D] {
+        corners + [corners[0]]
+    }
+
+    func contains(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        coordinate.latitude >= minLat && coordinate.latitude <= maxLat
+            && coordinate.longitude >= minLon && coordinate.longitude <= maxLon
+    }
+
+    var region: MKCoordinateRegion {
+        MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(
+                latitudeDelta: max(0.02, (maxLat - minLat) * 1.08),
+                longitudeDelta: max(0.02, (maxLon - minLon) * 1.08)
+            )
+        )
+    }
+
+    static func square(center: CLLocationCoordinate2D, squareMiles: Double) -> OfflineAreaBox {
+        let half = sqrt(max(squareMiles, 0.1)) * 1609.344 / 2
+        let dLat = half / 111_320
+        let cosLat = max(0.2, cos(center.latitude * .pi / 180))
+        let dLon = half / (111_320 * cosLat)
+        return OfflineAreaBox(
+            minLat: center.latitude - dLat,
+            maxLat: center.latitude + dLat,
+            minLon: center.longitude - dLon,
+            maxLon: center.longitude + dLon
+        )
+    }
+
+    static func visible(_ region: MKCoordinateRegion) -> OfflineAreaBox {
+        OfflineAreaBox(
+            minLat: region.center.latitude - region.span.latitudeDelta / 2,
+            maxLat: region.center.latitude + region.span.latitudeDelta / 2,
+            minLon: region.center.longitude - region.span.longitudeDelta / 2,
+            maxLon: region.center.longitude + region.span.longitudeDelta / 2
+        )
+    }
+}
+
+struct OfflineAreaDownload {
+    var box: OfflineAreaBox
+    var areaSqMiles: Int
+    var label: String
+    var satellite: Bool
+    var gridColumns: Int
+    var trails: [OverlandTrail]
+    var hazards: [MapHazard]
+    var dropped: [DroppedHazard]
+}
+
+enum OfflineAreaMath {
+    static func tileCount(for box: OfflineAreaBox, zooms: [Int], cap: Int = 600) -> Int {
+        var count = 0
+        for zoom in zooms {
+            let n = Double(1 << zoom)
+            let minX = Int(floor((box.minLon + 180) / 360 * n))
+            let maxX = Int(floor((box.maxLon + 180) / 360 * n))
+            let yNorth = latTile(box.maxLat, n: n)
+            let ySouth = latTile(box.minLat, n: n)
+            let tiles = (abs(maxX - minX) + 1) * (abs(ySouth - yNorth) + 1)
+            count += max(0, tiles)
+            if count >= cap { return cap }
+        }
+        return count
+    }
+
+    private static func latTile(_ lat: Double, n: Double) -> Int {
+        let rad = lat * .pi / 180
+        let y = (1 - log(tan(rad) + 1 / cos(rad)) / .pi) / 2 * n
+        return Int(floor(y))
+    }
+}
+
 final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
     static let shared = CorridorDownloader()
 
@@ -431,10 +534,18 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
         track: [CLLocationCoordinate2D],
         hazards: [DroppedHazard],
         tier: String,
+        area: OfflineAreaDownload? = nil,
         done: @escaping (OfflineCorridorPack) -> Void
     ) {
         let folder = Self.directory().appendingPathComponent("\(trail.id)-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let area {
+            Task {
+                let record = await self.prepareArea(folder: folder, trail: trail, area: area, tier: tier)
+                await MainActor.run { done(record) }
+            }
+            return
+        }
         let gpx = TripPackageBuilder.gpx(trail: trail, track: track, hazards: hazards)
         try? gpx.data(using: .utf8)?.write(to: folder.appendingPathComponent("route.gpx"))
         let record = OfflineCorridorPack(
@@ -452,6 +563,182 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
             done(record)
         }
         let center = trail.centerCoordinate
+        guard let url = Self.usfsURL(center) else {
+            finish(success: true)
+            return
+        }
+        let task = session.downloadTask(with: url)
+        task.resume()
+    }
+
+    static func parcels(in packID: String) -> [PropertyParcel]? {
+        let url = directory().appendingPathComponent(packID).appendingPathComponent("parcels.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return (try? JSONDecoder().decode([ParcelSnapshot].self, from: data))?.map(\.parcel)
+    }
+
+    private func prepareArea(
+        folder: URL,
+        trail: OverlandTrail,
+        area: OfflineAreaDownload,
+        tier: String
+    ) async -> OfflineCorridorPack {
+        let box = area.box
+        let points = Self.grid(box, columns: area.gridColumns)
+        let parcels = await ParcelGridFetcher.load(across: points)
+        if let data = try? JSONEncoder().encode(parcels.map(ParcelSnapshot.init)) {
+            try? data.write(to: folder.appendingPathComponent("parcels.json"))
+            CockpitStore.saveParcels(parcels, limit: 80)
+        }
+        let gpx = Self.areaGPX(trails: area.trails, hazards: area.hazards, dropped: area.dropped)
+        try? gpx.data(using: .utf8)?.write(to: folder.appendingPathComponent("route.gpx"))
+        let payload: [String: Any] = [
+            "label": area.label,
+            "areaSqMiles": area.areaSqMiles,
+            "minLat": box.minLat,
+            "maxLat": box.maxLat,
+            "minLon": box.minLon,
+            "maxLon": box.maxLon,
+            "satellite": area.satellite,
+            "parcelCount": parcels.count,
+            "trailCount": area.trails.count,
+            "trails": area.trails.map { ["id": $0.id, "name": $0.name, "state": $0.state] as [String: Any] },
+            "camps": area.trails.flatMap { trail in
+                trail.campSpots.map { ["name": $0.name, "lat": $0.lat, "lon": $0.lon, "slope": $0.slopeDeg] as [String: Any] }
+            },
+            "crux": area.trails.flatMap { trail in
+                CruxCatalog.pins(for: trail).map { ["title": $0.title, "lat": $0.coordinate.latitude, "lon": $0.coordinate.longitude] as [String: Any] }
+            },
+            "hazards": area.hazards.map { ["id": $0.id, "title": $0.title, "lat": $0.point.latitude, "lon": $0.point.longitude] as [String: Any] }
+                + area.dropped.map { ["id": $0.id, "title": $0.category, "lat": $0.latitude, "lon": $0.longitude] as [String: Any] }
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
+            try? data.write(to: folder.appendingPathComponent("area-pack.json"))
+        }
+        let zooms = area.areaSqMiles <= 45 ? [11, 12, 13, 14, 15] : [11, 12, 13, 14]
+        let tileMeta: [String: Any] = [
+            "zooms": zooms,
+            "tileEstimate": OfflineAreaMath.tileCount(for: box, zooms: zooms),
+            "style": area.satellite ? "hybrid" : "standard"
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: tileMeta, options: [.prettyPrinted]) {
+            try? data.write(to: folder.appendingPathComponent("tiles.json"))
+        }
+        await Self.writeSnapshot(box.region, mapType: area.satellite ? .hybrid : .satellite, to: folder.appendingPathComponent("snapshot.png"))
+        await Self.writeSnapshot(box.region, mapType: .standard, to: folder.appendingPathComponent("snapshot-standard.png"))
+        for (index, quadrant) in Self.quadrants(box).enumerated() {
+            await Self.writeSnapshot(quadrant.region, mapType: .satellite, to: folder.appendingPathComponent("warm-\(index).png"), size: CGSize(width: 640, height: 640))
+        }
+        if let url = Self.usfsURL(box.center) {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 12
+            if let (data, _) = try? await URLSession.shared.data(for: request) {
+                try? data.write(to: folder.appendingPathComponent("usfs-boundary.json"))
+            }
+        }
+        let bytes = Self.folderBytes(folder)
+        let record = OfflineCorridorPack(
+            id: folder.lastPathComponent,
+            name: area.label,
+            trailID: area.trails.first?.id ?? trail.id,
+            tier: tier,
+            nominalMegabytes: max(1, bytes / (1024 * 1024)),
+            savedAt: Date(),
+            vertexCount: area.trails.reduce(0) { $0 + $1.coordinates.count },
+            areaSqMiles: area.areaSqMiles,
+            minLat: box.minLat,
+            maxLat: box.maxLat,
+            minLon: box.minLon,
+            maxLon: box.maxLon
+        )
+        packRecord = record
+        let content = UNMutableNotificationContent()
+        content.title = "Offline area pack ready"
+        content.body = "\(area.label) is saved on this iPhone."
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        return record
+    }
+
+    private static func grid(_ box: OfflineAreaBox, columns: Int) -> [CLLocationCoordinate2D] {
+        let count = max(2, min(columns, 4))
+        var points: [CLLocationCoordinate2D] = []
+        for row in 0..<count {
+            for column in 0..<count {
+                let lat = box.minLat + (box.maxLat - box.minLat) * (Double(row) + 0.5) / Double(count)
+                let lon = box.minLon + (box.maxLon - box.minLon) * (Double(column) + 0.5) / Double(count)
+                points.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
+            }
+        }
+        return points
+    }
+
+    private static func quadrants(_ box: OfflineAreaBox) -> [OfflineAreaBox] {
+        let midLat = (box.minLat + box.maxLat) / 2
+        let midLon = (box.minLon + box.maxLon) / 2
+        return [
+            OfflineAreaBox(minLat: midLat, maxLat: box.maxLat, minLon: box.minLon, maxLon: midLon),
+            OfflineAreaBox(minLat: midLat, maxLat: box.maxLat, minLon: midLon, maxLon: box.maxLon),
+            OfflineAreaBox(minLat: box.minLat, maxLat: midLat, minLon: box.minLon, maxLon: midLon),
+            OfflineAreaBox(minLat: box.minLat, maxLat: midLat, minLon: midLon, maxLon: box.maxLon)
+        ]
+    }
+
+    private static func writeSnapshot(_ region: MKCoordinateRegion, mapType: MKMapType, to url: URL, size: CGSize = CGSize(width: 900, height: 900)) async {
+        let options = MKMapSnapshotter.Options()
+        options.region = region
+        options.size = size
+        options.mapType = mapType
+        let shot = MKMapSnapshotter(options: options)
+        let image: UIImage? = await withCheckedContinuation { continuation in
+            shot.start { snapshot, _ in
+                continuation.resume(returning: snapshot?.image)
+            }
+        }
+        _ = shot
+        guard let data = image?.pngData() else { return }
+        try? data.write(to: url)
+    }
+
+    private static func areaGPX(trails: [OverlandTrail], hazards: [MapHazard], dropped: [DroppedHazard]) -> String {
+        var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<gpx version=\"1.1\" creator=\"TrailForge Overland\">\n"
+        for trail in trails {
+            for camp in trail.campSpots {
+                xml += "<wpt lat=\"\(camp.lat)\" lon=\"\(camp.lon)\"><name>\(xmlText(camp.name))</name><type>Camp</type></wpt>\n"
+            }
+            for pin in CruxCatalog.pins(for: trail) {
+                xml += "<wpt lat=\"\(pin.coordinate.latitude)\" lon=\"\(pin.coordinate.longitude)\"><name>\(xmlText(pin.title))</name><type>Crux</type></wpt>\n"
+            }
+            xml += "<trk><name>\(xmlText(trail.name))</name><trkseg>\n"
+            for point in trail.coordinates.prefix(180) {
+                xml += "<trkpt lat=\"\(point.latitude)\" lon=\"\(point.longitude)\"></trkpt>\n"
+            }
+            xml += "</trkseg></trk>\n"
+        }
+        for hazard in hazards {
+            xml += "<wpt lat=\"\(hazard.point.latitude)\" lon=\"\(hazard.point.longitude)\"><name>\(xmlText(hazard.title))</name><type>Hazard</type></wpt>\n"
+        }
+        for pin in dropped {
+            xml += "<wpt lat=\"\(pin.latitude)\" lon=\"\(pin.longitude)\"><name>\(xmlText(pin.category))</name><type>Hazard</type></wpt>\n"
+        }
+        xml += "</gpx>\n"
+        return xml
+    }
+
+    private static func xmlText(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    private static func folderBytes(_ folder: URL) -> Int {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return urls.reduce(0) { total, url in
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return total + size
+        }
+    }
+
+    private static func usfsURL(_ center: CLLocationCoordinate2D) -> URL? {
         var components = URLComponents(string: "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query")
         components?.queryItems = [
             URLQueryItem(name: "geometry", value: "\(center.longitude),\(center.latitude)"),
@@ -462,12 +749,7 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
             URLQueryItem(name: "returnGeometry", value: "false"),
             URLQueryItem(name: "f", value: "json")
         ]
-        guard let url = components?.url else {
-            finish(success: true)
-            return
-        }
-        let task = session.downloadTask(with: url)
-        task.resume()
+        return components?.url
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {

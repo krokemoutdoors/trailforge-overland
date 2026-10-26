@@ -93,6 +93,7 @@
     reports: loadReports(),
     packs: loadPacks(),
     packKind: localStorage.getItem("tf-pack-kind") === "satellite" ? "satellite" : "topo",
+    packArea: localStorage.getItem("tf-pack-area") || "corridor",
     packBusy: false,
     scrubIndex: null,
     scrubTrailId: null,
@@ -144,6 +145,7 @@
   let communityChannel = null;
   let smaLayer;
   let offlineLayer;
+  let areaPreviewLayer;
   let hybridLayer;
   let imageryLayer;
   let topoLayer;
@@ -1977,6 +1979,23 @@
       renderDrawer();
       return;
     }
+    if (act === "pack-area") {
+      const id = button.dataset.id;
+      state.packArea = id === "sq30" || id === "sq100" || id === "sq250" || id === "view" ? id : "corridor";
+      localStorage.setItem("tf-pack-area", state.packArea);
+      refreshAreaChrome();
+      renderDrawer();
+      return;
+    }
+    if (act === "focus-pack") {
+      const pack = state.packs.find(function (item) { return item.id === button.dataset.id; });
+      if (pack && map && pack.minLat != null) {
+        map.fitBounds([[pack.minLat, pack.minLon], [pack.maxLat, pack.maxLon]], { padding: [28, 28] });
+        state.drawer = null;
+        renderDrawer();
+      }
+      return;
+    }
     if (act === "report") { queueReport(button.dataset.id); return; }
     if (act === "refresh-live") { refreshCommunity(true); return; }
     if (act === "still-here") { confirmCommunity(button.dataset.id); return; }
@@ -3089,7 +3108,7 @@
     drawer.querySelectorAll("[data-panel]").forEach(function (panel) {
       panel.hidden = panel.dataset.panel !== state.drawer;
     });
-    const titles = { layers: "Layers & Opacity", corridor: "5-Mile Corridor", plot: "Custom Route" };
+    const titles = { layers: "Layers & Opacity", corridor: "Offline Maps — Area Box & Route Corridor", plot: "Custom Route" };
     const title = document.getElementById("drawerTitle");
     if (title) title.textContent = titles[state.drawer] || "Layers";
     drawer.querySelectorAll("[data-act=basemap]").forEach(function (button) {
@@ -3098,6 +3117,16 @@
     drawer.querySelectorAll("[data-act=pack-kind]").forEach(function (button) {
       button.classList.toggle("on", button.dataset.id === state.packKind);
     });
+    drawer.querySelectorAll("[data-act=pack-area]").forEach(function (button) {
+      button.classList.toggle("on", button.dataset.id === state.packArea);
+      if (button.dataset.id === "view") button.textContent = currentScreenLabel();
+    });
+    const downloadBtn = drawer.querySelector("[data-act=download-corridor]");
+    if (downloadBtn) {
+      downloadBtn.textContent = state.packArea === "corridor" ? "Download 5-Mile Route Corridor" : "Download " + areaChoiceLabel();
+    }
+    const estimate = document.getElementById("packEstimate");
+    if (estimate) estimate.textContent = areaEstimateText();
     drawer.querySelectorAll("[data-act=plot-mode]").forEach(function (button) {
       button.classList.toggle("on", button.dataset.id === state.plotMode);
     });
@@ -3121,9 +3150,10 @@
     const list = document.getElementById("packList");
     if (list) {
       list.innerHTML = state.packs.length ? state.packs.map(function (pack) {
-        const label = pack.kind === "satellite" ? "Max Satellite" : "Standard Topo";
-        return '<div class="pack"><b>' + esc(pack.name) + "</b><small>" + esc(label) + " · " + pack.tiles + " tiles</small><button type=\"button\" data-act=\"drop-pack\" data-id=\"" + esc(pack.id) + "\">Remove</button></div>";
-      }).join("") : '<div class="sub">No corridor saved on this device yet.</div>';
+        const badge = pack.badge || ((pack.kind === "satellite" ? "Max Satellite" : "Standard Topo") + " · " + pack.tiles + " tiles");
+        const focus = pack.minLat != null ? '<button type="button" data-act="focus-pack" data-id="' + esc(pack.id) + '">Focus on Map</button>' : "";
+        return '<div class="pack"><b>' + esc(pack.name) + "</b><small>" + esc(badge) + "</small><div class=\"pack-actions\">" + focus + '<button type="button" data-act="drop-pack" data-id="' + esc(pack.id) + '">Remove</button></div></div>';
+      }).join("") : '<div class="sub">No offline pack saved on this device yet.</div>';
     }
     const plotBtn = document.querySelector('#rail [data-act="plot"]');
     const layerBtn = document.querySelector('#rail [data-act="layers"]');
@@ -4000,6 +4030,173 @@
     return Promise.race([request, timeout]).finally(function () { clearTimeout(timer); });
   }
 
+  function squareBounds(lat, lon, sqMiles) {
+    const half = Math.sqrt(Math.max(sqMiles, 0.1)) * 1609.344 / 2;
+    const dLat = half / 111320;
+    const dLon = half / (111320 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+    return { minLat: lat - dLat, maxLat: lat + dLat, minLon: lon - dLon, maxLon: lon + dLon };
+  }
+
+  function boxSqMiles(box) {
+    const mid = (box.minLat + box.maxLat) / 2;
+    const height = (box.maxLat - box.minLat) * 111320 / 1609.344;
+    const width = (box.maxLon - box.minLon) * 111320 * Math.cos(mid * Math.PI / 180) / 1609.344;
+    return Math.max(0, height * width);
+  }
+
+  function currentViewBounds() {
+    if (!map) return null;
+    const bounds = map.getBounds();
+    return { minLat: bounds.getSouth(), maxLat: bounds.getNorth(), minLon: bounds.getWest(), maxLon: bounds.getEast() };
+  }
+
+  function liveAreaBox() {
+    if (!map || state.packArea === "corridor") return null;
+    if (state.packArea === "view") {
+      const box = currentViewBounds();
+      if (!box) return null;
+      box.sqMiles = boxSqMiles(box);
+      box.mode = "view";
+      return box;
+    }
+    const sqMiles = state.packArea === "sq100" ? 100 : state.packArea === "sq250" ? 250 : 30;
+    const center = map.getCenter();
+    const box = squareBounds(center.lat, center.lng, sqMiles);
+    box.sqMiles = sqMiles;
+    box.mode = state.packArea;
+    return box;
+  }
+
+  function currentScreenLabel() {
+    const bounds = currentViewBounds();
+    const miles = bounds ? Math.round(boxSqMiles(bounds)) : 0;
+    return "Current Screen View (~" + miles + " sq mi)";
+  }
+
+  function areaChoiceLabel() {
+    const box = liveAreaBox();
+    if (!box) return "5-Mi Route Corridor";
+    if (box.mode === "view") return currentScreenLabel();
+    return box.sqMiles + " sq mi Area";
+  }
+
+  function areaZooms(box) {
+    if (!box || box.mode === "sq30" || box.sqMiles <= 45) return [11, 12, 13, 14, 15];
+    return [11, 12, 13, 14];
+  }
+
+  function lonTile(lon, zoom) {
+    const n = 2 ** zoom;
+    return Math.floor((lon + 180) / 360 * n);
+  }
+
+  function latTile(lat, zoom) {
+    const n = 2 ** zoom;
+    const rad = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2 * n);
+  }
+
+  function areaBoxTiles(center, sqMiles, zoomLevels, bounds) {
+    const box = bounds || squareBounds(center.lat, center.lon, sqMiles);
+    const tiles = [];
+    const seen = new Set();
+    let capped = false;
+    const levels = zoomLevels && zoomLevels.length ? zoomLevels : [11, 12, 13, 14];
+    for (let index = 0; index < levels.length && !capped; index += 1) {
+      const zoom = levels[index];
+      const n = 2 ** zoom;
+      let minX = lonTile(box.minLon, zoom);
+      let maxX = lonTile(box.maxLon, zoom);
+      let northY = latTile(box.maxLat, zoom);
+      let southY = latTile(box.minLat, zoom);
+      if (minX > maxX) { const swap = minX; minX = maxX; maxX = swap; }
+      if (northY > southY) { const swap = northY; northY = southY; southY = swap; }
+      for (let x = minX; x <= maxX && !capped; x += 1) {
+        for (let y = northY; y <= southY; y += 1) {
+          if (y < 0 || y >= n) continue;
+          const wrapped = ((x % n) + n) % n;
+          const key = zoom + "/" + wrapped + "/" + y;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          tiles.push({ x: wrapped, y: y, z: zoom });
+          if (tiles.length >= 600) { capped = true; break; }
+        }
+      }
+    }
+    return { tiles: tiles, capped: capped, bounds: box };
+  }
+
+  function featuresInside(box) {
+    const trails = allTrails().filter(function (trail) {
+      const lat = Number(trail.lat);
+      const lon = Number(trail.lon);
+      if (Number.isFinite(lat) && Number.isFinite(lon) && lat >= box.minLat && lat <= box.maxLat && lon >= box.minLon && lon <= box.maxLon) return true;
+      return (trail.coordinates || []).some(function (point) {
+        return point[0] >= box.minLat && point[0] <= box.maxLat && point[1] >= box.minLon && point[1] <= box.maxLon;
+      });
+    }).slice(0, 40);
+    const camps = [];
+    trails.forEach(function (trail) {
+      (trail.flatCamps || []).forEach(function (camp) {
+        if (camp.lat >= box.minLat && camp.lat <= box.maxLat && camp.lon >= box.minLon && camp.lon <= box.maxLon) camps.push(camp);
+      });
+    });
+    const parcels = (state.parcelCells || []).filter(function (cell) {
+      let lat = Number(cell.lat);
+      let lon = Number(cell.lon);
+      if (!Number.isFinite(lat) && cell.ring && cell.ring.length) {
+        lat = Number(cell.ring[0][0]);
+        lon = Number(cell.ring[0][1]);
+      }
+      return Number.isFinite(lat) && Number.isFinite(lon) && lat >= box.minLat && lat <= box.maxLat && lon >= box.minLon && lon <= box.maxLon;
+    });
+    return { trails: trails, camps: camps, parcels: parcels };
+  }
+
+  function areaEstimateText() {
+    const box = liveAreaBox();
+    if (!box) return "5-mile buffer along the selected trail, backcountry corridor, or active GPS route.";
+    const plan = areaBoxTiles({ lat: (box.minLat + box.maxLat) / 2, lon: (box.minLon + box.maxLon) / 2 }, box.sqMiles, areaZooms(box), box);
+    const inside = featuresInside(box);
+    const mb = Math.max(1, Math.round(plan.tiles.length * 20 / 1024));
+    const cap = plan.capped ? " · capped at 600 tiles" : "";
+    return areaChoiceLabel() + " · ~" + plan.tiles.length + " tiles · " + inside.parcels.length + " parcels · " + inside.trails.length + " trails · ~" + mb + " MB" + cap;
+  }
+
+  function syncAreaPreview() {
+    if (!map || !window.L) return;
+    if (!areaPreviewLayer) areaPreviewLayer = L.layerGroup().addTo(map);
+    areaPreviewLayer.clearLayers();
+    state.packs.forEach(function (pack) {
+      if (pack.minLat == null) return;
+      L.rectangle([[pack.minLat, pack.minLon], [pack.maxLat, pack.maxLon]], {
+        color: "#e2b657",
+        weight: 2,
+        dashArray: "4 6",
+        fill: false,
+        interactive: false
+      }).addTo(areaPreviewLayer);
+    });
+    const box = liveAreaBox();
+    if (!box) return;
+    L.rectangle([[box.minLat, box.minLon], [box.maxLat, box.maxLon]], {
+      color: "#3ecbff",
+      weight: 3,
+      dashArray: "8 6",
+      fillColor: "#3ecbff",
+      fillOpacity: 0.12,
+      interactive: false
+    }).addTo(areaPreviewLayer);
+  }
+
+  function refreshAreaChrome() {
+    syncAreaPreview();
+    const estimate = document.getElementById("packEstimate");
+    if (estimate) estimate.textContent = areaEstimateText();
+    const viewBtn = document.querySelector('[data-act="pack-area"][data-id="view"]');
+    if (viewBtn) viewBtn.textContent = currentScreenLabel();
+  }
+
   function corridorLine() {
     if (state.route) {
       const line = roadAndSpur(state.route);
@@ -4052,8 +4249,36 @@
     };
   }
 
+  async function fetchTilePlan(plan, kind) {
+    const keys = [];
+    let bytes = 0;
+    let failed = 0;
+    const root = kind === "satellite"
+      ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
+      : "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/";
+    const status = document.getElementById("packStatus");
+    for (let index = 0; index < plan.tiles.length; index += 3) {
+      const batch = plan.tiles.slice(index, index + 3);
+      await Promise.all(batch.map(function (tile) {
+        const key = kind + "/" + tile.z + "/" + tile.x + "/" + tile.y;
+        return idbGet(key).then(function (existing) {
+          if (existing) { keys.push(key); bytes += existing.size || 0; return; }
+          return netBlob(root + tile.z + "/" + tile.y + "/" + tile.x).then(function (blob) {
+            return idbPut(key, blob).then(function () { keys.push(key); bytes += blob.size || 0; });
+          });
+        }).catch(function () { failed += 1; });
+      }));
+      if (status) status.textContent = Math.min(plan.tiles.length, index + batch.length) + " / " + plan.tiles.length + " tiles";
+    }
+    return { keys: keys, bytes: bytes, failed: failed };
+  }
+
   async function downloadCorridor() {
-    if (state.packBusy) { toast("A corridor download is already running"); return; }
+    if (state.packBusy) { toast("An offline download is already running"); return; }
+    if (state.packArea !== "corridor") {
+      await downloadAreaPack();
+      return;
+    }
     const line = corridorLine();
     if (!line) { toast("Select a trail or start a route first"); return; }
     const kind = state.packKind === "satellite" ? "satellite" : "topo";
@@ -4065,30 +4290,15 @@
     if (!plan.tiles.length) { toast("No tiles for this corridor"); return; }
     state.packBusy = true;
     renderDrawer();
-    const status = document.getElementById("packStatus");
-    const keys = [];
-    let bytes = 0;
-    let failed = 0;
-    const root = kind === "satellite"
-      ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"
-      : "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/";
+    let saved = { keys: [], bytes: 0, failed: 0 };
     try {
-      for (let index = 0; index < plan.tiles.length; index += 3) {
-        const batch = plan.tiles.slice(index, index + 3);
-        await Promise.all(batch.map(function (tile) {
-          const key = kind + "/" + tile.z + "/" + tile.x + "/" + tile.y;
-          return idbGet(key).then(function (existing) {
-            if (existing) { keys.push(key); bytes += existing.size || 0; return; }
-            return netBlob(root + tile.z + "/" + tile.y + "/" + tile.x).then(function (blob) {
-              return idbPut(key, blob).then(function () { keys.push(key); bytes += blob.size || 0; });
-            });
-          }).catch(function () { failed += 1; });
-        }));
-        if (status) status.textContent = Math.min(plan.tiles.length, index + batch.length) + " / " + plan.tiles.length + " tiles";
-      }
+      saved = await fetchTilePlan(plan, kind);
     } finally {
       state.packBusy = false;
     }
+    const keys = saved.keys;
+    const bytes = saved.bytes;
+    const failed = saved.failed;
     if (keys.length) {
       state.packs.unshift({
         id: "pack-" + Date.now(),
@@ -4114,6 +4324,66 @@
       }
     }
     else toast(failed ? "Corridor download failed" : "No tiles saved");
+  }
+
+  async function downloadAreaPack() {
+    const box = liveAreaBox();
+    if (!box || !map) { toast("Pan the map to choose an area first"); return; }
+    const kind = state.packKind === "satellite" ? "satellite" : "topo";
+    const center = map.getCenter();
+    const plan = areaBoxTiles({ lat: center.lat, lon: center.lng }, box.sqMiles, areaZooms(box), box);
+    if (!plan.tiles.length) { toast("No tiles in this area"); return; }
+    if (window.Notification && Notification.permission === "default") {
+      try { Notification.requestPermission(); } catch (error) { /* Permission stays at the default. */ }
+    }
+    const inside = featuresInside(box);
+    const label = areaChoiceLabel();
+    const style = kind === "satellite" ? "Satellite" : "Topo";
+    state.packBusy = true;
+    renderDrawer();
+    let saved = { keys: [], bytes: 0, failed: 0 };
+    try {
+      saved = await fetchTilePlan(plan, kind);
+    } finally {
+      state.packBusy = false;
+    }
+    if (saved.keys.length) {
+      state.packs.unshift({
+        id: "pack-" + Date.now(),
+        name: label,
+        kind: kind,
+        zoom: plan.tiles[0].z,
+        tiles: saved.keys.length,
+        bytes: saved.bytes,
+        created: Date.now(),
+        trailId: inside.trails[0] ? inside.trails[0].id : state.selectedId,
+        keys: saved.keys,
+        mode: box.mode,
+        areaSqMiles: Math.round(box.sqMiles),
+        minLat: box.minLat,
+        maxLat: box.maxLat,
+        minLon: box.minLon,
+        maxLon: box.maxLon,
+        parcelCount: inside.parcels.length,
+        trailCount: inside.trails.length,
+        campCount: inside.camps.length,
+        badge: label + " • " + style + " + Parcels + Trails",
+        trails: inside.trails.map(function (trail) { return { id: trail.id, name: trail.name }; }),
+        parcels: inside.parcels.slice(0, 80)
+      });
+      state.packs = state.packs.slice(0, 12);
+      savePacks();
+    }
+    if (offlineLayer) offlineLayer.redraw();
+    syncAreaPreview();
+    renderDrawer();
+    const cap = plan.capped ? " Capped at 600 tiles." : "";
+    if (saved.keys.length) {
+      toast("Saved " + saved.keys.length + " tiles for " + label + "." + cap);
+      if (window.Notification && Notification.permission === "granted") {
+        try { new Notification("TrailForge offline area ready", { body: label + " · " + saved.keys.length + " tiles" }); } catch (error) { /* The toast already confirmed the save. */ }
+      }
+    } else toast(saved.failed ? "Area download failed" : "No tiles saved");
   }
 
   async function dropPack(id) {
@@ -5193,8 +5463,10 @@
     markerLayer = L.layerGroup().addTo(map);
     installLongPress();
     map.on("dragstart", function () { state.follow = false; });
-    map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); });
-    map.on("moveend", function () { applyBasemap(); scheduleParcels(); });
+    map.on("zoomend", function () { applyBasemap(); syncMap(); scheduleParcels(); refreshAreaChrome(); });
+    map.on("moveend", function () { applyBasemap(); scheduleParcels(); refreshAreaChrome(); });
+    map.on("move", function () { syncAreaPreview(); });
+    refreshAreaChrome();
     map.on("click", onMapClick);
     document.addEventListener("click", function (event) {
       const button = event.target.closest("[data-act]");
