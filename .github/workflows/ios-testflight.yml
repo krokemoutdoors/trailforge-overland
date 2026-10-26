@@ -150,6 +150,16 @@ jobs:
           cp /tmp/profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/b96fd2aa-c152-4bf1-8e55-70a64d2aecc6.mobileprovision"
           unset P12_PASS
 
+      - name: Select Xcode 26 (iOS 26 SDK required by App Store Connect)
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE_26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$XCODE_26" ]; then
+            sudo xcode-select -s "$XCODE_26/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcodebuild -showsdks
+
       - name: Archive and export IPA
         run: |
           set -euo pipefail
