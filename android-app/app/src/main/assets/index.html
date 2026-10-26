@@ -314,7 +314,6 @@
         <button type="button" class="line" id="targetRead" data-act="copy-target" aria-label="Copy target coordinates"><span class="k">TARGET:</span><b>—</b></button>
       </div>
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
-      <div class="clin-pill" id="clinPill"><i id="clinBar"></i><span id="clinRead">Roll 0° / Pitch 0°</span><button type="button" data-act="zero-clinometer">Zero</button></div>
       <div class="lot-card" id="lotCard" hidden></div>
       <nav id="rail" aria-label="Map tools">
         <button type="button" data-act="layers" title="Layers &amp; Opacity Drawer" aria-label="Layers and Opacity Drawer">▦</button>
@@ -384,17 +383,18 @@
             <button type="button" data-act="plot-mode" data-id="freehand">✏️ Freehand / Wash Bridge</button>
           </div>
           <div class="route-stats" style="padding-left:0;padding-right:0"><div><b id="plotCount">0 points</b><span>plotted</span></div><div><b id="plotFit">—</b><span>rig-fit</span></div></div>
+          <div id="plotWaypointList"></div>
           <div class="actions">
             <button type="button" class="primary" data-act="export-gpx">Export GPX</button>
             <button type="button" data-act="import-gpx">Import GPX</button>
-            <button type="button" class="end" data-act="clear-plot">Clear</button>
+            <button type="button" data-act="undo-plot">Undo Last Waypoint</button>
+            <button type="button" class="end" data-act="clear-plot">Delete All Waypoints</button>
           </div>
           <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml,text/xml" hidden />
         </section>
       </aside>
       <div id="dashHud">
         <div class="corner tl" id="dashTurn"><span>NEXT TURN</span><b>—</b></div>
-        <div class="corner tr" id="dashTilt"><span>ROLL / PITCH</span><b id="dashTiltRead">0° / 0°</b><button type="button" data-act="zero-clinometer">Zero Clinometer</button></div>
         <div class="corner bl" id="dashGps"><span>MY GPS</span><b>—</b></div>
         <button type="button" class="corner br" id="dashTarget" data-act="copy-target" aria-label="Copy target coordinates"><span>TARGET</span><b>—</b></button>
       </div>
@@ -431,7 +431,7 @@
           <button type="button" class="primary" data-act="marker-route">Route Here (GPS)</button>
           <button type="button" data-act="marker-rename">Rename</button>
           <button type="button" data-act="marker-share">Share Coordinates/GPX</button>
-          <button type="button" class="end" data-act="marker-delete">Delete Marker</button>
+          <button type="button" class="end" data-act="marker-delete">🗑️ Delete Waypoint</button>
         </div>
       </section>
     </div>

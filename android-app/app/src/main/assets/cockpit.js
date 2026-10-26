@@ -138,6 +138,8 @@
   let slopeLayer;
   let hazardLayer;
   let plotLayer;
+  const plotRouteCache = {};
+  const plotRoutePending = {};
   let recordLayer;
   let markerLayer;
   let hazardPinLayer;
@@ -668,7 +670,7 @@
       return '<div class="place-card"><button type="button" class="row" data-act="place-route" data-id="' + esc(place.id) + '"><span class="meta"><b>' + esc(place.name) + "</b><small>" + esc(place.address || "") + esc(away) + '</small></span></button><div class="actions"><button type="button" data-act="place-show" data-id="' + esc(place.id) + '">Show on Map</button><button type="button" class="primary" data-act="place-route" data-id="' + esc(place.id) + '">Route Here</button></div></div>';
     }).join("");
     const places = (state.placeBusy || placeRows) ? '<div class="status">Places &amp; Addresses</div>' + (state.placeBusy ? '<div class="status">Searching addresses and stores…</div>' : "") + placeRows : "";
-    return headUnitHtml() + recorderHtml() + savedMarkersHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
+    return headUnitHtml() + recorderHtml() + savedMarkersHtml() + plotWaypointsHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + '</div><div class="status" id="parcelNote">' + esc(state.parcelNote || "") + "</div>" + telemetry + convoy;
   }
 
   function profileHtml(trail) {
@@ -716,7 +718,6 @@
 
   function rigHtml() {
     const profile = state.rig;
-    const horizon = "rotate(" + state.roll.toFixed(1) + "deg) translateY(" + (state.pitch * 0.6).toFixed(1) + "px)";
     const fields = [
       ["tireInches", "Tire size", "29", "40", "0.5", '"'],
       ["liftInches", "Lift", "0", "6", "0.5", '"'],
@@ -741,7 +742,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" /><div class="rig-live"><div class="dial"><div class="horizon" id="horizon" style="transform:' + horizon + '"></div><div class="cross"></div></div><div class="psi"><div class="sub" id="tiltRead">Pitch ' + Math.round(state.pitch) + "° · Roll " + Math.round(state.roll) + '°</div><div class="actions"><button type="button" data-act="zero-clinometer">Zero / Calibrate</button><button type="button" data-act="reset-clinometer">Reset</button></div></div></div><label class="field"><span>Roll warning <b id="rollLimitRead">' + Math.round(state.rollLimit) + '°</b></span><input type="range" min="8" max="45" step="1" data-roll-limit value="' + state.rollLimit + '" aria-label="Roll warning limit" /></label>' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.0 · build 12<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.1 · build 13<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2011,13 +2012,32 @@
       if (input) input.click();
       return;
     }
+    if (act === "undo-plot") {
+      if (state.plot.length) state.plot.pop();
+      drawPlot();
+      renderSheet();
+      renderDrawer();
+      toast("Removed last waypoint");
+      return;
+    }
+    if (act === "del-waypoint") {
+      const index = Number(button.dataset.idx);
+      if (Number.isInteger(index) && index >= 0 && index < state.plot.length) state.plot.splice(index, 1);
+      drawPlot();
+      renderSheet();
+      renderDrawer();
+      return;
+    }
     if (act === "clear-plot") {
       state.plot = [];
       drawPlot();
+      renderSheet();
       renderDrawer();
-      toast("Custom route cleared");
+      toast("Deleted all waypoints");
       return;
     }
+    if (act === "del-marker") { deleteMarkerById(button.dataset.id); return; }
+    if (act === "clear-markers") { clearSavedMarkers(); return; }
     if (act === "drop-pack") { dropPack(button.dataset.id); return; }
     if (act === "plot-mode") {
       state.plotMode = button.dataset.id === "freehand" ? "freehand" : "snap";
@@ -3142,7 +3162,12 @@
     const count = document.getElementById("plotCount");
     const verdict = document.getElementById("plotFit");
     const fit = state.plot.length ? plotFit() : null;
-    if (count) count.textContent = state.plot.length + (state.plot.length === 1 ? " point" : " points");
+    if (count) {
+      const milesText = state.plot.length >= 2 ? " · " + (plotMeters() / 1609.344).toFixed(1) + " mi" : "";
+      count.textContent = state.plot.length + (state.plot.length === 1 ? " point" : " points") + milesText;
+    }
+    const plotList = document.getElementById("plotWaypointList");
+    if (plotList) plotList.innerHTML = plotWaypointRowsHtml();
     if (verdict) {
       verdict.textContent = fit ? shortFit(fit.verdict) : "—";
       verdict.style.color = fit ? fitColor(fit.verdict) : "";
@@ -3852,6 +3877,167 @@
     return worst ? worst.fit : evaluate({ clearance: 9, canopy: 12, water: 6, locker: false, name: "custom route" });
   }
 
+  function plotSegmentKey(prev, next) {
+    return Number(prev.lat).toFixed(5) + "," + Number(prev.lon).toFixed(5) + "->" + Number(next.lat).toFixed(5) + "," + Number(next.lon).toFixed(5);
+  }
+
+  function projectOntoSegment(point, start, end) {
+    const latScale = 111320;
+    const lonScale = 111320 * Math.cos(point.lat * Math.PI / 180);
+    const ax = start.lon * lonScale;
+    const ay = start.lat * latScale;
+    const bx = end.lon * lonScale;
+    const by = end.lat * latScale;
+    const px = point.lon * lonScale;
+    const py = point.lat * latScale;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const length2 = dx * dx + dy * dy;
+    const t = length2 > 1 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / length2)) : 0;
+    return {
+      lat: start.lat + (end.lat - start.lat) * t,
+      lon: start.lon + (end.lon - start.lon) * t
+    };
+  }
+
+  function projectOntoTrail(point, coordinates) {
+    let best = null;
+    for (let index = 0; index < coordinates.length - 1; index += 1) {
+      const start = { lat: coordinates[index][0], lon: coordinates[index][1] };
+      const end = { lat: coordinates[index + 1][0], lon: coordinates[index + 1][1] };
+      const hit = projectOntoSegment(point, start, end);
+      const distance = meters(point, hit);
+      if (!best || distance < best.distance) best = { index: index, lat: hit.lat, lon: hit.lon, distance: distance };
+    }
+    return best;
+  }
+
+  function trailBoxContains(coordinates, prev, next, limitMeters) {
+    if (!coordinates || !coordinates.length) return false;
+    let minLat = coordinates[0][0];
+    let maxLat = coordinates[0][0];
+    let minLon = coordinates[0][1];
+    let maxLon = coordinates[0][1];
+    for (let index = 1; index < coordinates.length; index += 1) {
+      minLat = Math.min(minLat, coordinates[index][0]);
+      maxLat = Math.max(maxLat, coordinates[index][0]);
+      minLon = Math.min(minLon, coordinates[index][1]);
+      maxLon = Math.max(maxLon, coordinates[index][1]);
+    }
+    const midLat = (Number(prev.lat) + Number(next.lat)) / 2;
+    const dLat = limitMeters / 111320;
+    const dLon = limitMeters / (111320 * Math.max(0.2, Math.cos(midLat * Math.PI / 180)));
+    function inside(point) {
+      return point.lat >= minLat - dLat && point.lat <= maxLat + dLat && point.lon >= minLon - dLon && point.lon <= maxLon + dLon;
+    }
+    return inside(prev) && inside(next);
+  }
+
+  function dedupeLine(line) {
+    const cleaned = [];
+    line.forEach(function (point) {
+      const last = cleaned[cleaned.length - 1];
+      if (last && meters(last, point) < 8) return;
+      cleaned.push(point);
+    });
+    return cleaned;
+  }
+
+  function trailSlice(prev, next, coordinates) {
+    if (!coordinates || coordinates.length < 2) return [];
+    if (!trailBoxContains(coordinates, prev, next, 1200)) return [];
+    const startHit = projectOntoTrail(prev, coordinates);
+    const endHit = projectOntoTrail(next, coordinates);
+    if (!startHit || !endHit || startHit.distance > 1200 || endHit.distance > 1200) return [];
+    const line = [{ lat: Number(prev.lat), lon: Number(prev.lon) }, { lat: startHit.lat, lon: startHit.lon }];
+    if (startHit.index < endHit.index) {
+      for (let index = startHit.index + 1; index <= endHit.index; index += 1) {
+        line.push({ lat: coordinates[index][0], lon: coordinates[index][1] });
+      }
+    } else if (startHit.index > endHit.index) {
+      for (let index = startHit.index; index >= endHit.index + 1; index -= 1) {
+        line.push({ lat: coordinates[index][0], lon: coordinates[index][1] });
+      }
+    }
+    line.push({ lat: endHit.lat, lon: endHit.lon }, { lat: Number(next.lat), lon: Number(next.lon) });
+    const cleaned = dedupeLine(line);
+    const direct = Math.max(meters(prev, next), 1);
+    if (polylineMeters(cleaned) > direct * 8) return [];
+    return cleaned;
+  }
+
+  function bestTrailSlice(prev, next) {
+    const chosen = selected();
+    const trails = allTrails();
+    const ordered = chosen ? [chosen].concat(trails.filter(function (trail) { return trail.id !== chosen.id; })) : trails;
+    let best = null;
+    ordered.forEach(function (trail) {
+      const slice = trailSlice(prev, next, trail.coordinates);
+      if (slice.length < 2) return;
+      const closeness = meters(prev, slice[Math.min(1, slice.length - 1)]) + meters(next, slice[Math.max(0, slice.length - 2)]);
+      if (!best || closeness < best.closeness) best = { closeness: closeness, line: slice };
+    });
+    return best ? best.line : [];
+  }
+
+  function fetchPlotRoad(prev, next, key) {
+    if (plotRoutePending[key]) return;
+    plotRoutePending[key] = true;
+    const url = "https://router.project-osrm.org/route/v1/driving/" + prev.lon + "," + prev.lat + ";" + next.lon + "," + next.lat + "?overview=full&geometries=geojson";
+    const straight = [[Number(prev.lat), Number(prev.lon)], [Number(next.lat), Number(next.lon)]];
+    fetch(url).then(function (response) { return response.json(); }).then(function (data) {
+      plotRoutePending[key] = false;
+      const coords = data && data.code === "Ok" && data.routes && data.routes[0] && data.routes[0].geometry && data.routes[0].geometry.coordinates;
+      plotRouteCache[key] = coords && coords.length >= 2
+        ? coords.map(function (pair) { return [pair[1], pair[0]]; })
+        : straight;
+      drawPlot();
+      renderDrawer();
+    }).catch(function () {
+      plotRoutePending[key] = false;
+      if (!plotRouteCache[key]) plotRouteCache[key] = straight;
+    });
+  }
+
+  function resolvePlotSegment(prev, next) {
+    const free = prev.mode === "freehand" || next.mode === "freehand";
+    if (free) return [[Number(prev.lat), Number(prev.lon)], [Number(next.lat), Number(next.lon)]];
+    const slice = bestTrailSlice(prev, next);
+    if (slice.length >= 3) return slice.map(function (point) { return [point.lat, point.lon]; });
+    const key = plotSegmentKey(prev, next);
+    if (plotRouteCache[key] && plotRouteCache[key].length >= 2) return plotRouteCache[key];
+    fetchPlotRoad(prev, next, key);
+    if (slice.length >= 2) return slice.map(function (point) { return [point.lat, point.lon]; });
+    return [[Number(prev.lat), Number(prev.lon)], [Number(next.lat), Number(next.lon)]];
+  }
+
+  function fullPlotPolyline() {
+    if (state.plot.length < 2) return state.plot.map(function (point) { return { lat: point.lat, lon: point.lon }; });
+    const line = [];
+    for (let index = 1; index < state.plot.length; index += 1) {
+      resolvePlotSegment(state.plot[index - 1], state.plot[index]).forEach(function (pair, pairIndex) {
+        if (line.length && pairIndex === 0) return;
+        line.push({ lat: pair[0], lon: pair[1] });
+      });
+    }
+    return line;
+  }
+
+  function plotMeters() {
+    return polylineMeters(fullPlotPolyline());
+  }
+
+  function plotWaypointRowsHtml() {
+    return state.plot.map(function (point, index) {
+      return '<div class="place-card"><div class="meta"><b>Waypoint ' + (index + 1) + "</b><small>" + esc(formatPair(point) || "") + '</small></div><div class="actions"><button type="button" class="end" data-act="del-waypoint" data-idx="' + index + '">✕ Delete</button></div></div>';
+    }).join("");
+  }
+
+  function plotWaypointsHtml() {
+    if (!state.plot.length) return "";
+    return '<div class="marker-list"><b>Plotted Route Waypoints</b><div class="actions"><button type="button" data-act="undo-plot">Undo Last Waypoint</button><button type="button" class="end" data-act="clear-plot">Delete All Waypoints</button></div>' + plotWaypointRowsHtml() + "</div>";
+  }
+
   function drawPlot() {
     if (!plotLayer) return;
     plotLayer.clearLayers();
@@ -3860,13 +4046,14 @@
       const prev = state.plot[index - 1];
       const next = state.plot[index];
       const free = prev.mode === "freehand" || next.mode === "freehand";
-      const line = [[prev.lat, prev.lon], [next.lat, next.lon]];
+      const line = resolvePlotSegment(prev, next);
       L.polyline(line, { color: "#071428", weight: 5, opacity: 0.95, dashArray: free ? "6 8" : null }).addTo(plotLayer);
       L.polyline(line, { color: fit ? fitColor(fit.verdict) : "#38bdf8", weight: 3.2, opacity: 1, dashArray: free ? "6 8" : null }).addTo(plotLayer);
     }
     state.plot.forEach(function (point, index) {
       const icon = L.divIcon({ className: "flag-pin", html: "<span>" + (index + 1) + "</span>", iconAnchor: [12, 12] });
-      L.marker([point.lat, point.lon], { icon: icon, zIndexOffset: 640 }).addTo(plotLayer);
+      const popup = "<b>Waypoint " + (index + 1) + "</b><div>" + esc(formatPair(point) || "") + '</div><button type="button" class="end" data-act="del-waypoint" data-idx="' + index + '">🗑️ Delete Waypoint</button>';
+      L.marker([point.lat, point.lon], { icon: icon, zIndexOffset: 640 }).bindPopup(popup).addTo(plotLayer);
     });
   }
 
@@ -3900,7 +4087,7 @@
   function exportGpx() {
     if (state.plot.length < 2) { toast("Plot at least two points"); return; }
     const trail = selected();
-    const xml = gpxXml(trail ? trail.name + " custom" : "TrailForge route", state.plot, collectWaypoints(trail));
+    const xml = gpxXml(trail ? trail.name + " custom" : "TrailForge route", fullPlotPolyline(), collectWaypoints(trail));
     const blob = new Blob([xml], { type: "application/gpx+xml" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -4697,7 +4884,7 @@
   }
 
   function tripLine() {
-    if (state.plot.length >= 2) return state.plot.map(function (point) { return { lat: point.lat, lon: point.lon }; });
+    if (state.plot.length >= 2) return fullPlotPolyline();
     const trail = selected();
     const coords = trail && trail.coordinates;
     if (!coords || coords.length < 2) return [];
@@ -4965,9 +5152,10 @@
 
   function savedMarkersHtml() {
     const rows = state.savedMarkers.map(function (marker) {
-      return '<button type="button" class="row" data-act="marker-open" data-id="' + esc(marker.id) + '"><span class="meta"><b>' + esc(marker.name) + "</b><small>" + esc(marker.category) + " · " + esc(formatPair(marker) || "") + "</small></span></button>";
+      return '<div class="place-card"><button type="button" class="row" data-act="marker-open" data-id="' + esc(marker.id) + '"><span class="meta"><b>' + esc(marker.name) + "</b><small>" + esc(marker.category) + " · " + esc(formatPair(marker) || "") + '</small></span></button><div class="actions"><button type="button" class="end" data-act="del-marker" data-id="' + esc(marker.id) + '">🗑️ Delete Waypoint</button></div></div>';
     }).join("");
-    return '<div class="marker-list"><b>Saved Markers</b><div class="sub">Tap and hold the map to drop a pin.</div>' + (rows || '<div class="sub">No saved markers yet.</div>') + "</div>";
+    const clear = state.savedMarkers.length >= 2 ? '<div class="actions"><button type="button" class="end" data-act="clear-markers">Delete All</button></div>' : "";
+    return '<div class="marker-list"><b>Saved Markers / Waypoints</b>' + clear + '<div class="sub">Tap and hold the map to drop a pin.</div>' + (rows || '<div class="sub">No saved markers yet.</div>') + "</div>";
   }
 
   function toggleRecording() {
@@ -5164,9 +5352,8 @@
     }
     state.savedMarkers.forEach(function (marker) {
       const icon = L.divIcon({ className: "flag-pin", html: "<span>📍 " + esc(marker.name) + "</span>", iconAnchor: [14, 12] });
-      L.marker([marker.lat, marker.lon], { icon: icon, zIndexOffset: 760 }).on("click", function () {
-        openMarker(marker.id);
-      }).addTo(markerLayer);
+      const popup = "<b>" + esc(marker.name) + "</b><div>" + esc(marker.category) + " · " + esc(formatPair(marker) || "") + '</div><div class="actions"><button type="button" data-act="marker-open" data-id="' + esc(marker.id) + '">Open</button><button type="button" class="end" data-act="del-marker" data-id="' + esc(marker.id) + '">🗑️ Delete Waypoint</button></div>';
+      L.marker([marker.lat, marker.lon], { icon: icon, zIndexOffset: 760 }).bindPopup(popup).addTo(markerLayer);
     });
   }
 
@@ -5391,13 +5578,29 @@
     toast("Marker GPX downloaded");
   }
 
-  function deleteActiveMarker() {
-    state.savedMarkers = state.savedMarkers.filter(function (marker) { return marker.id !== state.activeMarkerId; });
+  function deleteMarkerById(id) {
+    state.savedMarkers = state.savedMarkers.filter(function (marker) { return marker.id !== id; });
+    if (state.activeMarkerId === id) {
+      state.activeMarkerId = null;
+      closeMarkerSheet();
+    }
+    saveSavedMarkers();
+    drawSavedMarkers();
+    renderSheet();
+  }
+
+  function clearSavedMarkers() {
+    state.savedMarkers = [];
     state.activeMarkerId = null;
     saveSavedMarkers();
     closeMarkerSheet();
     drawSavedMarkers();
     renderSheet();
+    toast("Deleted all waypoints");
+  }
+
+  function deleteActiveMarker() {
+    deleteMarkerById(state.activeMarkerId);
   }
 
   function boot() {

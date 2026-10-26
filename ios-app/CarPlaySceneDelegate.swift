@@ -132,6 +132,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         interfaceController?.pushTemplate(template, animated: true) { _, _ in }
     }
 
+    func pointOfInterestTemplate(_ pointOfInterestTemplate: CPPointOfInterestTemplate, didChangeMapRegion region: MKCoordinateRegion) {}
+
     func pointOfInterestTemplate(_ pointOfInterestTemplate: CPPointOfInterestTemplate, didSelectPointOfInterest pointOfInterest: CPPointOfInterest) {
         let coordinate = pointOfInterest.location.placemark.coordinate
         let title = pointOfInterest.title.isEmpty ? (pointOfInterest.location.name ?? "Flat Camp") : pointOfInterest.title

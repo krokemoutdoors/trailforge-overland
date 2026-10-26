@@ -133,6 +133,8 @@ struct MainCockpitView: View {
     @State private var nextSegmentFreehand = false
     @State private var segmentFreehand: [Bool] = []
     @State private var plotPoints: [CLLocationCoordinate2D] = []
+    @State private var plotSegmentRoutes: [String: [CLLocationCoordinate2D]] = [:]
+    @State private var plotRouteFetchToken = 0
     @State private var profileIndex: Int?
     @State private var reports: [TrailConditionReport] = []
     @State private var offlinePacks: [OfflineCorridorPack] = []
@@ -295,6 +297,10 @@ struct MainCockpitView: View {
         hasher.combine(Int(hazardOverlayOpacity * 20))
         hasher.combine(Int(starlinkOverlayOpacity * 20))
         hasher.combine(plotPoints.map { String(format: "%.4f,%.4f", $0.latitude, $0.longitude) }.joined(separator: "|"))
+        hasher.combine(plotPoints.count)
+        hasher.combine(plottedLine.count)
+        hasher.combine(plotSegmentRoutes.count)
+        hasher.combine(plotSegmentRoutes.values.reduce(0) { $0 + $1.count })
         hasher.combine(straightSpur)
         hasher.combine(nextSegmentFreehand)
         hasher.combine(segmentFreehand.map { $0 ? "1" : "0" }.joined())
@@ -352,24 +358,24 @@ struct MainCockpitView: View {
 
     private var plottedLine: [CLLocationCoordinate2D] {
         guard plotPoints.count >= 2 else { return plotPoints }
-        var line: [CLLocationCoordinate2D] = [plotPoints[0]]
-        let trail = activeTrail.coordinates
+        var line: [CLLocationCoordinate2D] = []
         for index in 1..<plotPoints.count {
-            let start = plotPoints[index - 1]
-            let end = plotPoints[index]
-            let freehand = segmentFreehand.indices.contains(index - 1) ? segmentFreehand[index - 1] : straightSpur
-            if freehand {
-                line.append(end)
-                continue
-            }
-            let slice = trailSlice(from: start, to: end, trail: trail)
-            if slice.count >= 2, polylineMeters(slice) < max(meters(from: start, to: end) * 3, 1) {
-                line.append(contentsOf: slice.dropFirst())
+            let segment = resolvedPlotSegment(from: plotPoints[index - 1], to: plotPoints[index], segmentIndex: index - 1)
+            if line.isEmpty {
+                line.append(contentsOf: segment)
             } else {
-                line.append(end)
+                line.append(contentsOf: segment.dropFirst())
             }
         }
         return cappedPlot(line)
+    }
+
+    private func resolvedPlotSegment(from start: CLLocationCoordinate2D, to end: CLLocationCoordinate2D, segmentIndex: Int) -> [CLLocationCoordinate2D] {
+        let freehand = segmentFreehand.indices.contains(segmentIndex) ? segmentFreehand[segmentIndex] : straightSpur
+        if freehand { return [start, end] }
+        let key = plotSegmentKey(start, end)
+        if let cached = plotSegmentRoutes[key], cached.count >= 2 { return cached }
+        return [start, end]
     }
 
     private var mapHazards: [MapHazard] {
@@ -775,6 +781,9 @@ struct MainCockpitView: View {
 
     private func driveControls(includeFieldCards: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            if plotMode || !plotPoints.isEmpty {
+                plotterCard
+            }
             if includeFieldCards {
                 headUnitCard
                 trailRecorderCard
@@ -1517,84 +1526,6 @@ struct MainCockpitView: View {
         liveNextStepDistanceText = formatDistance(meters(from: user, to: target))
     }
 
-    private var clinometerHot: Bool {
-        abs(motionManager.rollDegrees) >= motionManager.rollWarningLimit
-            || abs(motionManager.pitchDegrees) >= motionManager.rollWarningLimit
-    }
-
-    private var clinometerStrip: some View {
-        HStack(spacing: 8) {
-            clinometerHorizon
-                .frame(width: 54, height: 22)
-            Text("Roll \(formatAngle(motionManager.rollDegrees))°  •  Pitch \(formatAngle(motionManager.pitchDegrees))°")
-                .font(.caption.monospacedDigit().bold())
-                .foregroundColor(clinometerHot ? .red : .cyan)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Button("Zero") { motionManager.calibrateZero() }
-                .font(.caption2.bold())
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.cyan)
-                .foregroundColor(.black)
-                .clipShape(Capsule())
-                .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.black.opacity(0.78))
-        .clipShape(Capsule())
-    }
-
-    private func clinometerCard(zeroTitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                clinometerHorizon
-                    .frame(width: 72, height: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Roll \(formatAngle(motionManager.rollDegrees))°  •  Pitch \(formatAngle(motionManager.pitchDegrees))°")
-                        .font(.headline.monospacedDigit())
-                        .foregroundColor(clinometerHot ? .red : .cyan)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    Text(motionManager.isCalibrated ? "Calibrated to your mount" : "Auto baseline for this mount angle")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-            }
-            HStack(spacing: 8) {
-                Button(zeroTitle) { motionManager.calibrateZero() }
-                    .font(.caption.bold())
-                    .buttonStyle(.borderedProminent)
-                    .tint(.cyan)
-                Button("Reset Calibration") { motionManager.resetCalibration() }
-                    .font(.caption.bold())
-                    .buttonStyle(.bordered)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private var clinometerHorizon: some View {
-        ZStack {
-            Capsule()
-                .fill(Color.white.opacity(0.18))
-            Capsule()
-                .fill(clinometerHot ? Color.red : Color.cyan)
-                .frame(width: 36, height: 4)
-                .rotationEffect(.degrees(-motionManager.rollDegrees))
-                .offset(y: CGFloat(max(-16, min(16, motionManager.pitchDegrees))) * 0.35)
-        }
-        .clipped()
-    }
-
-    private func formatAngle(_ value: Double) -> String {
-        String(format: "%.0f", value)
-    }
-
     private func placeResultRow(_ hit: PlaceHit) -> some View {
         let distance: String = {
             guard let user = locationTracker.userCoordinate else { return "" }
@@ -1841,9 +1772,6 @@ struct MainCockpitView: View {
                 .padding(.leading, 8)
             VStack(spacing: 8) {
                 topCluster
-                if !showGloveRow {
-                    clinometerStrip
-                }
                 if plotMode {
                     Text(nextSegmentFreehand ? "Plotter • next segment is freehand" : "Plotter • next segment snaps to the trail")
                         .font(.caption2.bold())
@@ -1936,6 +1864,9 @@ struct MainCockpitView: View {
                     pinName = marker.name
                     pinCategory = marker.category
                 }
+            },
+            onDeletePlotPoint: { index in
+                removePlotPoint(at: index)
             }
         )
         .equatable()
@@ -2074,9 +2005,6 @@ struct MainCockpitView: View {
                         if let parcel = parcelService.selected {
                             propertyCard(parcel)
                         }
-                        if plotMode {
-                            plotterCard
-                        }
                         cockpitModeBody(includeFieldCards: true)
                     }
                     .frame(maxWidth: .infinity)
@@ -2103,7 +2031,6 @@ struct MainCockpitView: View {
             modePicker
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 10) {
-                    clinometerCard(zeroTitle: "Zero Clinometer")
                     coordinatesBar(filled: true)
                     convoyPills
                     Text(nextTurnLine)
@@ -2123,7 +2050,6 @@ struct MainCockpitView: View {
                     if let parcel = parcelService.selected {
                         propertyCard(parcel)
                     }
-                    if plotMode { plotterCard }
                     trailRecorderCard
                     savedMarkersCard
                     cockpitModeBody(includeFieldCards: false)
@@ -2200,13 +2126,6 @@ struct MainCockpitView: View {
 
     private var rigPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            clinometerCard(zeroTitle: "Zero / Calibrate Level")
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Roll Warning Limit \(Int(motionManager.rollWarningLimit))°")
-                    .font(.caption.bold())
-                Slider(value: $motionManager.rollWarningLimit, in: 8...45, step: 1)
-                    .tint(.cyan)
-            }
             HStack {
                 Stepper("Tires: \(Int(rigStore.profile.tireInches))\"", value: $rigStore.profile.tireInches, in: 29...37, step: 1)
                 Toggle("Locker", isOn: $rigStore.profile.hasRearLocker)
@@ -2745,11 +2664,17 @@ struct MainCockpitView: View {
                     .font(.caption.bold())
                     .foregroundColor(.cyan)
                 Spacer()
-                Button("Clear") {
-                    plotPoints = []
-                    segmentFreehand = []
-                }
+                if !plotPoints.isEmpty {
+                    Button("Undo Last") { undoLastPlotPoint() }
+                        .font(.caption2.bold())
+                    Button("Delete All Waypoints") {
+                        plotPoints = []
+                        segmentFreehand = []
+                        refreshPlotRoutes()
+                    }
                     .font(.caption2.bold())
+                    .foregroundColor(.red)
+                }
             }
             HStack(spacing: 8) {
                 Button("🧲 Snap to Trail") {
@@ -2773,6 +2698,32 @@ struct MainCockpitView: View {
             Text(String(format: "%.1f mi • %d waypoints • %@", customRouteMiles, plotPoints.count, fit.verdict.rawValue))
                 .font(.caption.bold())
                 .foregroundColor(fit.verdict == .noGo ? .red : (fit.verdict == .caution ? .orange : .green))
+            if !plotPoints.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(plotPoints.enumerated()), id: \.offset) { index, point in
+                        HStack(alignment: .center, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Waypoint \(index + 1)")
+                                    .font(.caption.bold())
+                                    .foregroundColor(.white)
+                                Text(formatCoordinate(point))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                            Button {
+                                removePlotPoint(at: index)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Delete Waypoint \(index + 1)")
+                        }
+                    }
+                }
+            }
             if let note = fit.notes.first {
                 Text(note)
                     .font(.caption2)
@@ -2960,35 +2911,54 @@ struct MainCockpitView: View {
 
     private var savedMarkersCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Saved Markers")
-                .font(.caption.bold())
-                .foregroundColor(.white)
+            HStack {
+                Text("Saved Markers / Waypoints")
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                Spacer()
+                if savedMarkers.count >= 2 {
+                    Button("Delete All") { deleteAllMarkers() }
+                        .font(.caption2.bold())
+                        .foregroundColor(.red)
+                }
+            }
             if savedMarkers.isEmpty {
                 Text("Tap and hold the map to drop a pin, then save it.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
             ForEach(savedMarkers) { marker in
-                Button {
-                    editingMarker = marker
-                    pinName = marker.name
-                    pinCategory = marker.category
-                } label: {
-                    HStack {
-                        Text(markerSymbol(marker.category))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(marker.name)
-                                .font(.caption.bold())
-                                .foregroundColor(.white)
-                            Text("\(marker.category) · \(formatCoordinate(marker.coordinate))")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
+                HStack(alignment: .center, spacing: 8) {
+                    Button {
+                        editingMarker = marker
+                        pinName = marker.name
+                        pinCategory = marker.category
+                    } label: {
+                        HStack {
+                            Text(markerSymbol(marker.category))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(marker.name)
+                                    .font(.caption.bold())
+                                    .foregroundColor(.white)
+                                Text("\(marker.category) · \(formatCoordinate(marker.coordinate))")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
                         }
-                        Spacer()
                     }
+                    .buttonStyle(.plain)
+                    Button {
+                        deleteMarker(marker)
+                    } label: {
+                        Label("Delete Waypoint", systemImage: "trash")
+                            .font(.caption2.bold())
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(10)
@@ -3094,8 +3064,13 @@ struct MainCockpitView: View {
                 ShareLink(item: markerShareURL(marker), preview: SharePreview(marker.name)) {
                     Label("Share Coordinates/GPX", systemImage: "square.and.arrow.up")
                 }
-                Button("Delete Marker") { deleteMarker(marker) }
-                    .foregroundColor(.red)
+                Button(role: .destructive) {
+                    deleteMarker(marker)
+                } label: {
+                    Label("Delete Waypoint", systemImage: "trash")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
                 Spacer()
             }
             .padding(16)
@@ -3182,6 +3157,12 @@ struct MainCockpitView: View {
 
     private func deleteMarker(_ marker: SavedMarker) {
         savedMarkers.removeAll { $0.id == marker.id }
+        CockpitStore.saveSavedMarkers(savedMarkers)
+        editingMarker = nil
+    }
+
+    private func deleteAllMarkers() {
+        savedMarkers = []
         CockpitStore.saveSavedMarkers(savedMarkers)
         editingMarker = nil
     }
@@ -3444,10 +3425,101 @@ struct MainCockpitView: View {
             segmentFreehand.append(nextSegmentFreehand)
         }
         plotPoints.append(snapped)
+        refreshPlotRoutes()
+    }
+
+    private func undoLastPlotPoint() {
+        guard !plotPoints.isEmpty else { return }
+        removePlotPoint(at: plotPoints.count - 1)
+    }
+
+    private func removePlotPoint(at index: Int) {
+        guard plotPoints.indices.contains(index) else { return }
+        plotPoints.remove(at: index)
+        if index == 0 {
+            if !segmentFreehand.isEmpty { segmentFreehand.removeFirst() }
+        } else if index - 1 < segmentFreehand.count {
+            segmentFreehand.remove(at: index - 1)
+        }
+        let keep = max(0, plotPoints.count - 1)
+        if segmentFreehand.count > keep {
+            segmentFreehand = Array(segmentFreehand.prefix(keep))
+        }
+        refreshPlotRoutes()
+    }
+
+    private func refreshPlotRoutes() {
+        plotRouteFetchToken += 1
+        let token = plotRouteFetchToken
+        var cache: [String: [CLLocationCoordinate2D]] = [:]
+        var pending: [(key: String, start: CLLocationCoordinate2D, end: CLLocationCoordinate2D)] = []
+        if plotPoints.count >= 2 {
+            let directTrails = plotCandidateTrails
+            for index in 1..<plotPoints.count {
+                let start = plotPoints[index - 1]
+                let end = plotPoints[index]
+                let key = plotSegmentKey(start, end)
+                let freehand = segmentFreehand.indices.contains(index - 1) ? segmentFreehand[index - 1] : straightSpur
+                if freehand {
+                    cache[key] = [start, end]
+                    continue
+                }
+                let slice = bestTrailSlice(from: start, to: end, trails: directTrails)
+                if slice.count >= 3 {
+                    cache[key] = slice
+                    continue
+                }
+                if let existing = plotSegmentRoutes[key], existing.count >= 3 {
+                    cache[key] = existing
+                    continue
+                }
+                cache[key] = slice.count >= 2 ? slice : [start, end]
+                pending.append((key, start, end))
+            }
+        }
+        plotSegmentRoutes = cache
+        guard !pending.isEmpty else { return }
+        Task { @MainActor in
+            for item in pending {
+                if token != plotRouteFetchToken { return }
+                let road = await plotRoadGeometry(from: item.start, to: item.end)
+                if token != plotRouteFetchToken { return }
+                guard let road, road.count >= 2 else { continue }
+                var updated = plotSegmentRoutes
+                updated[item.key] = road
+                plotSegmentRoutes = updated
+            }
+        }
+    }
+
+    private var plotCandidateTrails: [OverlandTrail] {
+        var seen = Set<String>()
+        var trails: [OverlandTrail] = []
+        for trail in [activeTrail] + USATrailAtlas.all + telemetry.discoveredTrails {
+            if seen.insert(trail.id).inserted {
+                trails.append(trail)
+            }
+        }
+        return trails
+    }
+
+    private func bestTrailSlice(from start: CLLocationCoordinate2D, to end: CLLocationCoordinate2D, trails: [OverlandTrail]) -> [CLLocationCoordinate2D] {
+        let direct = max(meters(from: start, to: end), 1)
+        var options: [(closeness: Double, line: [CLLocationCoordinate2D])] = []
+        for trail in trails {
+            let coordinates = trail.coordinates
+            guard coordinates.count >= 2, trailBoxContains(coordinates, start, end, limitMeters: 1_200) else { continue }
+            guard let projected = projectedTrailSlice(from: start, to: end, trail: coordinates, maxDistance: 1_200) else { continue }
+            let length = polylineMeters(projected.line)
+            guard length <= direct * 8 else { continue }
+            options.append((projected.closeness, projected.line))
+        }
+        options.sort { $0.closeness < $1.closeness }
+        return options.first?.line ?? []
     }
 
     private func cappedPlot(_ line: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
-        line.count > 220 ? simplifyCoordinates(line, maxPoints: 220, minMeters: 12) : line
+        line.count > 800 ? simplifyCoordinates(line, maxPoints: 800, minMeters: 8) : line
     }
 
     private func importGPX(_ xml: String) {
@@ -3458,6 +3530,7 @@ struct MainCockpitView: View {
         nextSegmentFreehand = false
         straightSpur = false
         plotMode = true
+        refreshPlotRoutes()
         if detent == .peek { detent = .half }
     }
 
@@ -3963,6 +4036,7 @@ private struct StableRouteMap: View, Equatable {
     var onSelectParcel: (String) -> Void
     var onLongPress: (CLLocationCoordinate2D) -> Void
     var onSelectMarker: (UUID) -> Void
+    var onDeletePlotPoint: (Int) -> Void
 
     static func == (lhs: StableRouteMap, rhs: StableRouteMap) -> Bool {
         lhs.sceneToken == rhs.sceneToken
@@ -4063,12 +4137,18 @@ private struct StableRouteMap: View, Equatable {
             }
             ForEach(plotMarkers.indices, id: \.self) { index in
                 Annotation("", coordinate: plotMarkers[index]) {
-                    Text("\(index + 1)")
-                        .font(.caption2.bold())
-                        .frame(width: 22, height: 22)
-                        .background(Color.white)
-                        .foregroundColor(.black)
-                        .clipShape(Circle())
+                    Button {
+                        onDeletePlotPoint(index)
+                    } label: {
+                        Text("\(index + 1)")
+                            .font(.caption2.bold())
+                            .frame(width: 22, height: 22)
+                            .background(Color.white)
+                            .foregroundColor(.black)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Delete waypoint \(index + 1)")
                 }
             }
             if let scrub {
@@ -4806,6 +4886,128 @@ private func interpolate(_ start: CLLocationCoordinate2D, _ end: CLLocationCoord
         latitude: start.latitude + (end.latitude - start.latitude) * t,
         longitude: start.longitude + (end.longitude - start.longitude) * t
     )
+}
+
+private func plotSegmentKey(_ start: CLLocationCoordinate2D, _ end: CLLocationCoordinate2D) -> String {
+    func rounded5(_ value: Double) -> Double { (value * 100_000).rounded() / 100_000 }
+    return "\(rounded5(start.latitude)),\(rounded5(start.longitude))->\(rounded5(end.latitude)),\(rounded5(end.longitude))"
+}
+
+private func trailBoxContains(_ trail: [CLLocationCoordinate2D], _ start: CLLocationCoordinate2D, _ end: CLLocationCoordinate2D, limitMeters: Double) -> Bool {
+    guard let first = trail.first else { return false }
+    var minLat = first.latitude
+    var maxLat = first.latitude
+    var minLon = first.longitude
+    var maxLon = first.longitude
+    for point in trail {
+        minLat = min(minLat, point.latitude)
+        maxLat = max(maxLat, point.latitude)
+        minLon = min(minLon, point.longitude)
+        maxLon = max(maxLon, point.longitude)
+    }
+    let midLat = (start.latitude + end.latitude) / 2
+    let dLat = limitMeters / 111_320
+    let dLon = limitMeters / (111_320 * max(0.2, cos(midLat * .pi / 180)))
+    func inside(_ point: CLLocationCoordinate2D) -> Bool {
+        point.latitude >= minLat - dLat && point.latitude <= maxLat + dLat
+            && point.longitude >= minLon - dLon && point.longitude <= maxLon + dLon
+    }
+    return inside(start) && inside(end)
+}
+
+private func projectOntoSegment(_ point: CLLocationCoordinate2D, _ start: CLLocationCoordinate2D, _ end: CLLocationCoordinate2D) -> (coordinate: CLLocationCoordinate2D, distance: Double) {
+    let lonScale = 111_320.0 * cos(point.latitude * .pi / 180)
+    let latScale = 111_320.0
+    let ax = start.longitude * lonScale
+    let ay = start.latitude * latScale
+    let bx = end.longitude * lonScale
+    let by = end.latitude * latScale
+    let px = point.longitude * lonScale
+    let py = point.latitude * latScale
+    let dx = bx - ax
+    let dy = by - ay
+    let length2 = dx * dx + dy * dy
+    let t = length2 > 1 ? max(0, min(1, ((px - ax) * dx + (py - ay) * dy) / length2)) : 0
+    let coordinate = CLLocationCoordinate2D(
+        latitude: start.latitude + (end.latitude - start.latitude) * t,
+        longitude: start.longitude + (end.longitude - start.longitude) * t
+    )
+    return (coordinate, meters(from: point, to: coordinate))
+}
+
+private func projectOntoTrail(_ point: CLLocationCoordinate2D, trail: [CLLocationCoordinate2D]) -> (segmentIndex: Int, coordinate: CLLocationCoordinate2D, distance: Double)? {
+    guard trail.count >= 2 else { return nil }
+    var bestIndex = 0
+    var bestCoordinate = trail[0]
+    var bestDistance = Double.greatestFiniteMagnitude
+    for index in 0..<(trail.count - 1) {
+        let hit = projectOntoSegment(point, trail[index], trail[index + 1])
+        if hit.distance < bestDistance {
+            bestDistance = hit.distance
+            bestIndex = index
+            bestCoordinate = hit.coordinate
+        }
+    }
+    return (bestIndex, bestCoordinate, bestDistance)
+}
+
+private func projectedTrailSlice(from startPoint: CLLocationCoordinate2D, to endPoint: CLLocationCoordinate2D, trail: [CLLocationCoordinate2D], maxDistance: Double) -> (line: [CLLocationCoordinate2D], closeness: Double)? {
+    guard let startHit = projectOntoTrail(startPoint, trail: trail),
+          let endHit = projectOntoTrail(endPoint, trail: trail),
+          startHit.distance <= maxDistance,
+          endHit.distance <= maxDistance else { return nil }
+    var line: [CLLocationCoordinate2D] = [startPoint, startHit.coordinate]
+    if startHit.segmentIndex < endHit.segmentIndex {
+        let lower = startHit.segmentIndex + 1
+        let upper = endHit.segmentIndex
+        if lower <= upper {
+            line.append(contentsOf: trail[lower...upper])
+        }
+    } else if startHit.segmentIndex > endHit.segmentIndex {
+        let lower = endHit.segmentIndex + 1
+        let upper = startHit.segmentIndex
+        if lower <= upper {
+            line.append(contentsOf: trail[lower...upper].reversed())
+        }
+    }
+    line.append(endHit.coordinate)
+    line.append(endPoint)
+    let cleaned = dedupedCoordinates(line)
+    guard cleaned.count >= 2 else { return nil }
+    return (cleaned, startHit.distance + endHit.distance)
+}
+
+private func dedupedCoordinates(_ line: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+    var result: [CLLocationCoordinate2D] = []
+    result.reserveCapacity(line.count)
+    for point in line {
+        if let last = result.last, meters(from: last, to: point) < 8 { continue }
+        result.append(point)
+    }
+    return result
+}
+
+private func plotRoadGeometry(from origin: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D) async -> [CLLocationCoordinate2D]? {
+    let request = MKDirections.Request()
+    request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
+    request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination))
+    request.transportType = .automobile
+    if let response = try? await MKDirections(request: request).calculate(),
+       let route = response.routes.first {
+        let road = coordinates(of: route.polyline)
+        if road.count >= 2 { return road }
+    }
+    let urlString = "https://router.project-osrm.org/route/v1/driving/\(origin.longitude),\(origin.latitude);\(destination.longitude),\(destination.latitude)?overview=full&geometries=geojson"
+    guard let url = URL(string: urlString) else { return nil }
+    var urlRequest = URLRequest(url: url)
+    urlRequest.timeoutInterval = 20
+    guard let (data, _) = try? await URLSession.shared.data(for: urlRequest),
+          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          (root["code"] as? String) == "Ok",
+          let routes = root["routes"] as? [[String: Any]],
+          let geometry = routes.first?["geometry"] as? [String: Any] else { return nil }
+    let road = parseCoordinates(geometry["coordinates"])
+    return road.count >= 2 ? road : nil
 }
 
 private func trailSlice(from startPoint: CLLocationCoordinate2D, to endPoint: CLLocationCoordinate2D, trail: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
