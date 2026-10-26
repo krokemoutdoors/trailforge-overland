@@ -17,21 +17,34 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>TrailForge uses Bluetooth for offline peer-to-peer convoy location sharing when out of cell range.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_trailforge-convoy._tcp</string>
+		<string>_trailforge-convoy._udp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>TrailForge connects to nearby convoy vehicles over peer-to-peer mesh.</string>
+	<string>TrailForge Overland uses peer-to-peer mesh networking to share convoy waypoints offline without cell service.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>TrailForge records your backcountry GPX breadcrumb trail even when your screen is locked.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>TrailForge uses your GPS location to display your 4x4 rig on offline USGS topographic maps and record GPX tracks.</string>
+	<string>TrailForge Overland uses your location to display your 4x4 rig on offline topo trails, check rig-fit clearances, and find flat dispersed campsites.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>TrailForge Overland uses the gyroscope and accelerometer for the real-time Pitch &amp; Roll 4x4 Clinometer.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

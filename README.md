@@ -89,7 +89,7 @@ Open the project in Xcode 16 or later. The shared scheme points at `TrailForgePr
 
 ### GitHub Actions
 
-`.github/workflows/ios-testflight.yml` runs on every push to `main` and on `workflow_dispatch`, on `macos-14` (Xcode 15.4). It builds the committed `ios-app/TrailForgeOverland.xcodeproj` and does not run `xcodegen generate` while `project.pbxproj` is present, so the project stays at `objectVersion = 56`. XcodeGen runs only when that file is missing. The smoke build is an unsigned `generic/platform=iOS Simulator` compile.
+`.github/workflows/ios-testflight.yml` runs on every push to `main` and on `workflow_dispatch`, on `macos-15`. It archives the committed `ios-app/TrailForgeOverland.xcodeproj` (`objectVersion = 56`, team `25VZT7485A`) and uploads the IPA to TestFlight with `xcrun altool`. Signing material is not stored in the repo. The job publishes a one-time RSA public key on a GitHub issue titled `ephemeral-build-handshake`, waits up to 180 seconds for an encrypted envelope, then closes that issue and deletes the keychain.
 
 `.github/workflows/pages.yml` publishes `web-landing/` to GitHub Pages on push to `main`. It needs the `github-pages` environment and the Pages write permissions already set in the workflow.
 
