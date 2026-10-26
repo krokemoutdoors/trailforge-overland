@@ -8,11 +8,19 @@ Bundle ID: `com.edwardshin.trailforge`. Deployment target: iOS 17.
 
 `MainCockpitView` is a dark, full-bleed map with a traffic-light banner on top and a thumb sheet on the bottom. The sheet has three modes:
 
-1. **Go Drive** — search the built-in USA atlas or filter by state and Near Me. The banner turns green, amber, or red from the rig-fit verdict, and shows gate status, ford depth, and miles from the live GPS fix.
-2. **Flat Camp** — the nearest verified dispersed pad on the selected trail, with slope in degrees and a Starlink sky score.
+1. **Go Drive** — search the atlas, or pick **Near Me**, **All USA**, or any state. The trail menu and the horizontal route pills refill with only that set, and the menu button shows the count (`Near Me • 14 Routes`, `UT • 6 Routes`). The banner turns green, amber, or red from the rig-fit verdict, and shows gate status, ford depth, and miles from the live GPS fix.
+2. **Flat Camp** — a list of verified `<3°` pads for the current filter. Each card shows slope and Starlink sky and has **Route Here**.
 3. **My Rig** — set tire size and rear locker. A floating pill on the map shows live pitch and roll from the gyroscope, plus recommended air-down PSI.
 
-Tap a flat camp pad or trailhead to build an Apple driving route plus an overland spur to that exact point, with turn-by-turn steps, follow-GPS, and a handoff to Apple Maps or Google Maps. State pills and Near Me refill the trail menu with only matching routes, including live scans tagged with a US state. The map uses a hybrid style with realistic elevation. `UserAnnotation()` draws the live GPS puck and heading cone after When-In-Use permission. **Center on My GPS** snaps the camera to that fix. **Near My GPS** and **Scan Area for All USA 4x4 Trails** load local tracks from OpenStreetMap Overpass and USFS roads, drawn as rig-fit polylines (green, orange, or red). The built-in atlas has 50+ iconic 4x4 routes across the West, Rockies, Midwest, Appalachia, Northeast, Alaska, and Hawaii, including Imogene Pass, White Rim, and Lost Coast Usal Road.
+The map uses a hybrid style with realistic elevation. `UserAnnotation()` draws the live GPS puck and heading cone after When-In-Use permission. **Center on My GPS** snaps the camera to that fix. **Near My GPS** and **Scan Area for All USA 4x4 Trails** load local tracks from OpenStreetMap Overpass and USFS roads, drawn as rig-fit polylines (green, orange, or red).
+
+## Build 4
+
+Build 4 (`CFBundleVersion` 4) adds tap-to-route navigation and a trail dropdown that follows the state filter.
+
+**Tap-to-route GPS directions.** Every flat camp pad (`CampSpot`) and every trailhead on the map is a button, in Go Drive and in Flat Camp. Tapping a pad, a trailhead, or **Route Here** requests an Apple `MKDirections` driving route from the live GPS fix (or from the trailhead until GPS locks, then recalculates). The map draws that route in cyan with a blue casing, then a dashed orange-on-green overland spur from the end of the road route to the exact pad. If Apple returns no road route, the trail polyline is the approach and the spur still ends on the pad. The camera frames the full route. **Start Turn-by-Turn** follows live heading, **Overview** frames the route again, and **End Route** clears it. The top banner shows the next maneuver and the full step list. The bottom card shows the destination, ETA, remaining distance, alternate routes, and a handoff to Apple Maps or Google Maps.
+
+**50-state and Near Me dropdown.** The filter bar lists **Near Me**, **All USA**, and all 50 states. Choosing one immediately replaces the trail menu and the route pills with matching routes only. The previously selected trail is not kept when it is outside the new filter. **Near Me** sorts by distance to the live GPS fix, scans Overpass and USFS roads around that fix, and merges those tracks into the menu with a `mi away` badge. A state pill selects the first route in that state and pans the camera there. Each menu row shows state, name, distance, clearance, and rig-fit (`FITS`, `CAUTION`, `NO-GO`). Live-scanned tracks are tagged with the nearest US state code, so they show up under that state instead of a generic `US` label. The built-in atlas has at least one real route in every state, including Imogene Pass, White Rim, and Lost Coast Usal Road.
 
 ## Build-matched rig filter
 
