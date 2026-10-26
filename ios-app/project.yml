@@ -39,6 +39,7 @@ targets:
       - sdk: StoreKit.framework
       - sdk: MultipeerConnectivity.framework
       - sdk: AVFoundation.framework
+      - sdk: Network.framework
     info:
       path: Info.plist
       properties:

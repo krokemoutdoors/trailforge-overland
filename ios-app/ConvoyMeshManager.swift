@@ -21,9 +21,14 @@ enum ConvoyQuickStatus: String, CaseIterable, Identifiable {
 }
 
 final class ConvoyMeshManager: NSObject, ObservableObject {
+    static let reportPrefix = "TFREPORTS:"
+
     @Published var isBroadcasting = false
     @Published var connectedPeers: [String] = []
     @Published var lastAlert = ""
+    @Published var inboundCommunityJSON = ""
+    @Published var inboundCommunityToken = 0
+    @Published var connectedRevision = 0
 
     private let peerID: MCPeerID
     private var session: MCSession?
@@ -61,21 +66,39 @@ final class ConvoyMeshManager: NSObject, ObservableObject {
         try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
     }
 
-    private func refreshPeers() {
+    func sendCommunity(_ json: String) {
+        start()
+        guard let session, !session.connectedPeers.isEmpty else { return }
+        guard let data = (Self.reportPrefix + json).data(using: .utf8) else { return }
+        try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+    }
+
+    private func refreshPeers(justConnected: Bool = false) {
         let names = session?.connectedPeers.map(\.displayName).sorted() ?? []
         DispatchQueue.main.async {
             self.connectedPeers = names
+            if justConnected {
+                self.connectedRevision += 1
+            }
         }
     }
 }
 
 extension ConvoyMeshManager: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
-        refreshPeers()
+        refreshPeers(justConnected: state == .connected)
     }
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         let text = String(data: data, encoding: .utf8) ?? "Convoy update"
+        if text.hasPrefix(Self.reportPrefix) {
+            let json = String(text.dropFirst(Self.reportPrefix.count))
+            DispatchQueue.main.async {
+                self.inboundCommunityJSON = json
+                self.inboundCommunityToken += 1
+            }
+            return
+        }
         DispatchQueue.main.async {
             self.lastAlert = "\(peerID.displayName) • \(text)"
         }
