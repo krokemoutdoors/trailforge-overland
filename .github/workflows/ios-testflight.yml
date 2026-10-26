@@ -12,16 +12,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen & Generate .xcodeproj
+      - name: Use committed Xcode project
         run: |
-          brew install xcodegen
           cd ios-app
-          xcodegen generate
+          if [ ! -f TrailForgeOverland.xcodeproj/project.pbxproj ]; then
+            echo "Committed project.pbxproj is missing; installing xcodegen and generating the project"
+            brew install xcodegen
+            xcodegen generate
+          else
+            echo "Using committed TrailForgeOverland.xcodeproj; not running xcodegen"
+          fi
+          test -f TrailForgeOverland.xcodeproj/project.pbxproj
+          grep -q 'objectVersion = 56;' TrailForgeOverland.xcodeproj/project.pbxproj
 
       - name: Verify Swift Compile (Simulator Smoke Test)
         run: |
           cd ios-app
           xcodebuild -project TrailForgeOverland.xcodeproj \
             -scheme TrailForgeOverland \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
-            CODE_SIGNING_ALLOWED=NO build
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build

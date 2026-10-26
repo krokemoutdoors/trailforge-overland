@@ -89,21 +89,24 @@ Open the project in Xcode 16 or later. The shared scheme points at `TrailForgePr
 
 ### GitHub Actions
 
-`.github/workflows/ios-testflight.yml` runs on every push to `main` and on `workflow_dispatch`, on `macos-14`:
-
-1. Check out the repo.
-2. `brew install xcodegen`, then `xcodegen generate` inside `ios-app/`.
-3. Smoke-build with `xcodebuild` for the iPhone 16 Pro simulator and `CODE_SIGNING_ALLOWED=NO`.
+`.github/workflows/ios-testflight.yml` runs on every push to `main` and on `workflow_dispatch`, on `macos-14` (Xcode 15.4). It builds the committed `ios-app/TrailForgeOverland.xcodeproj` and does not run `xcodegen generate` while `project.pbxproj` is present, so the project stays at `objectVersion = 56`. XcodeGen runs only when that file is missing. The smoke build is an unsigned `generic/platform=iOS Simulator` compile.
 
 `.github/workflows/pages.yml` publishes `web-landing/` to GitHub Pages on push to `main`. It needs the `github-pages` environment and the Pages write permissions already set in the workflow.
 
 ### Codemagic
 
-`codemagic.yaml` defines two workflows. Both use the committed `ios-app/TrailForgeOverland.xcodeproj`. If `xcodegen` is already on the machine, the first script runs `xcodegen generate` before building.
+`codemagic.yaml` defines two workflows. Neither one rewrites `ios-app/TrailForgeOverland.xcodeproj` when `project.pbxproj` is already in the repo. `xcodegen generate` runs only if that file is absent. The Apple team id on the target is `25VZT7485A`.
 
-`ios-simulator-verify` is the workflow to run before Apple Developer enrollment. It has no `integrations` block and no `ios_signing` block. On a `mac_mini_m2` with Xcode `latest`, it builds an unsigned simulator app (`generic/platform=iOS Simulator`, `CODE_SIGNING_ALLOWED=NO`).
+`ios-appstore-release` signs and uploads with the Codemagic CLI. It has no `integrations` block and no `ios_signing` block. Pass these values on `POST https://api.codemagic.io/builds` (or as build environment variables):
 
-`ios-appstore-release` is the TestFlight workflow for after enrollment. It references the App Store Connect integration `TrailForge_ASC` (the name to create in Codemagic), signs `com.edwardshin.trailforge` for App Store distribution, builds an IPA with `xcode-project build-ipa`, and submits to TestFlight. App Store review submission stays off.
+- `APP_STORE_CONNECT_ISSUER_ID`
+- `APP_STORE_CONNECT_KEY_IDENTIFIER`
+- `APP_STORE_CONNECT_PRIVATE_KEY`
+- `CERTIFICATE_PRIVATE_KEY`
+
+The workflow initializes a keychain, fetches the App Store profile with `app-store-connect fetch-signing-files`, builds an IPA with `xcode-project build-ipa`, and uploads it with `app-store-connect publish`.
+
+`ios-simulator-verify` needs none of those secrets. On a `mac_mini_m2` with Xcode `latest`, it builds an unsigned simulator app (`generic/platform=iOS Simulator`, `CODE_SIGNING_ALLOWED=NO`).
 
 ### App Store Connect API
 
