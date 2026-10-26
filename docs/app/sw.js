@@ -1,4 +1,4 @@
-const CACHE = "trailforge-overland-1.3.0-9";
+const CACHE = "trailforge-overland-1.4.0-10";
 const SHELL = [
   "./",
   "./index.html",
@@ -10,7 +10,8 @@ const SHELL = [
   "./manifest.json",
   "./community-reports.json",
   "./icon-192.png",
-  "./icon-512.png"
+  "./icon-512.png",
+  "./apple-touch-icon.png"
 ];
 
 self.addEventListener("install", function (event) {

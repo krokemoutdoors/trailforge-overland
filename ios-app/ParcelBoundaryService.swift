@@ -175,16 +175,22 @@ private enum ParcelGIS {
         async let clarkPublic = fetchClarkPublic(coordinate)
         async let usfs = fetchUSFS(coordinate)
         async let parks = fetchParks(coordinate)
+        async let padus = fetchPadus(coordinate)
+        async let plss = fetchPLSS(coordinate)
+        async let wilderness = fetchWilderness(coordinate)
+        async let tribal = fetchTribal(coordinate)
+        async let stateParcels = fetchStateParcels(coordinate)
         async let osm = fetchOverpass(coordinate)
         async let place = reverseGeocode(coordinate)
         async let census = fetchCensus(coordinate)
-        let batch = await (blm, clarkLots, clarkPublic, usfs, parks, osm, place, census)
-        let placemark = batch.6
-        let censusCard = batch.7
+        let batch = await (blm, clarkLots, clarkPublic, usfs, parks, padus, plss, wilderness, tribal, stateParcels, osm, place, census)
+        let placemark = batch.11
+        let censusCard = batch.12
 
         var real: [PropertyParcel] = []
         var seen = Set<String>()
-        for parcel in batch.1 + batch.2 + batch.3 + batch.4 + batch.0 + batch.5 {
+        let loaded = batch.9 + batch.1 + batch.2 + batch.3 + batch.4 + batch.5 + batch.6 + batch.7 + batch.8 + batch.0 + batch.10
+        for parcel in loaded {
             if seen.insert(parcel.id).inserted {
                 real.append(parcel)
             }
@@ -193,6 +199,9 @@ private enum ParcelGIS {
             let leftHit = lhs.contains(coordinate)
             let rightHit = rhs.contains(coordinate)
             if leftHit != rightHit { return leftHit }
+            if leftHit && rightHit, abs(lhs.acreage - rhs.acreage) > 0.5 {
+                return lhs.acreage < rhs.acreage
+            }
             return ParcelGeometry.meters(lhs.centerCoordinate, coordinate) < ParcelGeometry.meters(rhs.centerCoordinate, coordinate)
         }
         var merged = Array(ranked.prefix(18))
@@ -300,12 +309,147 @@ private enum ParcelGIS {
         _ coordinate: CLLocationCoordinate2D,
         source: String,
         sourceName: String,
-        owner: OwnershipCategory
+        owner: OwnershipCategory,
+        offset: Double = 0.004,
+        fields: String = "*",
+        limit: Int = 2
     ) async -> [PropertyParcel] {
-        guard let root = await json(urlString: url, query: pointQuery(coordinate, offset: 0.004)) else { return [] }
+        guard let root = await json(urlString: url, query: pointQuery(coordinate, offset: offset, fields: fields, limit: limit)) else { return [] }
         let rows = root["features"] as? [[String: Any]] ?? []
-        return rows.prefix(2).compactMap { row in
+        return rows.prefix(limit).compactMap { row in
             makeEsriParcel(row, near: coordinate, source: source, sourceName: sourceName, defaultOwner: owner, census: "")
+        }
+    }
+
+    private static func fetchPadus(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        await layer(
+            "https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Manager_Name_PADUS/FeatureServer/0/query",
+            coordinate,
+            source: "padus",
+            sourceName: "USGS PAD-US",
+            owner: .publicStateDNR,
+            offset: 0.05,
+            fields: "Own_Type,Own_Name,Mang_Type,Mang_Name,Des_Tp,Unit_Nm,Loc_Nm,State_Nm,GIS_Acres"
+        )
+    }
+
+    private static func fetchPLSS(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        async let aliquots = layer(
+            "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer/3/query",
+            coordinate,
+            source: "plss",
+            sourceName: "BLM PLSS CadNSDI",
+            owner: .privateParcel,
+            offset: 0.002,
+            fields: "PLSSID,TWNSHPLAB,FRSTDIVLAB,SECDIVLAB,SECDIVTXT,RECRDAREATX,GISACRE,STEWARD",
+            limit: 3
+        )
+        async let sections = layer(
+            "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer/2/query",
+            coordinate,
+            source: "plss-sec",
+            sourceName: "BLM PLSS sections",
+            owner: .privateParcel,
+            offset: 0.01,
+            fields: "PLSSID,TWNSHPLAB,FRSTDIVLAB,GISACRE,STEWARD",
+            limit: 2
+        )
+        let (aliquotRows, sectionRows) = await (aliquots, sections)
+        return aliquotRows + sectionRows
+    }
+
+    private static func fetchWilderness(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        await layer(
+            "https://services1.arcgis.com/ERdCHt0sNM6dENSD/arcgis/rest/services/Wilderness_Areas_in_the_United_States/FeatureServer/0/query",
+            coordinate,
+            source: "wilderness",
+            sourceName: "National Wilderness Areas",
+            owner: .publicUSFS,
+            offset: 0.05
+        )
+    }
+
+    private static func fetchTribal(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        await layer(
+            "https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/AIANNHA_v1/FeatureServer/0/query",
+            coordinate,
+            source: "tribal",
+            sourceName: "Census AIANNHA tribal lands",
+            owner: .publicStateDNR,
+            offset: 0.05
+        )
+    }
+
+    private struct ParcelEndpoint {
+        var state: String
+        var url: String
+        var source: String
+        var sourceName: String
+        var owner: OwnershipCategory = .privateParcel
+        var minLat: Double = -90
+        var maxLat: Double = 90
+        var minLon: Double = -180
+        var maxLon: Double = 180
+        var fallbackURL: String? = nil
+    }
+
+    private static let stateParcelCatalog: [ParcelEndpoint] = [
+        ParcelEndpoint(state: "WA", url: "https://services.arcgis.com/jsIt88o09Q0r1j8h/ArcGIS/rest/services/Current_Parcels/FeatureServer/0/query", source: "wa", sourceName: "Washington current parcels"),
+        ParcelEndpoint(state: "CO", url: "https://gis.colorado.gov/public/rest/services/Address_and_Parcel/Colorado_Public_Parcels/FeatureServer/0/query", source: "co", sourceName: "Colorado public parcels"),
+        ParcelEndpoint(state: "MT", url: "https://services.arcgis.com/qnjIrwR8z5Izc0ij/arcgis/rest/services/Cadastral_Application_Support/FeatureServer/5/query", source: "mt", sourceName: "Montana cadastral"),
+        ParcelEndpoint(state: "WY", url: "https://services3.arcgis.com/r0iJ85SKZ4zAzz3P/arcgis/rest/services/Wyoming_Parcels_for_2026/FeatureServer/0/query", source: "wy", sourceName: "Wyoming parcels"),
+        ParcelEndpoint(state: "ID", url: "https://services2.arcgis.com/dgGjZc6xAH5m5JyP/arcgis/rest/services/Parcels/FeatureServer/5/query", source: "id-ada", sourceName: "Ada County parcels", minLat: 43.25, maxLat: 43.85, minLon: -116.65, maxLon: -115.95),
+        ParcelEndpoint(state: "OR", url: "https://services2.arcgis.com/McQ0OlIABe29rJJy/arcgis/rest/services/Taxlots_with_Right_of_Way_Public/FeatureServer/3/query", source: "or-metro", sourceName: "Portland Metro taxlots", minLat: 45.20, maxLat: 45.75, minLon: -123.20, maxLon: -122.15),
+        ParcelEndpoint(state: "NV", url: "https://wcgisweb.washoecounty.us/arcgis/rest/services/OpenData/OpenData/MapServer/0/query", source: "nv-washoe", sourceName: "Washoe County parcels", minLat: 39.15, maxLat: 41.99, minLon: -120.60, maxLon: -119.00),
+        ParcelEndpoint(state: "AZ", url: "https://gis.maricopa.gov/arcgis/rest/services/IndividualService/Parcel/MapServer/1/query", source: "az-maricopa", sourceName: "Maricopa County parcels", minLat: 32.50, maxLat: 34.10, minLon: -113.35, maxLon: -111.00),
+        ParcelEndpoint(state: "NM", url: "https://services.arcgis.com/CWv1abTnC3urn4bV/arcgis/rest/services/berncoparcels_forIDO/FeatureServer/0/query", source: "nm-bern", sourceName: "Bernalillo County parcels", minLat: 34.70, maxLat: 35.40, minLon: -107.15, maxLon: -106.15),
+        ParcelEndpoint(state: "NC", url: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/1/query", source: "nc", sourceName: "North Carolina parcels"),
+        ParcelEndpoint(state: "NY", url: "https://services6.arcgis.com/EbVsqZ18sv1kVJ3k/arcgis/rest/services/NYS_Tax_Parcels_Public/FeatureServer/1/query", source: "ny", sourceName: "New York tax parcels"),
+        ParcelEndpoint(state: "NJ", url: "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Parcels_Composite_NJ_WM/FeatureServer/0/query", source: "nj", sourceName: "New Jersey parcels"),
+        ParcelEndpoint(state: "IN", url: "https://gisdata.in.gov/server/rest/services/Hosted/Parcel_Boundaries_of_Indiana_Current/FeatureServer/0/query", source: "in", sourceName: "Indiana parcels"),
+        ParcelEndpoint(state: "VA", url: "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VA_Parcels/FeatureServer/0/query", source: "va", sourceName: "Virginia parcels"),
+        ParcelEndpoint(state: "WV", url: "https://services.wvgis.wvu.edu/arcgis/rest/services/Planning_Cadastre/WV_Parcels/MapServer/0/query", source: "wv", sourceName: "West Virginia parcels"),
+        ParcelEndpoint(state: "MD", url: "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer/0/query", source: "md", sourceName: "Maryland parcels"),
+        ParcelEndpoint(state: "MA", url: "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0/query", source: "ma", sourceName: "Massachusetts tax parcels"),
+        ParcelEndpoint(state: "ME", url: "https://services1.arcgis.com/RbMX0mRVOFNTdLzd/arcgis/rest/services/Maine_Parcels_Organized_Towns/FeatureServer/10/query", source: "me", sourceName: "Maine parcels"),
+        ParcelEndpoint(state: "VT", url: "https://services1.arcgis.com/BkFxaEFNwHqX3tAw/arcgis/rest/services/FS_VCGI_OPENDATA_Cadastral_VTPARCELS_poly_standardized_parcels_SP_v1/FeatureServer/0/query", source: "vt", sourceName: "Vermont parcels"),
+        ParcelEndpoint(state: "CT", url: "https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_CAMA_and_Parcel_Layer/FeatureServer/0/query", source: "ct", sourceName: "Connecticut parcels"),
+        ParcelEndpoint(state: "NH", url: "https://nhgeodata.unh.edu/hosting/rest/services/Hosted/CAD_ParcelMosaic/FeatureServer/1/query", source: "nh", sourceName: "New Hampshire parcels"),
+        ParcelEndpoint(state: "DE", url: "https://enterprise.firstmap.delaware.gov/arcgis/rest/services/PlanningCadastre/DE_StateParcels/FeatureServer/0/query", source: "de", sourceName: "Delaware parcels"),
+        ParcelEndpoint(state: "ND", url: "https://services1.arcgis.com/GOcSXpzwBHyk2nog/arcgis/rest/services/NDGISHUB_Parcels/FeatureServer/0/query", source: "nd", sourceName: "North Dakota parcels"),
+        ParcelEndpoint(state: "MN", url: "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_mngeo/plan_parcels_open/FeatureServer/1/query", source: "mn", sourceName: "Minnesota parcels"),
+        ParcelEndpoint(state: "AR", url: "https://gis.arkansas.gov/arcgis/rest/services/FEATURESERVICES/Planning_Cadastre/FeatureServer/6/query", source: "ar", sourceName: "Arkansas parcels"),
+        ParcelEndpoint(state: "AK", url: "https://services1.arcgis.com/7HDiw78fcUiM2BWn/arcgis/rest/services/AK_Parcels/FeatureServer/0/query", source: "ak", sourceName: "Alaska parcels"),
+        ParcelEndpoint(state: "HI", url: "https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/MapServer/25/query", source: "hi", sourceName: "Hawaii parcels"),
+        ParcelEndpoint(state: "PA", url: "https://services3.arcgis.com/SP47Tddf7RK32lBU/arcgis/rest/services/Bucks_County_Parcels/FeatureServer/0/query", source: "pa-bucks", sourceName: "Bucks County parcels", minLat: 40.05, maxLat: 40.60, minLon: -75.40, maxLon: -74.70),
+        ParcelEndpoint(state: "PA", url: "https://services.arcgis.com/G4S1dGvn7PIgYd6Y/arcgis/rest/services/Parcels_owners/FeatureServer/0/query", source: "pa-chester", sourceName: "Chester County parcels", minLat: 39.72, maxLat: 40.25, minLon: -76.15, maxLon: -75.35),
+        ParcelEndpoint(state: "PA", url: "https://services1.arcgis.com/kOChldNuKsox8qZD/arcgis/rest/services/Montgomery_County_Parcels/FeatureServer/0/query", source: "pa-mont", sourceName: "Montgomery County parcels", minLat: 40.00, maxLat: 40.50, minLon: -75.70, maxLon: -74.95),
+        ParcelEndpoint(state: "TX", url: "https://feature.geographic.texas.gov/arcgis/rest/services/Parcels/stratmap24_land_parcels_48/MapServer/0/query", source: "tx", sourceName: "Texas StratMap parcels", fallbackURL: "https://feature.geographic.texas.gov/arcgis/rest/services/Parcels/stratmap_land_parcels/MapServer/0/query")
+    ]
+
+    private static func fetchStateParcels(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        let state = USStateLocator.code(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let matches = stateParcelCatalog.filter { item in
+            item.state == state
+                && coordinate.latitude >= item.minLat && coordinate.latitude <= item.maxLat
+                && coordinate.longitude >= item.minLon && coordinate.longitude <= item.maxLon
+        }
+        guard !matches.isEmpty else { return [] }
+        return await withTaskGroup(of: [PropertyParcel].self) { group in
+            for item in matches {
+                group.addTask {
+                    var rows = await layer(item.url, coordinate, source: item.source, sourceName: item.sourceName, owner: item.owner)
+                    if rows.isEmpty, let fallback = item.fallbackURL {
+                        rows = await layer(fallback, coordinate, source: item.source + "-fb", sourceName: item.sourceName, owner: item.owner)
+                    }
+                    return rows
+                }
+            }
+            var merged: [PropertyParcel] = []
+            for await rows in group {
+                merged.append(contentsOf: rows)
+            }
+            return merged
         }
     }
 
@@ -325,21 +469,39 @@ private enum ParcelGIS {
         );
         out geom 14;
         """
-        guard let url = URL(string: "https://overpass-api.de/api/interpreter") else { return [] }
+        let endpoints = [
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.kumi.systems/api/interpreter"
+        ]
+        for endpoint in endpoints {
+            if let parcels = await overpassRequest(endpoint, query: query, near: coordinate) {
+                return parcels
+            }
+        }
+        return []
+    }
+
+    /// `nil` means the mirror failed or timed out and the caller should try the next host.
+    private static func overpassRequest(_ endpoint: String, query: String, near coordinate: CLLocationCoordinate2D) async -> [PropertyParcel]? {
+        guard let url = URL(string: endpoint) else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 18
         request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("TrailForgeOverland/1.0", forHTTPHeaderField: "User-Agent")
         request.httpBody = query.data(using: .utf8)
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let elements = root["elements"] as? [[String: Any]] else { return [] }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return nil
+            }
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            let elements = root["elements"] as? [[String: Any]] ?? []
             return elements.prefix(14).compactMap { element in
                 makeOverpassParcel(element, near: coordinate)
             }
         } catch {
-            return []
+            return nil
         }
     }
 
@@ -400,17 +562,17 @@ private enum ParcelGIS {
         )
     }
 
-    private static func pointQuery(_ coordinate: CLLocationCoordinate2D, offset: Double) -> [URLQueryItem] {
+    private static func pointQuery(_ coordinate: CLLocationCoordinate2D, offset: Double, fields: String = "*", limit: Int = 2) -> [URLQueryItem] {
         [
             URLQueryItem(name: "geometry", value: "\(coordinate.longitude),\(coordinate.latitude)"),
             URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
             URLQueryItem(name: "inSR", value: "4326"),
             URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
-            URLQueryItem(name: "outFields", value: "*"),
+            URLQueryItem(name: "outFields", value: fields),
             URLQueryItem(name: "returnGeometry", value: "true"),
             URLQueryItem(name: "outSR", value: "4326"),
             URLQueryItem(name: "maxAllowableOffset", value: String(offset)),
-            URLQueryItem(name: "resultRecordCount", value: "2"),
+            URLQueryItem(name: "resultRecordCount", value: String(limit)),
             URLQueryItem(name: "f", value: "json")
         ]
     }
@@ -461,7 +623,7 @@ private enum ParcelGIS {
         guard let ring = ParcelGeometry.bestRing(geometry?["rings"], near: near) else { return nil }
         let anchor = ring.first ?? near
         let fallback = String(format: "%.4f-%.4f", anchor.latitude, anchor.longitude)
-        let identifier = text(attributes, keys: ["OBJECTID", "objectid", "Prop_id", "APN", "PIN", "ACCT", "GLOBALID", "SMA_ID", "adminforestid", "FID"]) ?? fallback
+        let identifier = text(attributes, keys: ["OBJECTID", "objectid", "Prop_id", "APN", "PIN", "ACCT", "GLOBALID", "SMA_ID", "adminforestid", "FID", "PARCEL_ID_NR", "parcel_id", "parcelnb", "parno", "PRINT_KEY", "PAMS_PIN", "state_parcel_id", "PARCELID", "GISPID", "ACCTID", "MAP_PAR_ID", "STATE_ID", "SPAN", "Parcel_ID", "UniqueGISID", "state_pin", "tmk_txt", "UPC", "PLSSID"]) ?? fallback
         return assemble(
             id: "\(source)-\(identifier)",
             ring: ring,
@@ -512,7 +674,7 @@ private enum ParcelGIS {
         let gisAddress = situsAddress(attributes) ?? tagAddress(tags)
         let publishedOwner = publishedEntity(attributes, tags: tags)
         var ownership = classify(
-            [publishedOwner, text(attributes, keys: ["ADMIN_AGENCY_CODE", "FEATTYPE", "PubLandGroup", "PropertyUseClass", "LANDUSE"]), tags["landuse"], tags["leisure"], tags["boundary"], tags["operator"]].compactMap { $0 }.joined(separator: " "),
+            [publishedOwner, text(attributes, keys: ["ADMIN_AGENCY_CODE", "FEATTYPE", "PubLandGroup", "PropertyUseClass", "LANDUSE", "Own_Type", "Mang_Type", "Des_Tp", "Unit_Nm", "Own_Name", "Mang_Name", "Loc_Nm"]), tags["landuse"], tags["leisure"], tags["boundary"], tags["operator"]].compactMap { $0 }.joined(separator: " "),
             fallback: defaultOwner
         )
         if tags["boundary"] == "national_park" || (tags["boundary"] == "protected_area" && ownership == .privateParcel) {
@@ -553,15 +715,18 @@ private enum ParcelGIS {
             ownerName = "Private land — owner name not published"
             ownerIsPublished = false
         }
-        let apn = text(attributes, keys: ["Prop_id", "APN", "PIN", "ACCT", "PARCEL", "PARCELID", "PARCEL_ID", "LandProp_id"])
+        let plssLegal = ["TWNSHPLAB", "FRSTDIVLAB", "SECDIVLAB", "SECDIVTXT"].compactMap { text(attributes, keys: [$0]) }
+        let plssLine = plssLegal.isEmpty ? nil : plssLegal.joined(separator: " ")
+        let apn = text(attributes, keys: ["Prop_id", "APN", "PIN", "ACCT", "PARCEL", "PARCELID", "PARCEL_ID", "LandProp_id", "PARCEL_ID_NR", "parcel_id", "parcelnb", "parno", "PRINT_KEY", "PAMS_PIN", "state_parcel_id", "GISPID", "ACCTID", "MAP_PAR_ID", "STATE_ID", "SPAN", "Parcel_ID", "UniqueGISID", "state_pin", "tmk_txt", "UPC", "PLSSID", "SECDIVLAB"])
             ?? tags["addr:housenumber"].map { "OSM house \($0)" }
             ?? id
-        let tract = text(attributes, keys: ["PlatName", "LegalShort", "SUBDIVISION", "TRACT", "Nbrhd"])
+        let tract = text(attributes, keys: ["PlatName", "LegalShort", "SUBDIVISION", "TRACT", "Nbrhd", "legal", "LEGALDESC", "LegalDesc"])
+            ?? plssLine
             ?? tags["addr:street"]
             ?? sourceName
         let zoning = useClass ?? "See the publishing agency"
         let value = assessedText(attributes)
-        let county = text(attributes, keys: ["COUNTY", "COUNTY_NAME", "SitusCity"])
+        let county = text(attributes, keys: ["COUNTY", "COUNTY_NAME", "CountyName", "county", "SitusCity"])
             ?? (sourceName.contains("Clark") ? "Clark County" : nil)
             ?? "USA"
         let state = text(attributes, keys: ["ADMIN_ST", "STATE", "STATE_CODE"])
@@ -609,7 +774,7 @@ private enum ParcelGIS {
 
     private static func publishedEntity(_ attributes: [String: Any], tags: [String: String]) -> String? {
         let raw = text(attributes, keys: [
-            "PubLandOwner", "OwnerName", "PACSOwner", "forestname", "ADMIN_AGENCY_CODE", "NAME", "AGENCY", "ADMIN_AGENCY", "SMA_NAME", "UNIT_NAME"
+            "PubLandOwner", "OwnerName", "ownname", "ownername1", "ownername", "PRIMARY_OWNER", "OWNER", "owner", "DEEDHOLDER", "Own_Name", "Mang_Name", "Unit_Nm", "Loc_Nm", "PACSOwner", "forestname", "ADMIN_AGENCY_CODE", "NAME", "AGENCY", "ADMIN_AGENCY", "SMA_NAME", "UNIT_NAME", "STEWARD"
         ]) ?? tags["owner"] ?? tags["operator"]
         guard let raw else { return nil }
         let upper = raw.uppercased()
@@ -672,6 +837,9 @@ private enum ParcelGIS {
             let zip = text(attributes, keys: ["zip"]) ?? ""
             return joinAddress(street: line, city: city, state: state, zip: zip)
         }
+        if let full = text(attributes, keys: ["SITUS_ADDRESS", "locationad", "PARCEL_ADDR", "PROP_LOC", "SITUSADD", "PropertyFullStreetAddress", "SITEADDR", "ADDRESS", "SitusAddress", "FULLADDR"]) {
+            return titleCaseAddress(full)
+        }
         return nil
     }
 
@@ -714,11 +882,15 @@ private enum ParcelGIS {
     }
 
     private static func assessedText(_ attributes: [String: Any]) -> String? {
-        if let total = double(from: lowered(attributes)["taxtotval"] ?? lowered(attributes)["mkttotval"]), total > 1 {
-            let formatted = NumberFormatter.localizedString(from: NSNumber(value: total), number: .currency)
-            return "County assessed value \(formatted)"
+        let map = lowered(attributes)
+        let keys = ["taxtotval", "mkttotval", "full_market_val", "parval", "actualvalu", "total_value", "totalval", "totalvalue", "assessed", "market", "value"]
+        for key in keys {
+            if let total = double(from: map[key]), total > 1 {
+                let formatted = NumberFormatter.localizedString(from: NSNumber(value: total), number: .currency)
+                return "County assessed value \(formatted)"
+            }
         }
-        return text(attributes, keys: ["ASSESSED", "TOTALVALUE", "MARKET", "VALUE"])
+        return nil
     }
 
     private static func classify(_ text: String, fallback: OwnershipCategory) -> OwnershipCategory {
@@ -728,8 +900,11 @@ private enum ParcelGIS {
         if upper.contains("STATE PARK") || upper.contains("STATE FOREST") || upper.contains("DNR") || upper.contains("NATURAL RESOURCES") || upper.contains("COUNTY") || upper.contains("CITY OF") {
             return .publicStateDNR
         }
-        if upper.contains("NATIONAL FOREST") || upper.contains("USFS") || upper.contains("FOREST SERVICE") || upper.contains("FOREST") {
+        if upper.contains("WILDERNESS") || upper.contains("NATIONAL FOREST") || upper.contains("USFS") || upper.contains("FOREST SERVICE") || upper.contains("FOREST") {
             return .publicUSFS
+        }
+        if upper.contains("TRIBAL") || upper.contains("RESERVATION") || upper.contains("INDIAN") || upper.contains(" BIA") || upper.contains("NATIVE") {
+            return .publicStateDNR
         }
         if upper.contains("PRIVATE") || upper.contains("PVT") || upper.contains("RESIDENTIAL") { return .privateParcel }
         return fallback
@@ -765,7 +940,7 @@ private enum ParcelGIS {
 
     private static func acresValue(_ attributes: [String: Any]) -> Double? {
         let map = lowered(attributes)
-        for key in ["gisac", "acres", "gis_acres", "acreage", "calc_acres", "land_acres"] {
+        for key in ["gisac", "gisacre", "acres", "gis_acres", "gisacres", "acreage", "calc_acres", "land_acres", "landgrossa", "recrdareatx"] {
             if let number = double(from: map[key]), number > 0.02, number < 8_000_000 {
                 return number
             }
