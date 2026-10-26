@@ -655,7 +655,7 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
         let content = UNMutableNotificationContent()
         content.title = "Offline area pack ready"
         content.body = "\(area.label) is saved on this iPhone."
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil), withCompletionHandler: nil)
         return record
     }
 
