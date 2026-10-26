@@ -137,6 +137,13 @@ final class ParcelBoundaryService: ObservableObject {
         selectedID = parcel?.id
     }
 
+    func replace(_ next: [PropertyParcel]) {
+        parcels = Array(next.prefix(18))
+        if let selectedID, !parcels.contains(where: { $0.id == selectedID }) {
+            self.selectedID = nil
+        }
+    }
+
     func parcel(at coordinate: CLLocationCoordinate2D) -> PropertyParcel? {
         parcels.first { $0.contains(coordinate) }
     }
