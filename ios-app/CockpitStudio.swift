@@ -25,6 +25,16 @@ enum TrailReportStatus: String, CaseIterable, Identifiable {
     case gate = "Gate Locked"
 
     var id: String { rawValue }
+
+    var communityLabel: String {
+        switch self {
+        case .open: return "✅ Open & Clear"
+        case .mud: return "❄️ Mud / Snow"
+        case .tree: return "🌲 Downed Tree"
+        case .washout: return "⚠️ Washout"
+        case .gate: return "🔒 Gate Locked"
+        }
+    }
 }
 
 struct TrailConditionReport: Codable, Identifiable {
@@ -33,6 +43,84 @@ struct TrailConditionReport: Codable, Identifiable {
     var status: String
     var createdAt: Date
     var queuedOffline: Bool
+    var latitude: Double
+    var longitude: Double
+    var confirmations: Int
+    var cleared: Bool
+    var updatedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id, trailID, status, createdAt, queuedOffline, latitude, longitude, confirmations, cleared, updatedAt
+    }
+
+    init(
+        id: String,
+        trailID: String,
+        status: String,
+        createdAt: Date,
+        queuedOffline: Bool,
+        latitude: Double = 0,
+        longitude: Double = 0,
+        confirmations: Int = 1,
+        cleared: Bool = false,
+        updatedAt: Date? = nil
+    ) {
+        self.id = id
+        self.trailID = trailID
+        self.status = status
+        self.createdAt = createdAt
+        self.queuedOffline = queuedOffline
+        self.latitude = latitude
+        self.longitude = longitude
+        self.confirmations = confirmations
+        self.cleared = cleared
+        self.updatedAt = updatedAt ?? createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        trailID = try container.decode(String.self, forKey: .trailID)
+        status = try container.decode(String.self, forKey: .status)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        queuedOffline = try container.decodeIfPresent(Bool.self, forKey: .queuedOffline) ?? false
+        latitude = try container.decodeIfPresent(Double.self, forKey: .latitude) ?? 0
+        longitude = try container.decodeIfPresent(Double.self, forKey: .longitude) ?? 0
+        confirmations = try container.decodeIfPresent(Int.self, forKey: .confirmations) ?? 1
+        cleared = try container.decodeIfPresent(Bool.self, forKey: .cleared) ?? false
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(trailID, forKey: .trailID)
+        try container.encode(status, forKey: .status)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(queuedOffline, forKey: .queuedOffline)
+        try container.encode(latitude, forKey: .latitude)
+        try container.encode(longitude, forKey: .longitude)
+        try container.encode(confirmations, forKey: .confirmations)
+        try container.encode(cleared, forKey: .cleared)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
+}
+
+enum CommunityStatus {
+    static func badge(for trailID: String, reports: [TrailConditionReport], publishedGate: String) -> String {
+        let openReports = reports.filter { $0.trailID == trailID && !$0.cleared }
+        guard let latest = openReports.max(by: { $0.updatedAt < $1.updatedAt }) else { return publishedGate }
+        switch latest.status {
+        case TrailReportStatus.gate.rawValue, TrailReportStatus.washout.rawValue:
+            return "CLOSED (USER REPORT)"
+        case TrailReportStatus.tree.rawValue, TrailReportStatus.mud.rawValue:
+            return "CAUTION (USER REPORT)"
+        case TrailReportStatus.open.rawValue:
+            return "OPEN (USER REPORT)"
+        default:
+            return publishedGate
+        }
+    }
 }
 
 struct OfflineCorridorPack: Codable, Identifiable {

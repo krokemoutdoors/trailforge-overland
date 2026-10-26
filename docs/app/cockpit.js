@@ -3007,24 +3007,52 @@
     return { G: "Gate Locked", T: "Downed Tree", W: "Washout", M: "Mud/Snow", O: "Open & Clear", H: "Washout" }[code] || "Washout";
   }
 
+  function canonicalCommunityStatus(status) {
+    const text = String(status || "").trim();
+    const compact = text.replace(/\s*\/\s*/g, "/");
+    if (REPORTS.indexOf(compact) >= 0) return compact;
+    if (REPORTS.indexOf(text) >= 0) return text;
+    return text.slice(0, 40);
+  }
+
+  function statusFromHazardCategory(category) {
+    const text = String(category || "");
+    if (text.indexOf("Gate") >= 0) return "Gate Locked";
+    if (text.indexOf("Tree") >= 0) return "Downed Tree";
+    if (text.indexOf("Mud") >= 0 || text.indexOf("Snow") >= 0) return "Mud/Snow";
+    if (text.indexOf("Pad") >= 0) return "Verified Pad";
+    return "Washout";
+  }
+
+  function communityTime(raw) {
+    if (typeof raw.time === "number" && Number.isFinite(raw.time)) return raw.time;
+    const stamp = raw.updatedAt || raw.createdAt || raw.time;
+    if (typeof stamp === "number" && Number.isFinite(stamp)) return stamp;
+    const parsed = Date.parse(stamp || "");
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  }
+
   function normalizeCommunity(raw) {
     if (!raw || typeof raw !== "object") return null;
-    const lat = Number(raw.lat);
-    const lon = Number(raw.lon);
-    const status = String(raw.status || "").slice(0, 40);
-    if (!raw.id || !raw.trailId || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-    const kind = raw.kind === "hazard" ? "hazard" : "condition";
-    if (REPORTS.indexOf(status) < 0 && kind !== "hazard") return null;
+    const lat = Number(raw.lat != null ? raw.lat : raw.latitude);
+    const lon = Number(raw.lon != null ? raw.lon : raw.longitude);
+    const trailId = raw.trailId || raw.trailID;
+    let status = canonicalCommunityStatus(raw.status || "");
+    if (!status && raw.category) status = canonicalCommunityStatus(statusFromHazardCategory(raw.category));
+    if (!raw.id || !trailId || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const kind = raw.kind === "hazard" || raw.category ? "hazard" : "condition";
+    if (REPORTS.indexOf(status) < 0 && kind !== "hazard" && status.indexOf("Pad") < 0) return null;
+    const confirm = raw.confirmCount != null ? raw.confirmCount : raw.confirmations;
     return {
       id: String(raw.id).slice(0, 80),
-      trailId: String(raw.trailId).slice(0, 80),
+      trailId: String(trailId).slice(0, 80),
       lat: lat,
       lon: lon,
       status: status,
       kind: kind,
       rig: String(raw.rig || "Overland rig").slice(0, 60),
-      time: Number(raw.time) || Date.now(),
-      confirmCount: Math.max(0, Number(raw.confirmCount) || 0),
+      time: communityTime(raw),
+      confirmCount: Math.max(0, Number(confirm) || 0),
       cleared: !!raw.cleared,
       note: String(raw.note || "").slice(0, 140)
     };
@@ -3079,8 +3107,20 @@
 
   function absorbCommunityFeed(payload) {
     const list = payload && payload.reports;
-    if (!list || !list.forEach) return;
-    list.forEach(absorbCommunityReport);
+    if (list && list.forEach) list.forEach(absorbCommunityReport);
+    const hazards = payload && payload.hazards;
+    if (!hazards || !hazards.forEach) return;
+    hazards.forEach(function (hazard) {
+      absorbCommunityReport(Object.assign({}, hazard, {
+        kind: "hazard",
+        status: hazard.status || statusFromHazardCategory(hazard.category),
+        trailId: hazard.trailId || hazard.trailID,
+        lat: hazard.lat != null ? hazard.lat : hazard.latitude,
+        lon: hazard.lon != null ? hazard.lon : hazard.longitude,
+        time: hazard.time || hazard.updatedAt || hazard.createdAt,
+        confirmCount: hazard.confirmCount != null ? hazard.confirmCount : hazard.confirmations
+      }));
+    });
   }
 
   function applyCommunityEvent(event) {

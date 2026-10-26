@@ -135,7 +135,7 @@ struct MainCockpitView: View {
     @AppStorage("trailforge.nightVision") private var nightVision = false
     @AppStorage("trailforge.thermalSaver") private var thermalSaver = false
     @StateObject private var convoy = ConvoyMeshManager()
-    @StateObject private var community = CommunitySync()
+    @StateObject private var community = CommunityReportSyncService()
     @StateObject private var hazardRecorder = HazardNoteRecorder()
     @State private var hazardPins: [DroppedHazard] = []
     @State private var showHazardSheet = false
@@ -268,8 +268,9 @@ struct MainCockpitView: View {
         hasher.combine(nextSegmentFreehand)
         hasher.combine(segmentFreehand.map { $0 ? "1" : "0" }.joined())
         hasher.combine(thermalSaver)
-        hasher.combine(hazardPins.map(\.id).joined(separator: ","))
-        hasher.combine(community.reports.map { "\($0.id):\($0.confirmCount):\($0.cleared)" }.joined(separator: ","))
+        hasher.combine(hazardPins.map { "\($0.id):\($0.confirmations):\($0.cleared)" }.joined(separator: ","))
+        hasher.combine(reports.map { "\($0.id):\($0.status):\($0.confirmations):\($0.cleared)" }.joined(separator: ","))
+        hasher.combine(community.feedToken)
         hasher.combine(profileIndex)
         hasher.combine(mapHazards.map(\.id).joined(separator: ","))
         return hasher.finalize()
@@ -321,13 +322,26 @@ struct MainCockpitView: View {
 
     private var mapHazards: [MapHazard] {
         guard hazardOverlayOpacity > 0.02 else { return [] }
-        let dropped = hazardPins.map { pin in
-            MapHazard(id: pin.id, title: pin.category, coordinates: [], point: pin.coordinate, radiusMeters: 36)
+        let dropped = hazardPins.compactMap { pin -> MapHazard? in
+            guard !pin.cleared else { return nil }
+            return MapHazard(id: "userhazard-\(pin.id)", title: pin.category, coordinates: [], point: pin.coordinate, radiusMeters: 36)
         }
+        let communityMarkers = reports.compactMap { report -> MapHazard? in
+            guard !report.cleared, report.latitude != 0 || report.longitude != 0 else { return nil }
+            let label = TrailReportStatus(rawValue: report.status)?.communityLabel ?? report.status
+            return MapHazard(
+                id: "community-\(report.id)",
+                title: label,
+                coordinates: [],
+                point: CLLocationCoordinate2D(latitude: report.latitude, longitude: report.longitude),
+                radiusMeters: 80
+            )
+        }
+        let live = dropped + communityMarkers
         if heatLimited {
-            return TrailHazards.localMarkers(on: activeTrail) + dropped
+            return TrailHazards.localMarkers(on: activeTrail) + live
         }
-        return TrailHazards.localMarkers(on: activeTrail) + remoteHazards + dropped
+        return TrailHazards.localMarkers(on: activeTrail) + remoteHazards + live
     }
 
     private var customRouteMiles: Double {
@@ -393,17 +407,12 @@ struct MainCockpitView: View {
             motionManager.startUpdates()
             locationTracker.start()
             refreshSelectedTrailDraw()
-            reports = CockpitStore.loadReports()
+            community.start()
+            community.setOfflineSimulation(offlineFirst)
+            reports = community.reports
+            hazardPins = community.hazards
             offlinePacks = CockpitStore.loadPacks()
-            hazardPins = CockpitStore.loadHazards()
             convoy.start()
-            community.relayMesh = { [weak convoy] payload in
-                convoy?.broadcastCommunity(payload)
-            }
-            convoy.onCommunity = { [weak community] payload in
-                community?.ingestMesh(payload)
-            }
-            community.refresh()
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
             if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
                 thermalSaver = true
@@ -437,7 +446,6 @@ struct MainCockpitView: View {
                 selectedCampSpot = nil
             }
             refreshSelectedTrailDraw()
-            community.refresh()
             if skipNextFocus {
                 skipNextFocus = false
                 return
@@ -481,6 +489,21 @@ struct MainCockpitView: View {
                 thermalSaver = true
             }
         }
+        .onChange(of: offlineFirst) { _, enabled in
+            community.setOfflineSimulation(enabled)
+        }
+        .onChange(of: community.feedToken) { _, _ in
+            reports = community.reports
+            hazardPins = community.hazards
+        }
+        .onChange(of: convoy.connectedRevision) { _, _ in
+            convoy.sendCommunity(community.envelopeJSON())
+        }
+        .onChange(of: convoy.inboundCommunityToken) { _, _ in
+            community.absorbRemote(convoy.inboundCommunityJSON)
+            reports = community.reports
+            hazardPins = community.hazards
+        }
         .onChange(of: hazardOverlayOpacity) { _, value in
             if value > 0.02 {
                 refreshHazards(around: mapCenter)
@@ -500,6 +523,10 @@ struct MainCockpitView: View {
         .sheet(isPresented: $showTripQR) {
             tripQRSheet
         }
+        .sheet(isPresented: $showProPaywall) {
+            TrailForgePaywallView()
+                .environmentObject(storeKit)
+        }
     }
 
     private var fitBanner: some View {
@@ -518,11 +545,6 @@ struct MainCockpitView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                    if let flag = community.banner(for: activeTrail.id) {
-                        Text(flag.text)
-                            .font(.caption2.bold())
-                            .foregroundColor(flag.gate ? Color(red: 1, green: 0.35, blue: 0.42) : Color(red: 1, green: 0.69, blue: 0.13))
-                    }
                 }
                 Spacer()
                 Button {
@@ -563,6 +585,10 @@ struct MainCockpitView: View {
                     Text(route.destination.kind == .trailhead ? route.destination.name : String(format: "%@ • %.1f° • %d%% Starlink", route.destination.name, route.destination.slopeDeg, route.destination.starlinkPct))
                         .font(.caption)
                         .foregroundColor(.cyan)
+                        .lineLimit(1)
+                    Text("Gate: \(CommunityStatus.badge(for: activeTrail.id, reports: reports, publishedGate: activeTrail.gateStatus))")
+                        .font(.caption2.bold())
+                        .foregroundColor(.orange)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -856,11 +882,12 @@ struct MainCockpitView: View {
     private func bannerDetail(fitNotes: [String]) -> String {
         guard !pickerTrails.isEmpty else { return "Pick another state or tap Near Me." }
         let note = fitNotes.first ?? ""
+        let gate = CommunityStatus.badge(for: activeTrail.id, reports: reports, publishedGate: activeTrail.gateStatus)
         if let user = locationTracker.userCoordinate {
             let away = miles(from: user, to: activeTrail.centerCoordinate)
-            return String(format: "Gate: %@ • Ford: %d\" • %.1f mi • %@", activeTrail.gateStatus, activeTrail.waterCrossingIn, away, note)
+            return String(format: "Gate: %@ • Ford: %d\" • %.1f mi • %@", gate, activeTrail.waterCrossingIn, away, note)
         }
-        return "Gate: \(activeTrail.gateStatus) • Ford: \(activeTrail.waterCrossingIn)\" • \(note)"
+        return "Gate: \(gate) • Ford: \(activeTrail.waterCrossingIn)\" • \(note)"
     }
 
     private func routeMenuLabel(_ trail: OverlandTrail) -> String {
@@ -1039,7 +1066,7 @@ struct MainCockpitView: View {
 
     private var currentTripGPX: String {
         let track = plotPoints.count >= 2 ? plottedLine : (activeRoute?.selected.road ?? activeTrail.coordinates)
-        return TripPackageBuilder.gpx(trail: activeTrail, track: track, hazards: hazardPins, community: community.reports)
+        return TripPackageBuilder.gpx(trail: activeTrail, track: track, hazards: hazardPins)
     }
 
     private func recordHazardNote() {
@@ -1081,27 +1108,11 @@ struct MainCockpitView: View {
             note: "Dropped at live GPS",
             photoPath: photoPath,
             voicePath: voicePath,
-            createdAt: Date()
+            createdAt: Date(),
+            trailID: activeTrail.id
         )
-        hazardPins.insert(pin, at: 0)
-        CockpitStore.saveHazards(hazardPins)
-        let sharedStatus: String
-        switch hazardCategory {
-        case "🔒 Locked Gate": sharedStatus = "Gate Locked"
-        case "🌲 Downed Tree": sharedStatus = "Downed Tree"
-        case "💧 Deep Ford": sharedStatus = "Washout"
-        case "⛺ Verified <3° Pad": sharedStatus = "Verified Pad"
-        default: sharedStatus = "Washout"
-        }
-        community.publishHazard(
-            id: pin.id,
-            trailID: activeTrail.id,
-            status: sharedStatus,
-            lat: pin.latitude,
-            lon: pin.longitude,
-            rig: rigStore.profile.name,
-            note: pin.note
-        )
+        community.submitHazard(pin)
+        publishCommunity()
         hazardPhoto = nil
         hazardPhotoItem = nil
         pendingVoiceURL = nil
@@ -1577,9 +1588,6 @@ struct MainCockpitView: View {
             hazardOpacity: hazardOverlayOpacity,
             starlinkOpacity: starlinkOverlayOpacity,
             hazards: mapHazards,
-            community: community.reports,
-            onConfirm: { id in community.confirm(id) },
-            onClear: { id in community.clear(id) },
             plotLine: plottedLine,
             plotMarkers: plotPoints,
             scrub: scrubCoordinate,
@@ -1852,6 +1860,10 @@ struct MainCockpitView: View {
             Toggle("Offline-First / No-Signal Simulation", isOn: $offlineFirst)
                 .font(.caption.bold())
                 .tint(.cyan)
+            Button("TrailForge Pro") { showProPaywall = true }
+                .font(.caption.bold())
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
             Text(offlineFirst
                  ? "Offline-first is on. Cached trails, backcountry corridors, saved parcels, and rig-fit stay available with no cell signal."
                  : "Turn this on to keep navigation on the saved atlas, backcountry corridors, corridor packs, and rig-fit math when the radio is dark.")
@@ -2089,7 +2101,7 @@ struct MainCockpitView: View {
             }
             Button("QR") {
                 tripShareText = currentTripGPX
-                tripQRImage = TripPackageBuilder.qrImage(TripPackageBuilder.qrText(for: activeTrail, hazards: hazardPins, community: community.reports))
+                tripQRImage = TripPackageBuilder.qrImage(TripPackageBuilder.qrText(for: activeTrail, hazards: hazardPins))
                 showTripQR = true
             }
             .font(.caption.bold())
@@ -2179,14 +2191,21 @@ struct MainCockpitView: View {
     }
 
     private var trailReportBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Report Trail Status")
                 .font(.caption.bold())
                 .foregroundColor(.orange)
+            Text(community.syncPill)
+                .font(.caption2.bold())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.white.opacity(0.1))
+                .foregroundColor(.cyan)
+                .clipShape(Capsule())
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(TrailReportStatus.allCases) { status in
-                        Button(reportButtonTitle(status)) { logReport(status) }
+                        Button(status.communityLabel) { logReport(status) }
                             .font(.caption2.bold())
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
@@ -2196,38 +2215,94 @@ struct MainCockpitView: View {
                     }
                 }
             }
-            Button("↻ Refresh Live Conditions") { community.refresh() }
-                .font(.caption2.bold())
-            if !community.notice.isEmpty {
-                Text(community.notice)
-                    .font(.caption2.bold())
-                    .foregroundColor(community.notice.contains("Synced") ? .green : .orange)
+            ForEach(activeCommunityReports) { report in
+                communityReportCard(report)
             }
-            ForEach(community.active(on: activeTrail.id).prefix(8)) { report in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(report.status)
-                        .font(.caption.bold())
-                    Text("\(report.rig) · \(report.confirmCount) confirm")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    HStack {
-                        Button("👍 Still Here (\(report.confirmCount))") { community.confirm(report.id) }
-                        Button("✅ Cleared / Gate Open") { community.clear(report.id) }
-                    }
-                    .font(.caption2.bold())
-                }
+            ForEach(activeCommunityHazards) { pin in
+                communityHazardCard(pin)
             }
         }
     }
 
-    private func reportButtonTitle(_ status: TrailReportStatus) -> String {
-        switch status {
-        case .open: return "✅ Open & Clear"
-        case .mud: return "❄️ Mud/Snow"
-        case .tree: return "🌲 Downed Tree"
-        case .washout: return "⚠️ Washout"
-        case .gate: return "🔒 Gate Locked"
+    private var activeCommunityReports: [TrailConditionReport] {
+        reports
+            .filter { $0.trailID == activeTrail.id }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var activeCommunityHazards: [DroppedHazard] {
+        hazardPins
+            .filter { pin in
+                if pin.trailID == activeTrail.id { return true }
+                guard pin.trailID.isEmpty else { return false }
+                return meters(from: pin.coordinate, to: activeTrail.centerCoordinate) < 8_000
+            }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func communityReportCard(_ report: TrailConditionReport) -> some View {
+        let label = TrailReportStatus(rawValue: report.status)?.communityLabel ?? report.status
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(report.cleared ? "\(label) • re-opened" : label)
+                    .font(.caption.bold())
+                Spacer()
+                Text(report.updatedAt, style: .time)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Button("👍 Confirm Still Here (\(report.confirmations))") {
+                    community.confirmReport(report.id)
+                    publishCommunity()
+                }
+                Button("✅ Mark Cleared / Re-Opened") {
+                    community.clearReport(report.id)
+                    publishCommunity()
+                }
+            }
+            .font(.caption2.bold())
+            .buttonStyle(.bordered)
+            .tint(.cyan)
         }
+        .padding(8)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func communityHazardCard(_ pin: DroppedHazard) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(pin.cleared ? "\(pin.category) • cleared" : pin.category)
+                    .font(.caption.bold())
+                Spacer()
+                Text(pin.updatedAt, style: .time)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Button("👍 Confirm Still Here (\(pin.confirmations))") {
+                    community.confirmHazard(pin.id)
+                    publishCommunity()
+                }
+                Button("✅ Mark Cleared / Re-Opened") {
+                    community.clearHazard(pin.id)
+                    publishCommunity()
+                }
+            }
+            .font(.caption2.bold())
+            .buttonStyle(.bordered)
+            .tint(.orange)
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func publishCommunity() {
+        reports = community.reports
+        hazardPins = community.hazards
+        convoy.sendCommunity(community.envelopeJSON())
     }
 
     private var plotterCard: some View {
@@ -2450,7 +2525,6 @@ struct MainCockpitView: View {
     }
 
     private func importGPX(_ xml: String) {
-        community.absorbGPX(xml)
         let coordinates = GPXExchange.coordinates(in: xml)
         guard !coordinates.isEmpty else { return }
         plotPoints = coordinates
@@ -2462,22 +2536,17 @@ struct MainCockpitView: View {
     }
 
     private func logReport(_ status: TrailReportStatus) {
-        reports.insert(TrailConditionReport(
+        let coordinate = locationTracker.userCoordinate ?? activeTrail.centerCoordinate
+        community.submitReport(TrailConditionReport(
             id: UUID().uuidString,
             trailID: activeTrail.id,
             status: status.rawValue,
             createdAt: Date(),
-            queuedOffline: offlineFirst
-        ), at: 0)
-        CockpitStore.saveReports(Array(reports.prefix(40)))
-        let coordinate = locationTracker.userCoordinate
-        community.publishCondition(
-            trailID: activeTrail.id,
-            status: status.rawValue,
-            lat: coordinate?.latitude ?? activeTrail.centerLat,
-            lon: coordinate?.longitude ?? activeTrail.centerLon,
-            rig: rigStore.profile.name
-        )
+            queuedOffline: offlineFirst || !community.online,
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude
+        ))
+        publishCommunity()
     }
 
     private func downloadCorridor() {
@@ -2703,9 +2772,6 @@ private struct StableRouteMap: View, Equatable {
     var hazardOpacity: Double
     var starlinkOpacity: Double
     var hazards: [MapHazard]
-    var community: [CommunityReport]
-    var onConfirm: (String) -> Void
-    var onClear: (String) -> Void
     var plotLine: [CLLocationCoordinate2D]
     var plotMarkers: [CLLocationCoordinate2D]
     var scrub: CLLocationCoordinate2D?
@@ -2752,24 +2818,6 @@ private struct StableRouteMap: View, Equatable {
             if hazardOpacity > 0.02 {
                 ForEach(hazards) { hazard in
                     hazardOverlay(hazard)
-                }
-            }
-            ForEach(community.filter { !$0.cleared }) { report in
-                Annotation("", coordinate: CLLocationCoordinate2D(latitude: report.lat, longitude: report.lon)) {
-                    VStack(spacing: 2) {
-                        Text(report.status)
-                            .font(.system(size: 9, weight: .bold))
-                            .lineLimit(1)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(report.status == "Gate Locked" ? Color.red : Color.orange)
-                            .foregroundColor(.black)
-                            .clipShape(Capsule())
-                        Button("👍 Still Here (\(report.confirmCount))") { onConfirm(report.id) }
-                            .font(.system(size: 9, weight: .bold))
-                        Button("✅ Cleared / Gate Open") { onClear(report.id) }
-                            .font(.system(size: 9, weight: .bold))
-                    }
                 }
             }
             if let trail = trails.first(where: { $0.id == selectedTrailID }) {
@@ -2939,6 +2987,18 @@ private struct StableRouteMap: View, Equatable {
         } else {
             MapCircle(center: hazard.point, radius: hazard.radiusMeters)
                 .foregroundStyle(Color.orange.opacity(0.28 * hazardOpacity))
+            if hazard.id.hasPrefix("community-") || hazard.id.hasPrefix("userhazard-") {
+                Annotation("", coordinate: hazard.point) {
+                    Text(hazard.title)
+                        .font(.system(size: 9, weight: .bold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.78))
+                        .foregroundColor(.orange)
+                        .clipShape(Capsule())
+                }
+            }
         }
     }
 
