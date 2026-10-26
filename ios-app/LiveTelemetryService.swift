@@ -127,15 +127,20 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
     @Published var altitudeFt: Int = 0
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var hasCenteredOnUserOnce: Bool = false
-    @Published var headingDegrees: Double = 0
+    @Published var locationRevision: Int = 0
+    var headingDegrees: Double = 0
+
+    private var lastUIPublish = Date.distantPast
+    private var lastUICoordinate: CLLocationCoordinate2D?
+    private var lastHeadingPublish = Date.distantPast
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.distanceFilter = kCLDistanceFilterNone
+        manager.distanceFilter = 5
         manager.activityType = .automotiveNavigation
-        manager.headingFilter = 1
+        manager.headingFilter = 5
         manager.pausesLocationUpdatesAutomatically = false
     }
 
@@ -147,12 +152,25 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
     }
 
     func apply(_ fix: GPSFix) {
-        userCoordinate = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
+        let coordinate = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
+        let moved: Double
+        if let previous = lastUICoordinate {
+            moved = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
+                .distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+        } else {
+            moved = .greatestFiniteMagnitude
+        }
+        let elapsed = Date().timeIntervalSince(lastUIPublish)
+        guard elapsed >= 1.0 || moved >= 5.0 else { return }
+        lastUIPublish = Date()
+        lastUICoordinate = coordinate
+        userCoordinate = coordinate
         speedMph = fix.speedMps >= 0 ? fix.speedMps * 2.2369362920544 : 0
         altitudeFt = Int((fix.altitudeMeters * 3.280839895).rounded())
         if !hasCenteredOnUserOnce {
             hasCenteredOnUserOnce = true
         }
+        locationRevision += 1
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -171,6 +189,10 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
         let degrees = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
         Task { @MainActor in
+            let delta = abs(degrees - self.headingDegrees)
+            let wrapped = min(delta, 360 - delta)
+            guard wrapped >= 5, Date().timeIntervalSince(self.lastHeadingPublish) >= 1 else { return }
+            self.lastHeadingPublish = Date()
             self.headingDegrees = degrees
         }
     }
