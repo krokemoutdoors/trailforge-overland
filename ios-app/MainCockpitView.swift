@@ -445,6 +445,10 @@ struct MainCockpitView: View {
 
     var body: some View {
         let _ = syncCameraGate()
+        cockpitWithSheets
+    }
+
+    private var cockpitCanvas: some View {
         GeometryReader { geo in
             let dash = wantsDash(geo.size)
             ZStack {
@@ -461,148 +465,164 @@ struct MainCockpitView: View {
                 }
             }
         }
-        .onChange(of: mode) { _, _ in
-            if detent == .peek { detent = .half }
-        }
-        .onAppear {
-            motionManager.startUpdates()
-            locationTracker.start()
-            refreshSelectedTrailDraw()
-            community.start()
-            community.setOfflineSimulation(offlineFirst)
-            reports = community.reports
-            hazardPins = community.hazards
-            offlinePacks = CockpitStore.loadPacks()
-            savedMarkers = CockpitStore.loadSavedMarkers()
-            convoy.start()
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-            if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
-                thermalSaver = true
+    }
+
+    private var cockpitWithLifecycle: some View {
+        cockpitCanvas
+            .onChange(of: mode) { _, _ in
+                if detent == .peek { detent = .half }
             }
-            if offlineFirst {
-                parcelService.replace(CockpitStore.loadParcels())
-            } else {
-                parcelService.refresh(around: locationTracker.userCoordinate ?? mapCenter, force: true)
-            }
-        }
-        .onChange(of: locationTracker.hasCenteredOnUserOnce) { _, centered in
-            guard centered, let coordinate = locationTracker.userCoordinate else { return }
-            mapCenter = coordinate
-            if offlineFirst {
-                parcelService.replace(CockpitStore.loadParcels())
-            } else {
-                parcelService.refresh(around: coordinate, force: true)
-            }
-            if activeRoute == nil, regionFilter == "near" {
-                applyFilterSelection(scanIfNear: true)
-            } else if activeRoute == nil {
-                pushCamera(.userLocation(fallback: .automatic))
-            }
-        }
-        .onChange(of: locationTracker.locationRevision) { _, _ in
-            handleLiveGPS()
-        }
-        .onChange(of: selectedTrailID) { _, newID in
-            profileIndex = nil
-            if selectedCampSpot?.trailID != newID {
-                selectedCampSpot = nil
-            }
-            refreshSelectedTrailDraw()
-            if skipNextFocus {
-                skipNextFocus = false
-                return
-            }
-            guard !followRoute else { return }
-            focus(on: activeTrail)
-        }
-        .onChange(of: regionFilter) { _, _ in
-            applyFilterSelection(scanIfNear: true)
-        }
-        .onChange(of: followRoute) { _, following in
-            if following {
-                detent = .peek
-                if showParcelLayer {
-                    showParcelLayer = false
-                    parcelsCollapsedForFollow = true
+            .onAppear {
+                motionManager.startUpdates()
+                locationTracker.start()
+                refreshSelectedTrailDraw()
+                community.start()
+                community.setOfflineSimulation(offlineFirst)
+                reports = community.reports
+                hazardPins = community.hazards
+                offlinePacks = CockpitStore.loadPacks()
+                savedMarkers = CockpitStore.loadSavedMarkers()
+                convoy.start()
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+                if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
+                    thermalSaver = true
                 }
-            } else if parcelsCollapsedForFollow {
-                showParcelLayer = true
-                parcelsCollapsedForFollow = false
+                if offlineFirst {
+                    parcelService.replace(CockpitStore.loadParcels())
+                } else {
+                    parcelService.refresh(around: locationTracker.userCoordinate ?? mapCenter, force: true)
+                }
             }
-        }
-        .onChange(of: trailQuery) { _, newValue in
-            if !pickerTrails.contains(where: { $0.id == selectedTrailID }), let first = pickerTrails.first {
-                selectedTrailID = first.id
+            .onChange(of: locationTracker.hasCenteredOnUserOnce) { _, centered in
+                guard centered, let coordinate = locationTracker.userCoordinate else { return }
+                mapCenter = coordinate
+                if offlineFirst {
+                    parcelService.replace(CockpitStore.loadParcels())
+                } else {
+                    parcelService.refresh(around: coordinate, force: true)
+                }
+                if activeRoute == nil, regionFilter == "near" {
+                    applyFilterSelection(scanIfNear: true)
+                } else if activeRoute == nil {
+                    pushCamera(.userLocation(fallback: .automatic))
+                }
             }
-            schedulePlaceSearch(newValue)
-        }
-        .onChange(of: telemetry.isScanningTrails) { _, scanning in
-            guard !scanning else { return }
-            refreshSelectedTrailDraw()
-            guard regionFilter == "near", activeRoute == nil, !followRoute, let first = pickerTrails.first else { return }
-            if selectedTrailID != first.id {
-                selectedTrailID = first.id
+            .onChange(of: locationTracker.locationRevision) { _, _ in
+                handleLiveGPS()
             }
-        }
-        .onChange(of: parcelService.status) { _, _ in
-            CockpitStore.saveParcels(parcelService.parcels)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
-            let state = ProcessInfo.processInfo.thermalState
-            if state == .serious || state == .critical {
-                thermalSaver = true
+            .onChange(of: selectedTrailID) { _, newID in
+                profileIndex = nil
+                if selectedCampSpot?.trailID != newID {
+                    selectedCampSpot = nil
+                }
+                refreshSelectedTrailDraw()
+                if skipNextFocus {
+                    skipNextFocus = false
+                    return
+                }
+                guard !followRoute else { return }
+                focus(on: activeTrail)
             }
-        }
-        .onChange(of: offlineFirst) { _, enabled in
-            community.setOfflineSimulation(enabled)
-        }
-        .onChange(of: community.feedToken) { _, _ in
-            reports = community.reports
-            hazardPins = community.hazards
-        }
-        .onChange(of: convoy.connectedRevision) { _, _ in
-            convoy.sendCommunity(community.envelopeJSON())
-        }
-        .onChange(of: convoy.inboundCommunityToken) { _, _ in
-            community.absorbRemote(convoy.inboundCommunityJSON)
-            reports = community.reports
-            hazardPins = community.hazards
-        }
-        .onChange(of: basemapRaw) { _, newValue in
-            let choice = BasemapChoice(rawValue: newValue) ?? .hybrid
-            if choice == .imagery || choice == .hybrid {
-                thermalSaver = false
+            .onChange(of: regionFilter) { _, _ in
+                applyFilterSelection(scanIfNear: true)
             }
-        }
-        .onChange(of: hazardOverlayOpacity) { _, value in
-            if value > 0.02 {
-                refreshHazards(around: mapCenter)
-            } else {
-                remoteHazards = []
+    }
+
+    private var cockpitWithSync: some View {
+        cockpitWithLifecycle
+            .onChange(of: followRoute) { _, following in
+                if following {
+                    detent = .peek
+                    if showParcelLayer {
+                        showParcelLayer = false
+                        parcelsCollapsedForFollow = true
+                    }
+                } else if parcelsCollapsedForFollow {
+                    showParcelLayer = true
+                    parcelsCollapsedForFollow = false
+                }
             }
-        }
-        .task {
-            if !offlineFirst {
-                await telemetry.fetchUSGSStreamflow()
+            .onChange(of: trailQuery) { _, newValue in
+                if !pickerTrails.contains(where: { $0.id == selectedTrailID }), let first = pickerTrails.first {
+                    selectedTrailID = first.id
+                }
+                schedulePlaceSearch(newValue)
             }
-            await storeKit.loadProducts()
-        }
-        .sheet(isPresented: $showHazardSheet) {
-            hazardSheet
-        }
-        .sheet(isPresented: $showTripQR) {
-            tripQRSheet
-        }
-        .sheet(isPresented: $showProPaywall) {
-            TrailForgePaywallView()
-                .environmentObject(storeKit)
-        }
-        .sheet(item: $droppedPin) { pin in
-            droppedPinSheet(pin)
-        }
-        .sheet(item: $editingMarker) { marker in
-            savedMarkerSheet(marker)
-        }
+            .onChange(of: telemetry.isScanningTrails) { _, scanning in
+                guard !scanning else { return }
+                refreshSelectedTrailDraw()
+                guard regionFilter == "near", activeRoute == nil, !followRoute, let first = pickerTrails.first else { return }
+                if selectedTrailID != first.id {
+                    selectedTrailID = first.id
+                }
+            }
+            .onChange(of: parcelService.status) { _, _ in
+                CockpitStore.saveParcels(parcelService.parcels)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
+                let state = ProcessInfo.processInfo.thermalState
+                if state == .serious || state == .critical {
+                    thermalSaver = true
+                }
+            }
+            .onChange(of: offlineFirst) { _, enabled in
+                community.setOfflineSimulation(enabled)
+            }
+    }
+
+    private var cockpitWithCommunity: some View {
+        cockpitWithSync
+            .onChange(of: community.feedToken) { _, _ in
+                reports = community.reports
+                hazardPins = community.hazards
+            }
+            .onChange(of: convoy.connectedRevision) { _, _ in
+                convoy.sendCommunity(community.envelopeJSON())
+            }
+            .onChange(of: convoy.inboundCommunityToken) { _, _ in
+                community.absorbRemote(convoy.inboundCommunityJSON)
+                reports = community.reports
+                hazardPins = community.hazards
+            }
+            .onChange(of: basemapRaw) { _, newValue in
+                let choice = BasemapChoice(rawValue: newValue) ?? .hybrid
+                if choice == .imagery || choice == .hybrid {
+                    thermalSaver = false
+                }
+            }
+            .onChange(of: hazardOverlayOpacity) { _, value in
+                if value > 0.02 {
+                    refreshHazards(around: mapCenter)
+                } else {
+                    remoteHazards = []
+                }
+            }
+            .task {
+                if !offlineFirst {
+                    await telemetry.fetchUSGSStreamflow()
+                }
+                await storeKit.loadProducts()
+            }
+    }
+
+    private var cockpitWithSheets: some View {
+        cockpitWithCommunity
+            .sheet(isPresented: $showHazardSheet) {
+                hazardSheet
+            }
+            .sheet(isPresented: $showTripQR) {
+                tripQRSheet
+            }
+            .sheet(isPresented: $showProPaywall) {
+                TrailForgePaywallView()
+                    .environmentObject(storeKit)
+            }
+            .sheet(item: $droppedPin) { pin in
+                droppedPinSheet(pin)
+            }
+            .sheet(item: $editingMarker) { marker in
+                savedMarkerSheet(marker)
+            }
     }
 
     private var fitBanner: some View {
