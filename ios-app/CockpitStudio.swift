@@ -131,6 +131,18 @@ struct OfflineCorridorPack: Codable, Identifiable {
     var nominalMegabytes: Int
     var savedAt: Date
     var vertexCount: Int
+    var areaSqMiles: Int? = nil
+    var minLat: Double? = nil
+    var maxLat: Double? = nil
+    var minLon: Double? = nil
+    var maxLon: Double? = nil
+
+    var areaBadge: String {
+        guard minLat != nil, maxLat != nil, minLon != nil, maxLon != nil else {
+            return "\(tier) • \(vertexCount) pts • saved on this iPhone"
+        }
+        return "\(name) • \(tier)"
+    }
 }
 
 struct RideSample: Identifiable {
@@ -215,11 +227,36 @@ struct ParcelSnapshot: Codable {
     }
 }
 
+struct SavedMarker: Codable, Identifiable, Hashable {
+    var id: UUID
+    var name: String
+    var category: String
+    var latitude: Double
+    var longitude: Double
+    var createdAt: Date
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+struct DroppedPinTarget: Identifiable {
+    let id: UUID
+    var latitude: Double
+    var longitude: Double
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
 enum CockpitStore {
     private static let reportsKey = "trailforge.trailReports"
     private static let packsKey = "trailforge.offlinePacks"
     private static let parcelsKey = "trailforge.parcelCache"
     private static let hazardsKey = "trailforge.hazardPins"
+    private static let recordedRoutesKey = "trailforge.recordedRoutes"
+    private static let savedMarkersKey = "trailforge.savedMarkers.v1"
 
     static func loadReports() -> [TrailConditionReport] {
         decode([TrailConditionReport].self, key: reportsKey) ?? []
@@ -241,9 +278,9 @@ enum CockpitStore {
         (decode([ParcelSnapshot].self, key: parcelsKey) ?? []).map(\.parcel)
     }
 
-    static func saveParcels(_ parcels: [PropertyParcel]) {
+    static func saveParcels(_ parcels: [PropertyParcel], limit: Int = 18) {
         guard !parcels.isEmpty else { return }
-        encode(parcels.prefix(18).map(ParcelSnapshot.init), key: parcelsKey)
+        encode(parcels.prefix(max(1, limit)).map(ParcelSnapshot.init), key: parcelsKey)
     }
 
     static func loadHazards() -> [DroppedHazard] {
@@ -252,6 +289,34 @@ enum CockpitStore {
 
     static func saveHazards(_ pins: [DroppedHazard]) {
         encode(Array(pins.prefix(80)), key: hazardsKey)
+    }
+
+    static func loadRecordedRoutes() -> [RecordedTrailRoute] {
+        if let stored = decode([RecordedTrailRoute].self, key: recordedRoutesKey), !stored.isEmpty {
+            return stored
+        }
+        guard let data = try? Data(contentsOf: recordedRoutesURL) else { return [] }
+        return (try? JSONDecoder().decode([RecordedTrailRoute].self, from: data)) ?? []
+    }
+
+    static func saveRecordedRoutes(_ routes: [RecordedTrailRoute]) {
+        encode(routes, key: recordedRoutesKey)
+        if let data = try? JSONEncoder().encode(routes) {
+            try? data.write(to: recordedRoutesURL, options: .atomic)
+        }
+    }
+
+    static func loadSavedMarkers() -> [SavedMarker] {
+        decode([SavedMarker].self, key: savedMarkersKey) ?? []
+    }
+
+    static func saveSavedMarkers(_ markers: [SavedMarker]) {
+        encode(markers, key: savedMarkersKey)
+    }
+
+    private static var recordedRoutesURL: URL {
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return folder.appendingPathComponent("trailforge-recorded-routes.json")
     }
 
     private static func decode<T: Decodable>(_ type: T.Type, key: String) -> T? {

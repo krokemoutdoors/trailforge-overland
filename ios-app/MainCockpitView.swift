@@ -83,7 +83,8 @@ struct MainCockpitView: View {
     @EnvironmentObject var motionManager: ClinometerMotionManager
     @EnvironmentObject var storeKit: TrailForgeStoreKitManager
     @StateObject private var telemetry = LiveTelemetryService()
-    @StateObject private var locationTracker = LocationTracker()
+    @ObservedObject private var locationTracker = LocationTracker.shared
+    @ObservedObject private var trailRecorder = TrailRouteRecorder.shared
 
     @State private var mode: CockpitMode = .drive
     @State private var selectedTrailID: String = "imogene"
@@ -138,6 +139,12 @@ struct MainCockpitView: View {
     @State private var downloadProgress: Double = 0
     @State private var downloadRunning = false
     @State private var offlineTier = "Standard Topo + Parcels"
+    @AppStorage("trailforge.offlineArea") private var offlineArea = "corridor"
+    @State private var screenCenter = CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352)
+    @State private var visibleRegion = MKCoordinateRegion(
+        center: CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352),
+        span: MKCoordinateSpan(latitudeDelta: 0.10, longitudeDelta: 0.10)
+    )
     @State private var gpxDraft = ""
     @State private var remoteHazards: [MapHazard] = []
     @State private var lastHazardFetch: CLLocationCoordinate2D?
@@ -164,6 +171,13 @@ struct MainCockpitView: View {
     @State private var hazardPhoto: Data?
     @State private var pendingVoiceURL: URL?
     @State private var announcedCrux: Set<String> = []
+    @State private var savedMarkers: [SavedMarker] = []
+    @State private var droppedPin: DroppedPinTarget?
+    @State private var pinName = ""
+    @State private var pinCategory = "Waypoint"
+    @State private var pinSummary = ""
+    @State private var editingMarker: SavedMarker?
+    private let markerCategories = ["Camp", "Waypoint", "Trailhead", "Hazard", "Viewpoint"]
 
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -229,7 +243,7 @@ struct MainCockpitView: View {
             return []
         }
         guard showParcelLayer else { return [] }
-        return Array(parcelService.parcels.prefix(18))
+        return Array(parcelService.parcels.prefix(48))
     }
 
     private var targetCoordinate: CLLocationCoordinate2D? {
@@ -295,6 +309,22 @@ struct MainCockpitView: View {
             hasher.combine(searchedPlace.latitude)
             hasher.combine(searchedPlace.longitude)
         }
+        hasher.combine(trailRecorder.activePoints.count)
+        hasher.combine(trailRecorder.displayedRouteID?.uuidString)
+        hasher.combine(trailRecorder.isRecording)
+        hasher.combine(savedMarkers.map { "\($0.id.uuidString):\($0.name):\($0.category)" }.joined(separator: ","))
+        if let droppedPin {
+            hasher.combine(droppedPin.latitude)
+            hasher.combine(droppedPin.longitude)
+        }
+        hasher.combine(offlineArea)
+        if let box = liveOfflineBox() {
+            hasher.combine(Int(box.minLat * 1000))
+            hasher.combine(Int(box.maxLat * 1000))
+            hasher.combine(Int(box.minLon * 1000))
+            hasher.combine(Int(box.maxLon * 1000))
+        }
+        hasher.combine(offlinePacks.compactMap(\.minLat).map { String(format: "%.3f", $0) }.joined(separator: ","))
         return hasher.finalize()
     }
 
@@ -308,7 +338,7 @@ struct MainCockpitView: View {
     }
 
     private var effectiveBasemap: BasemapChoice {
-        heatLimited ? .standard : basemap
+        basemap
     }
 
     private var rideSamples: [RideSample] {
@@ -434,6 +464,7 @@ struct MainCockpitView: View {
             reports = community.reports
             hazardPins = community.hazards
             offlinePacks = CockpitStore.loadPacks()
+            savedMarkers = CockpitStore.loadSavedMarkers()
             convoy.start()
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
             if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
@@ -528,6 +559,12 @@ struct MainCockpitView: View {
             reports = community.reports
             hazardPins = community.hazards
         }
+        .onChange(of: basemapRaw) { _, newValue in
+            let choice = BasemapChoice(rawValue: newValue) ?? .hybrid
+            if choice == .imagery || choice == .hybrid {
+                thermalSaver = false
+            }
+        }
         .onChange(of: hazardOverlayOpacity) { _, value in
             if value > 0.02 {
                 refreshHazards(around: mapCenter)
@@ -550,6 +587,12 @@ struct MainCockpitView: View {
         .sheet(isPresented: $showProPaywall) {
             TrailForgePaywallView()
                 .environmentObject(storeKit)
+        }
+        .sheet(item: $droppedPin) { pin in
+            droppedPinSheet(pin)
+        }
+        .sheet(item: $editingMarker) { marker in
+            savedMarkerSheet(marker)
         }
     }
 
@@ -730,8 +773,13 @@ struct MainCockpitView: View {
         .background(Color(red: 0.05, green: 0.08, blue: 0.12))
     }
 
-    private var driveControls: some View {
+    private func driveControls(includeFieldCards: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            if includeFieldCards {
+                headUnitCard
+                trailRecorderCard
+                savedMarkersCard
+            }
             HStack(spacing: 8) {
                 TextField("Search trails, state, address, or store", text: $trailQuery)
                     .textFieldStyle(.roundedBorder)
@@ -1403,6 +1451,8 @@ struct MainCockpitView: View {
             parcelService.refresh(around: center)
             refreshHazards(around: center)
         }
+        screenCenter = center
+        visibleRegion = region
         if meters(from: mapCenter, to: center) > 40 {
             mapCenter = center
         }
@@ -1743,7 +1793,8 @@ struct MainCockpitView: View {
         case .half:
             return max(CGFloat(300), total * 0.46)
         case .full:
-            return max(CGFloat(460), total * 0.82)
+            let preferred = max(CGFloat(460), total * 0.82)
+            return min(preferred, total - 130)
         }
     }
 
@@ -1784,6 +1835,10 @@ struct MainCockpitView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                     .allowsHitTesting(false)
             }
+            speedElevationCornerHUD
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 8)
+                .padding(.leading, 8)
             VStack(spacing: 8) {
                 topCluster
                 if !showGloveRow {
@@ -1805,7 +1860,8 @@ struct MainCockpitView: View {
                         .padding(.bottom, 8)
                 }
             }
-            .padding(.top, 8)
+            .padding(.top, 78)
+            .padding(.leading, 8)
             HStack {
                 Spacer()
                 rightRail(showGloveRow)
@@ -1844,9 +1900,17 @@ struct MainCockpitView: View {
             searchedPlace: searchedPlace,
             plotLine: plottedLine,
             plotMarkers: plotPoints,
+            recordedLine: breadcrumbLine,
+            savedMarkers: savedMarkers,
+            droppedPin: droppedPin?.coordinate,
             scrub: scrubCoordinate,
+            liveOfflineRing: liveOfflineBox()?.ring ?? [],
+            savedOfflineRings: savedOfflineRings,
             onCameraEnd: { region in
                 handleCameraEnd(region)
+            },
+            onCameraPreview: { region in
+                trackScreen(region)
             },
             onSpot: { spot in
                 Task { await beginRoute(to: spot) }
@@ -1861,6 +1925,16 @@ struct MainCockpitView: View {
             onSelectParcel: { id in
                 if let parcel = parcelService.parcels.first(where: { $0.id == id }) {
                     parcelService.select(parcel)
+                }
+            },
+            onLongPress: { coordinate in
+                handleMapLongPress(coordinate)
+            },
+            onSelectMarker: { id in
+                if let marker = savedMarkers.first(where: { $0.id == id }) {
+                    editingMarker = marker
+                    pinName = marker.name
+                    pinCategory = marker.category
                 }
             }
         )
@@ -1886,17 +1960,23 @@ struct MainCockpitView: View {
                 detent = .half
             }
             .accessibilityLabel("Inspect point parcel")
-            if !showGloveRow {
-                railButton("camera.fill", active: showHazardSheet) {
-                    showHazardSheet = true
-                }
-                .accessibilityLabel("Drop hazard pin")
+            railButton("camera.fill", active: showHazardSheet) {
+                showHazardSheet = true
             }
+            .accessibilityLabel("Drop hazard pin")
+            railButton(trailRecorder.isRecording ? "stop.circle.fill" : "record.circle", active: trailRecorder.isRecording) {
+                trailRecorder.toggleFromRail()
+            }
+            .accessibilityLabel(showGloveRow ? "Record trail route, in dash" : "Record trail route")
             railButton("moon.fill", active: nightVision) {
                 nightVision.toggle()
             }
             .accessibilityLabel("Night vision")
         }
+        .padding(6)
+        .background(Color.black.opacity(0.84))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 
     private var topCluster: some View {
@@ -1934,6 +2014,18 @@ struct MainCockpitView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .background(Color.black.opacity(0.72))
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            Button {
+                trailRecorder.toggleFromRail()
+            } label: {
+                Text(trailRecorder.isRecording ? "Stop" : "Record")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(trailRecorder.isRecording ? Color.red : Color.black.opacity(0.72))
                     .foregroundColor(.white)
                     .clipShape(Capsule())
             }
@@ -1985,8 +2077,10 @@ struct MainCockpitView: View {
                         if plotMode {
                             plotterCard
                         }
-                        cockpitModeBody
+                        cockpitModeBody(includeFieldCards: true)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 56)
                 }
             }
         }
@@ -2003,37 +2097,43 @@ struct MainCockpitView: View {
                     .font(.headline)
                     .foregroundColor(.white)
                 Spacer()
-                Button(dashMode == "on" ? "Locked" : "Lock") { toggleDashLock() }
+                Button(dashMode == "on" ? "Exit" : "Lock") { toggleDashLock() }
                     .font(.caption.bold())
             }
-            let psi = rigStore.recommendedAirDownPSI(surface: "rock", beadlocks: false)
-            clinometerCard(zeroTitle: "Zero Clinometer")
-            Text("Air Down \(psi.front)F / \(psi.rear)R PSI")
-                .font(.headline)
-                .foregroundColor(.mint)
-            coordinatesBar(filled: true)
-            convoyPills
-            Button("📸 / 🎙️ Drop Hazard Pin") { showHazardSheet = true }
-                .font(.caption.bold())
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-            Text(nextTurnLine)
-                .font(.subheadline.bold())
-                .foregroundColor(.white)
-                .lineLimit(3)
-            Text(cockpitSummary)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(2)
             modePicker
-            ScrollView {
-                VStack(spacing: 10) {
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    clinometerCard(zeroTitle: "Zero Clinometer")
+                    coordinatesBar(filled: true)
+                    convoyPills
+                    Text(nextTurnLine)
+                        .font(.subheadline.bold())
+                        .foregroundColor(.white)
+                        .lineLimit(3)
+                    Text(cockpitSummary)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                    headUnitCard
+                    if let route = activeRoute {
+                        routeCard(route)
+                    } else {
+                        fitBanner
+                    }
+                    if let parcel = parcelService.selected {
+                        propertyCard(parcel)
+                    }
                     if plotMode { plotterCard }
-                    cockpitModeBody
+                    trailRecorderCard
+                    savedMarkersCard
+                    cockpitModeBody(includeFieldCards: false)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var sheetGrabber: some View {
@@ -2088,9 +2188,9 @@ struct MainCockpitView: View {
     }
 
     @ViewBuilder
-    private var cockpitModeBody: some View {
+    private func cockpitModeBody(includeFieldCards: Bool) -> some View {
         if mode == .drive {
-            driveControls
+            driveControls(includeFieldCards: includeFieldCards)
         } else if mode == .camp {
             campList
         } else {
@@ -2099,12 +2199,8 @@ struct MainCockpitView: View {
     }
 
     private var rigPanel: some View {
-        let psi = rigStore.recommendedAirDownPSI(surface: "rock", beadlocks: false)
-        return VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
             clinometerCard(zeroTitle: "Zero / Calibrate Level")
-            Text("Air Down \(psi.front)F / \(psi.rear)R PSI")
-                .font(.headline)
-                .foregroundColor(.mint)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Roll Warning Limit \(Int(motionManager.rollWarningLimit))°")
                     .font(.caption.bold())
@@ -2162,8 +2258,8 @@ struct MainCockpitView: View {
                     Toggle("🌙 Night Vision", isOn: $nightVision)
                         .font(.caption.bold())
                     Text(heatLimited
-                         ? "Thermal Saver is on. The map stays on a flat 2D vector style and skips live hazard refreshes."
-                         : "Thermal Saver switches to a flat 2D map when the phone gets hot, or when you turn it on.")
+                         ? "Thermal Saver is on. Satellite and Hybrid stay on imagery with flat elevation, and live hazard refreshes pause."
+                         : "Thermal Saver flattens 3D terrain when the phone gets hot. Satellite and Hybrid stay on imagery.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     Text("NIFC perimeters and USGS quakes load when a signal is available. Fords and ledges stay on the cached route. Starlink shading uses each pad's sky view, not a live carrier map.")
@@ -2187,25 +2283,34 @@ struct MainCockpitView: View {
         ZStack(alignment: .bottom) {
             Color.black.opacity(0.28)
                 .ignoresSafeArea()
-                .onTapGesture { showOffline = false }
+                .allowsHitTesting(false)
+            ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("5-Mile Route Corridor")
+                    Text("Offline Maps — Area Box & Route Corridor")
                         .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Close") { showOffline = false }
                         .font(.caption.bold())
                 }
-                Text("Saves this route, its camps, crux pins, and a live USFS boundary snapshot. The download keeps going in the background and posts a notification when the file is on this iPhone.")
+                Text("Pan the map. A 30, 100, or 250 sq mi box stays centered on the screen. Current Map View uses the exact bounds on screen.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                Picker("Pack", selection: $offlineTier) {
-                    Text("Route + USFS snapshot").tag("Route + USFS snapshot")
-                    Text("Route + parcels + hazards").tag("Route + parcels + hazards")
+                offlineAreaPicker
+                Text(offlineEstimateLine)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundColor(.cyan)
+                    .fixedSize(horizontal: false, vertical: true)
+                if offlineArea == "corridor" {
+                    Picker("Pack", selection: $offlineTier) {
+                        Text("Route + USFS snapshot").tag("Route + USFS snapshot")
+                        Text("Route + parcels + hazards").tag("Route + parcels + hazards")
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
-                Button(downloadRunning ? "Saving corridor…" : "Download 5-Mile Corridor") {
-                    downloadCorridor()
+                Button(downloadRunning ? "Saving offline pack…" : offlineDownloadTitle) {
+                    downloadOffline()
                 }
                 .font(.headline)
                 .buttonStyle(.borderedProminent)
@@ -2214,32 +2319,99 @@ struct MainCockpitView: View {
                 ProgressView(value: downloadRunning ? downloadProgress : (offlinePacks.isEmpty ? 0.0 : 1.0))
                     .tint(.cyan)
                 if offlinePacks.isEmpty {
-                    Text("No saved corridor packs yet.")
+                    Text("No saved offline packs yet.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(offlinePacks) { pack in
-                        HStack {
+                        HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(pack.name)
                                     .font(.caption.bold())
-                                    .lineLimit(1)
-                                Text("\(pack.tier) • \(pack.vertexCount) pts • saved on this iPhone")
+                                    .lineLimit(2)
+                                Text(pack.areaBadge)
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
-                                    .lineLimit(2)
+                                    .lineLimit(3)
                             }
-                            Spacer()
-                            Button("Remove") { removePack(pack.id) }
-                                .font(.caption2.bold())
+                            Spacer(minLength: 8)
+                            VStack(spacing: 6) {
+                                if pack.minLat != nil {
+                                    Button("Focus on Map") { focusPack(pack) }
+                                        .font(.caption2.bold())
+                                }
+                                Button("Remove") { removePack(pack.id) }
+                                    .font(.caption2.bold())
+                            }
                         }
                     }
                 }
             }
             .padding(16)
+            }
+            .frame(maxHeight: 520)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 18))
             .padding()
+        }
+    }
+
+    private var offlineAreaPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("AREA SIZE")
+                .font(.caption2.bold())
+                .foregroundColor(.secondary)
+            ForEach(offlineAreaChoices, id: \.id) { choice in
+                Button(choice.title) { offlineArea = choice.id }
+                    .font(.caption.bold())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(offlineArea == choice.id ? Color.cyan : Color.white.opacity(0.12))
+                    .foregroundColor(offlineArea == choice.id ? .black : .white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    private var offlineAreaChoices: [(id: String, title: String)] {
+        let viewMiles = Int(OfflineAreaBox.visible(visibleRegion).squareMiles.rounded())
+        return [
+            ("corridor", "5-Mi Route Corridor"),
+            ("sq30", "30 sq mi Area"),
+            ("sq100", "100 sq mi Area"),
+            ("sq250", "250 sq mi Area"),
+            ("view", "Current Screen View (~\(viewMiles) sq mi)")
+        ]
+    }
+
+    private var offlineDownloadTitle: String {
+        guard let box = liveOfflineBox() else { return "Download 5-Mile Corridor" }
+        if offlineArea == "view" {
+            return "Download Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
+        }
+        return "Download \(offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : 30) sq mi Area"
+    }
+
+    private var offlineEstimateLine: String {
+        guard let box = liveOfflineBox() else {
+            return "5-mile buffer along the selected trail or active GPS route. Route, camps, crux pins, and a USFS snapshot."
+        }
+        let zooms = offlineZooms(for: box)
+        let tiles = OfflineAreaMath.tileCount(for: box, zooms: zooms)
+        let lookups = parcelGridCount(for: box)
+        let trails = trailsInside(box).count
+        let mb = max(4, tiles * 18 / 1024)
+        let label = offlineArea == "view"
+            ? "Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
+            : "\(offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : 30) sq mi Area"
+        return "\(label) · ~\(tiles) tiles · \(lookups) parcel lookups · \(trails) trails · ~\(mb) MB"
+    }
+
+    private var savedOfflineRings: [[CLLocationCoordinate2D]] {
+        offlinePacks.compactMap { pack in
+            guard let minLat = pack.minLat, let maxLat = pack.maxLat, let minLon = pack.minLon, let maxLon = pack.maxLon else { return nil }
+            return OfflineAreaBox(minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon).ring
         }
     }
 
@@ -2648,6 +2820,500 @@ struct MainCockpitView: View {
         }
     }
 
+    private var breadcrumbLine: [CLLocationCoordinate2D] {
+        if trailRecorder.isRecording || !trailRecorder.activePoints.isEmpty {
+            return trailRecorder.activePoints.map(\.coordinate)
+        }
+        if let id = trailRecorder.displayedRouteID,
+           let route = trailRecorder.saved.first(where: { $0.id == id }) {
+            return route.coordinates
+        }
+        return []
+    }
+
+    private var speedElevationCornerHUD: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("SPEED")
+                        .font(.caption2.bold())
+                        .foregroundColor(.cyan)
+                    Text("\(Int(locationTracker.speedMph.rounded()))")
+                        .font(.title2.monospacedDigit().bold())
+                        .foregroundColor(.white)
+                    Text("MPH")
+                        .font(.caption2.bold())
+                        .foregroundColor(.white.opacity(0.82))
+                }
+                Rectangle()
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 1, height: 44)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("ELEVATION")
+                        .font(.caption2.bold())
+                        .foregroundColor(.green)
+                    Text(locationTracker.altitudeFt.formatted())
+                        .font(.title2.monospacedDigit().bold())
+                        .foregroundColor(.white)
+                    Text("FT")
+                        .font(.caption2.bold())
+                        .foregroundColor(.white.opacity(0.82))
+                }
+            }
+            HStack(spacing: 4) {
+                Image(systemName: "location.fill")
+                Text("PHONE GPS")
+            }
+            .font(.caption2.bold())
+            .foregroundColor(.green)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.84))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    LinearGradient(colors: [.cyan, .green], startPoint: .leading, endPoint: .trailing),
+                    lineWidth: 1.5
+                )
+        )
+    }
+
+    private var headUnitCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("CarPlay & Head-Unit Ready")
+                .font(.caption.bold())
+                .foregroundColor(.cyan)
+            Text("Apple CarPlay and Android Auto read this phone’s GPS speed, elevation, trails, flat camps, and trail recording.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var trailRecorderCard: some View {
+        let _ = trailRecorder.elapsedTick
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Trail Route Recorder")
+                .font(.caption.bold())
+                .foregroundColor(.white)
+            TextField("Route name", text: $trailRecorder.draftName)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                statPill("Distance", String(format: "%.2f mi", trailRecorder.liveDistanceMiles))
+                statPill("Elapsed", mmss(trailRecorder.elapsedSeconds))
+                statPill("Elev Gain", "+\(trailRecorder.liveElevationGainFt) ft")
+                statPill("Points", "\(trailRecorder.activePoints.count)")
+            }
+            HStack {
+                if trailRecorder.isRecording {
+                    Button(trailRecorder.isPaused ? "Resume" : "Pause") { trailRecorder.pauseOrResume() }
+                        .font(.caption.bold())
+                        .buttonStyle(.bordered)
+                    Button("Stop & Save Route") { trailRecorder.stopAndSave() }
+                        .font(.caption.bold())
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                } else {
+                    Button("Start Recording") { trailRecorder.start() }
+                        .font(.caption.bold())
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                }
+            }
+            ForEach(trailRecorder.saved) { route in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(route.name)
+                        .font(.caption.bold())
+                        .foregroundColor(.white)
+                    Text(String(format: "%.2f mi · %@ · +%d ft · %d pts", route.distanceMiles, mmss(route.durationSeconds), route.elevationGainFt, route.points.count))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    HStack {
+                        Button("Show / Navigate") { showRecordedRoute(route) }
+                            .font(.caption2.bold())
+                        ShareLink(item: trailRecorder.gpxURL(for: route), preview: SharePreview(route.name)) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                                .font(.caption2.bold())
+                        }
+                        Button("Delete") { trailRecorder.delete(route.id) }
+                            .font(.caption2.bold())
+                            .foregroundColor(.red)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(red: 0.93, green: 0.11, blue: 0.36).opacity(0.7), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var savedMarkersCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Saved Markers")
+                .font(.caption.bold())
+                .foregroundColor(.white)
+            if savedMarkers.isEmpty {
+                Text("Tap and hold the map to drop a pin, then save it.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            ForEach(savedMarkers) { marker in
+                Button {
+                    editingMarker = marker
+                    pinName = marker.name
+                    pinCategory = marker.category
+                } label: {
+                    HStack {
+                        Text(markerSymbol(marker.category))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(marker.name)
+                                .font(.caption.bold())
+                                .foregroundColor(.white)
+                            Text("\(marker.category) · \(formatCoordinate(marker.coordinate))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func statPill(_ title: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.caption2.monospacedDigit().bold())
+                .foregroundColor(.cyan)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .background(Color.cyan.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func droppedPinSheet(_ pin: DroppedPinTarget) -> some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(formatCoordinate(pin.coordinate))
+                    .font(.headline.monospacedDigit())
+                Text(pinSummary)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextField("Marker name", text: $pinName)
+                    .textFieldStyle(.roundedBorder)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(markerCategories, id: \.self) { category in
+                            Button(category) { pinCategory = category }
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(pinCategory == category ? Color.cyan : Color.white.opacity(0.12))
+                                .foregroundColor(pinCategory == category ? .black : .white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+                Button("Route Here (GPS Destination)") {
+                    startRouting(toTitle: pinName.isEmpty ? "Dropped Pin" : pinName, coordinate: pin.coordinate)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
+                Button("Save Marker") { saveDroppedPin() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                HStack {
+                    Link("Apple Maps", destination: URL(string: "http://maps.apple.com/?daddr=\(pin.latitude),\(pin.longitude)&dirflg=d")!)
+                    Link("Google Maps", destination: URL(string: "https://www.google.com/maps/dir/?api=1&destination=\(pin.latitude),\(pin.longitude)&travelmode=driving")!)
+                }
+                .font(.caption.bold())
+                Spacer()
+            }
+            .padding(16)
+            .navigationTitle("Dropped Pin")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { droppedPin = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func savedMarkerSheet(_ marker: SavedMarker) -> some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(formatCoordinate(marker.coordinate))
+                    .font(.headline.monospacedDigit())
+                TextField("Name", text: $pinName)
+                    .textFieldStyle(.roundedBorder)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(markerCategories, id: \.self) { category in
+                            Button(category) { pinCategory = category }
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(pinCategory == category ? Color.cyan : Color.white.opacity(0.12))
+                                .foregroundColor(pinCategory == category ? .black : .white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+                Button("Route Here (GPS)") {
+                    startRouting(toTitle: pinName.isEmpty ? marker.name : pinName, coordinate: marker.coordinate)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
+                Button("Rename") { renameMarker(marker) }
+                    .buttonStyle(.bordered)
+                ShareLink(item: markerShareURL(marker), preview: SharePreview(marker.name)) {
+                    Label("Share Coordinates/GPX", systemImage: "square.and.arrow.up")
+                }
+                Button("Delete Marker") { deleteMarker(marker) }
+                    .foregroundColor(.red)
+                Spacer()
+            }
+            .padding(16)
+            .navigationTitle(marker.category)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { editingMarker = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func handleMapLongPress(_ coordinate: CLLocationCoordinate2D) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let pin = DroppedPinTarget(id: UUID(), latitude: coordinate.latitude, longitude: coordinate.longitude)
+        droppedPin = pin
+        pinCategory = "Waypoint"
+        pinName = "Saved Pin \(savedMarkers.count + 1)"
+        pinSummary = "Looking up this point…"
+        if let parcel = parcelService.parcel(at: coordinate) {
+            let owner = parcel.ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
+            pinSummary = owner.isEmpty ? parcel.apnLotNumber : "\(owner) · \(parcel.apnLotNumber)"
+            if !owner.isEmpty { pinName = owner }
+        }
+        parcelService.inspect(at: coordinate)
+        Task {
+            let place = await ReversePlace.lookup(coordinate)
+            guard droppedPin?.id == pin.id else { return }
+            if let place, !place.isEmpty {
+                if pinSummary.hasPrefix("Looking") {
+                    pinSummary = place
+                } else if !pinSummary.contains(place) {
+                    pinSummary = "\(place) · \(pinSummary)"
+                }
+                if pinName.hasPrefix("Saved Pin") { pinName = place }
+            } else if pinSummary.hasPrefix("Looking") {
+                pinSummary = formatCoordinate(coordinate)
+            }
+        }
+    }
+
+    private func startRouting(toTitle title: String, coordinate: CLLocationCoordinate2D) {
+        let spot = CampSpot(
+            id: "pin-\(UUID().uuidString)",
+            trailID: activeTrail.id,
+            name: title,
+            lat: coordinate.latitude,
+            lon: coordinate.longitude,
+            slopeDeg: 0,
+            starlinkPct: 0,
+            kind: .trailhead
+        )
+        droppedPin = nil
+        editingMarker = nil
+        Task { await beginRoute(to: spot) }
+    }
+
+    private func saveDroppedPin() {
+        guard let pin = droppedPin else { return }
+        let trimmed = pinName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let marker = SavedMarker(
+            id: UUID(),
+            name: trimmed.isEmpty ? "Saved Pin \(savedMarkers.count + 1)" : trimmed,
+            category: pinCategory,
+            latitude: pin.latitude,
+            longitude: pin.longitude,
+            createdAt: Date()
+        )
+        savedMarkers.insert(marker, at: 0)
+        CockpitStore.saveSavedMarkers(savedMarkers)
+        droppedPin = nil
+    }
+
+    private func renameMarker(_ marker: SavedMarker) {
+        guard let index = savedMarkers.firstIndex(where: { $0.id == marker.id }) else { return }
+        let trimmed = pinName.trimmingCharacters(in: .whitespacesAndNewlines)
+        savedMarkers[index].name = trimmed.isEmpty ? marker.name : trimmed
+        savedMarkers[index].category = pinCategory
+        CockpitStore.saveSavedMarkers(savedMarkers)
+        editingMarker = savedMarkers[index]
+    }
+
+    private func deleteMarker(_ marker: SavedMarker) {
+        savedMarkers.removeAll { $0.id == marker.id }
+        CockpitStore.saveSavedMarkers(savedMarkers)
+        editingMarker = nil
+    }
+
+    private func showRecordedRoute(_ route: RecordedTrailRoute) {
+        guard route.points.count >= 2, let end = route.points.last else { return }
+        trailRecorder.displayedRouteID = route.id
+        let coords = route.coordinates
+        let spot = CampSpot(
+            id: "rec-\(route.id.uuidString)",
+            trailID: activeTrail.id,
+            name: route.name,
+            lat: end.latitude,
+            lon: end.longitude,
+            slopeDeg: 0,
+            starlinkPct: 0,
+            kind: .trailhead
+        )
+        let distance = max(route.distanceMiles * 1609.344, 1)
+        let option = NavOption(
+            id: 0,
+            title: "Recorded trail",
+            expectedTravelTime: max(60, distance / 8),
+            distanceMeters: distance,
+            road: coords,
+            steps: recordedSteps(coords, title: route.name)
+        )
+        activeRoute = ActiveCampRoute(
+            destination: spot,
+            options: [option],
+            selectedIndex: 0,
+            spur: [],
+            originWasGPS: locationTracker.userCoordinate != nil
+        )
+        routeStartedFromGPS = true
+        activeStepIndex = 0
+        announcedApproachStep = nil
+        announcedTurnStep = nil
+        announcedArrival = false
+        followRoute = true
+        frame(optionRoute(option, spot: spot))
+        startFollow()
+    }
+
+    private func optionRoute(_ option: NavOption, spot: CampSpot) -> ActiveCampRoute {
+        ActiveCampRoute(destination: spot, options: [option], selectedIndex: 0, spur: [], originWasGPS: true)
+    }
+
+    private func recordedSteps(_ coords: [CLLocationCoordinate2D], title: String) -> [NavStep] {
+        guard coords.count >= 2 else {
+            return [NavStep(id: 0, instruction: "Follow \(title)", distanceMeters: 0, systemImage: "point.topleft.down.to.point.bottomright.curvepath", maneuver: coords.last)]
+        }
+        var steps: [NavStep] = []
+        var legStart = 0
+        var previousBearing = bearing(from: coords[0], to: coords[1])
+        for index in 1..<coords.count {
+            let nextBearing = index + 1 < coords.count ? bearing(from: coords[index], to: coords[index + 1]) : previousBearing
+            let delta = signedTurn(from: previousBearing, to: nextBearing)
+            let atEnd = index == coords.count - 1
+            if abs(delta) > 40 || atEnd {
+                let meters = polylineMeters(Array(coords[legStart...index]))
+                let instruction: String
+                let symbol: String
+                if atEnd && abs(delta) <= 40 {
+                    instruction = "Arrive at \(title)"
+                    symbol = "flag.checkered"
+                } else if delta > 20 {
+                    instruction = "Turn right along \(title)"
+                    symbol = "arrow.turn.up.right"
+                } else if delta < -20 {
+                    instruction = "Turn left along \(title)"
+                    symbol = "arrow.turn.up.left"
+                } else {
+                    instruction = "Continue on \(title)"
+                    symbol = "arrow.up"
+                }
+                steps.append(NavStep(id: steps.count, instruction: instruction, distanceMeters: meters, systemImage: symbol, maneuver: coords[index]))
+                legStart = index
+                previousBearing = nextBearing
+            }
+        }
+        if steps.isEmpty {
+            steps.append(NavStep(id: 0, instruction: "Follow \(title)", distanceMeters: polylineMeters(coords), systemImage: "point.topleft.down.to.point.bottomright.curvepath", maneuver: coords.last))
+        }
+        return steps
+    }
+
+    private func bearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
+        let lat1 = from.latitude * .pi / 180
+        let lat2 = to.latitude * .pi / 180
+        let dLon = (to.longitude - from.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    private func signedTurn(from: Double, to: Double) -> Double {
+        (to - from + 540).truncatingRemainder(dividingBy: 360) - 180
+    }
+
+    private func mmss(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+
+    private func markerSymbol(_ category: String) -> String {
+        switch category {
+        case "Camp": return "⛺"
+        case "Trailhead": return "⚑"
+        case "Hazard": return "⚠"
+        case "Viewpoint": return "👁"
+        default: return "📍"
+        }
+    }
+
+    private func markerShareURL(_ marker: SavedMarker) -> URL {
+        let safe = marker.name.replacingOccurrences(of: "&", with: "and").replacingOccurrences(of: "<", with: "")
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <gpx version="1.1" creator="TrailForge Overland" xmlns="http://www.topografix.com/GPX/1/1">
+          <wpt lat="\(String(format: "%.6f", marker.latitude))" lon="\(String(format: "%.6f", marker.longitude))">
+            <name>\(safe)</name>
+            <type>\(marker.category)</type>
+            <desc>\(formatCoordinate(marker.coordinate))</desc>
+          </wpt>
+        </gpx>
+        """
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("TrailForge-marker-\(marker.id.uuidString).gpx")
+        try? xml.data(using: .utf8)?.write(to: url, options: .atomic)
+        return url
+    }
+
     private func railButton(_ system: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
@@ -2809,6 +3475,14 @@ struct MainCockpitView: View {
         publishCommunity()
     }
 
+    private func downloadOffline() {
+        if let box = liveOfflineBox() {
+            downloadArea(box)
+        } else {
+            downloadCorridor()
+        }
+    }
+
     private func downloadCorridor() {
         guard !downloadRunning else { return }
         downloadRunning = true
@@ -2825,6 +3499,96 @@ struct MainCockpitView: View {
             offlinePacks = packs
             downloadProgress = 1
             downloadRunning = false
+        }
+    }
+
+    private func downloadArea(_ box: OfflineAreaBox) {
+        guard !downloadRunning else { return }
+        downloadRunning = true
+        downloadProgress = 0.2
+        let satellite = basemap != .standard
+        let miles = Int(box.squareMiles.rounded())
+        let preset = offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : offlineArea == "sq30" ? 30 : miles
+        let label = offlineArea == "view" ? "Current Screen View (~\(miles) sq mi)" : "\(preset) sq mi Area"
+        let tier = (satellite ? "Satellite" : "Topo") + " + Parcels + Trails"
+        let spec = OfflineAreaDownload(
+            box: box,
+            areaSqMiles: preset,
+            label: label,
+            satellite: satellite,
+            gridColumns: offlineArea == "sq250" || box.squareMiles > 45 ? 4 : 3,
+            trails: trailsInside(box),
+            hazards: mapHazards.filter { box.contains($0.point) },
+            dropped: hazardPins.filter { box.contains($0.coordinate) }
+        )
+        CorridorDownloader.shared.start(trail: activeTrail, track: activeTrail.coordinates, hazards: spec.dropped, tier: tier, area: spec) { pack in
+            var packs = CockpitStore.loadPacks()
+            packs.insert(pack, at: 0)
+            CockpitStore.savePacks(Array(packs.prefix(12)))
+            offlinePacks = Array(packs.prefix(12))
+            let cached = CockpitStore.loadParcels()
+            if !cached.isEmpty {
+                parcelService.replace(cached, limit: 80)
+            }
+            downloadProgress = 1
+            downloadRunning = false
+        }
+    }
+
+    private func liveOfflineBox() -> OfflineAreaBox? {
+        switch offlineArea {
+        case "sq30":
+            return .square(center: screenCenter, squareMiles: 30)
+        case "sq100":
+            return .square(center: screenCenter, squareMiles: 100)
+        case "sq250":
+            return .square(center: screenCenter, squareMiles: 250)
+        case "view":
+            return .visible(visibleRegion)
+        default:
+            return nil
+        }
+    }
+
+    private func offlineZooms(for box: OfflineAreaBox) -> [Int] {
+        if offlineArea == "sq30" || box.squareMiles <= 45 { return [11, 12, 13, 14, 15] }
+        return [11, 12, 13, 14]
+    }
+
+    private func parcelGridCount(for box: OfflineAreaBox) -> Int {
+        let columns = offlineArea == "sq250" || box.squareMiles > 45 ? 4 : 3
+        return columns * columns
+    }
+
+    private func trailsInside(_ box: OfflineAreaBox) -> [OverlandTrail] {
+        Array(USATrailAtlas.all.filter { trail in
+            box.contains(trail.centerCoordinate) || trail.coordinates.contains(where: box.contains)
+        }.prefix(40))
+    }
+
+    private func trackScreen(_ region: MKCoordinateRegion) {
+        guard offlineArea != "corridor" else { return }
+        let moved = meters(from: screenCenter, to: region.center)
+        let spanChanged = abs(region.span.latitudeDelta - visibleRegion.span.latitudeDelta) > 0.002
+            || abs(region.span.longitudeDelta - visibleRegion.span.longitudeDelta) > 0.002
+        guard moved > 35 || spanChanged else { return }
+        screenCenter = region.center
+        visibleRegion = region
+        if moved > 40 {
+            mapCenter = region.center
+        }
+    }
+
+    private func focusPack(_ pack: OfflineCorridorPack) {
+        guard let minLat = pack.minLat, let maxLat = pack.maxLat, let minLon = pack.minLon, let maxLon = pack.maxLon else { return }
+        let box = OfflineAreaBox(minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
+        showOffline = false
+        screenCenter = box.center
+        visibleRegion = box.region
+        pushCamera(.region(box.region))
+        if let parcels = CorridorDownloader.parcels(in: pack.id), !parcels.isEmpty {
+            parcelService.replace(parcels, limit: 80)
+            CockpitStore.saveParcels(parcels, limit: 80)
         }
     }
 
@@ -3186,11 +3950,19 @@ private struct StableRouteMap: View, Equatable {
     var searchedPlace: PlaceHit?
     var plotLine: [CLLocationCoordinate2D]
     var plotMarkers: [CLLocationCoordinate2D]
+    var recordedLine: [CLLocationCoordinate2D]
+    var savedMarkers: [SavedMarker]
+    var droppedPin: CLLocationCoordinate2D?
     var scrub: CLLocationCoordinate2D?
+    var liveOfflineRing: [CLLocationCoordinate2D]
+    var savedOfflineRings: [[CLLocationCoordinate2D]]
     var onCameraEnd: (MKCoordinateRegion) -> Void
+    var onCameraPreview: (MKCoordinateRegion) -> Void
     var onSpot: (CampSpot) -> Void
     var onInspect: (CLLocationCoordinate2D) -> Void
     var onSelectParcel: (String) -> Void
+    var onLongPress: (CLLocationCoordinate2D) -> Void
+    var onSelectMarker: (UUID) -> Void
 
     static func == (lhs: StableRouteMap, rhs: StableRouteMap) -> Bool {
         lhs.sceneToken == rhs.sceneToken
@@ -3198,6 +3970,8 @@ private struct StableRouteMap: View, Equatable {
             && lhs.showAlternates == rhs.showAlternates
             && lhs.routeStartedFromGPS == rhs.routeStartedFromGPS
             && lhs.routingActive == rhs.routingActive
+            && lhs.basemap == rhs.basemap
+            && lhs.flatBasemap == rhs.flatBasemap
     }
 
     var body: some View {
@@ -3209,6 +3983,9 @@ private struct StableRouteMap: View, Equatable {
                         onInspect(coordinate)
                     }
                 )
+                .overlay {
+                    MapTapOverlayView(proxy: proxy, onLongPress: onLongPress)
+                }
         }
     }
 
@@ -3249,6 +4026,40 @@ private struct StableRouteMap: View, Equatable {
             if plotLine.count >= 2 {
                 MapPolyline(coordinates: plotLine)
                     .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [7, 5]))
+            }
+            if recordedLine.count >= 2 {
+                MapPolyline(coordinates: recordedLine)
+                    .stroke(Color(red: 0.93, green: 0.11, blue: 0.36), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+            }
+            ForEach(savedOfflineRings.indices, id: \.self) { index in
+                MapPolyline(coordinates: savedOfflineRings[index])
+                    .stroke(Color.yellow.opacity(0.9), style: StrokeStyle(lineWidth: 2, dash: [4, 6]))
+            }
+            if liveOfflineRing.count >= 4 {
+                MapPolygon(coordinates: liveOfflineRing)
+                    .foregroundStyle(Color.cyan.opacity(0.14))
+                MapPolyline(coordinates: liveOfflineRing)
+                    .stroke(Color.cyan, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+            }
+            if let droppedPin {
+                Annotation("Dropped Pin", coordinate: droppedPin) {
+                    Text("📍")
+                        .font(.title2)
+                }
+            }
+            ForEach(savedMarkers) { marker in
+                Annotation(marker.name, coordinate: marker.coordinate) {
+                    Button {
+                        onSelectMarker(marker.id)
+                    } label: {
+                        Text(marker.category == "Camp" ? "⛺" : marker.category == "Hazard" ? "⚠️" : "📍")
+                            .font(.title3)
+                            .padding(4)
+                            .background(Color.black.opacity(0.72))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             ForEach(plotMarkers.indices, id: \.self) { index in
                 Annotation("", coordinate: plotMarkers[index]) {
@@ -3331,10 +4142,14 @@ private struct StableRouteMap: View, Equatable {
             }
         }
         .mapStyle(basemapStyle)
+        .id(basemap.rawValue + (flatBasemap ? "-flat" : ""))
         .mapControls {
             MapUserLocationButton()
             MapCompass()
             MapScaleView()
+        }
+        .onMapCameraChange(frequency: .continuous) { context in
+            onCameraPreview(context.region)
         }
         .onMapCameraChange(frequency: .onEnd) { context in
             onCameraEnd(context.region)
@@ -3393,16 +4208,14 @@ private struct StableRouteMap: View, Equatable {
     }
 
     private var basemapStyle: MapStyle {
-        if flatBasemap {
-            return .standard(elevation: .flat)
-        }
+        let elevation: MapStyle.Elevation = flatBasemap ? .flat : .realistic
         switch basemap {
         case .hybrid:
-            return .hybrid(elevation: .realistic)
+            return .hybrid(elevation: elevation)
         case .standard:
-            return .standard(elevation: .realistic)
+            return .standard(elevation: elevation)
         case .imagery:
-            return .imagery(elevation: .realistic)
+            return .imagery(elevation: elevation)
         }
     }
 
