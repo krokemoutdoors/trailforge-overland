@@ -1,0 +1,17 @@
+{
+  "id": "./",
+  "name": "TrailForge Overland",
+  "short_name": "TrailForge",
+  "description": "Rig-fit 4x4 maps, flat camp pads under 3 degrees, and live GPS turn-by-turn for all 50 states.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#071018",
+  "theme_color": "#071018",
+  "categories": ["navigation", "travel"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
