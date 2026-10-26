@@ -29,6 +29,7 @@
     discovered: loadDiscovered(),
     scanAnchors: [],
     fix: null,
+    userPanned: false,
     pitch: 0,
     roll: 0,
     rawPitch: 0,
@@ -319,6 +320,19 @@
     return meters(a, b) / 1609.344;
   }
 
+  function nearestMiles(origin, trail) {
+    if (!origin || !trail) return Infinity;
+    const points = [];
+    if (Number.isFinite(Number(trail.lat)) && Number.isFinite(Number(trail.lon))) points.push({ lat: Number(trail.lat), lon: Number(trail.lon) });
+    const coords = trail.coordinates || [];
+    const step = Math.max(1, Math.floor(coords.length / 24));
+    for (let index = 0; index < coords.length; index += step) points.push(ll(coords[index]));
+    if (coords.length) points.push(ll(coords[coords.length - 1]));
+    let best = Infinity;
+    points.forEach(function (point) { best = Math.min(best, miles(origin, point)); });
+    return best;
+  }
+
   function polylineMeters(coords) {
     let total = 0;
     for (let index = 1; index < coords.length; index += 1) total += meters(coords[index - 1], coords[index]);
@@ -396,6 +410,33 @@
     return code + " Backcountry Corridor (" + String(trail.id || "corridor").toUpperCase() + " Ref)";
   }
 
+  function bootMapCenter() {
+    return { lat: 37.9589, lon: -107.7352 };
+  }
+
+  function mapCenter() {
+    if (!map) return bootMapCenter();
+    const center = map.getCenter();
+    return { lat: center.lat, lon: center.lng };
+  }
+
+  function listOrigin() {
+    if (state.fix) return { lat: state.fix.lat, lon: state.fix.lon };
+    return mapCenter();
+  }
+
+  // GPS when it exists, unless the map has been panned well away from it.
+  // The boot trailhead is not a Near Me anchor.
+  function nearAnchor() {
+    if (state.fix) {
+      const gps = { lat: state.fix.lat, lon: state.fix.lon };
+      if (state.userPanned && map && miles(gps, mapCenter()) > 30) return mapCenter();
+      return gps;
+    }
+    if (state.userPanned && map && miles(mapCenter(), bootMapCenter()) > 15) return mapCenter();
+    return null;
+  }
+
   function pickerTrails() {
     const query = state.query.trim().toLowerCase();
     const seen = new Set();
@@ -403,12 +444,13 @@
       if (seen.has(trail.id)) return false;
       seen.add(trail.id);
       if (query) {
-        const corridorHay = trail.bdr ? " bdr wabdr backcountry corridor " + trail.id + " " : "";
+        const corridorHay = trail.bdr ? " bdr backcountry corridor " + trail.id + " " : "";
         const hay = (trail.name + " " + corridorHay + trail.region + " " + trail.state + " " + (trail.states || []).join(" ") + " " + trail.agency).toLowerCase();
         if (!hay.includes(query)) return false;
       }
       if (state.filter === "bdr") return !!trail.bdr;
-      if (state.filter === "all" || state.filter === "near") return true;
+      if (state.filter === "near") return !trail.bdr;
+      if (state.filter === "all") return !trail.bdr || !!query;
       const codes = trail.states && trail.states.length ? trail.states : [trail.state];
       return codes.indexOf(state.filter) >= 0;
     });
@@ -416,17 +458,13 @@
       list.sort(function (a, b) { return (a.bdrOrder || 0) - (b.bdrOrder || 0); });
       return list;
     }
-    if (state.filter !== "near") return list;
-    const origin = mapCenter();
-    list = list.slice().sort(function (a, b) { return miles(origin, a) - miles(origin, b); });
-    const nearby = list.filter(function (trail) { return miles(origin, trail) <= 250; });
-    return nearby.length ? nearby : list.slice(0, 14);
-  }
-
-  function mapCenter() {
-    if (!map) return { lat: 37.9589, lon: -107.7352 };
-    const center = map.getCenter();
-    return { lat: center.lat, lon: center.lng };
+    const origin = state.filter === "near" ? nearAnchor() : (state.filter === "all" ? listOrigin() : null);
+    if (state.filter === "near" && !origin) return [];
+    if (!origin) return list;
+    const ranked = list.slice().sort(function (a, b) { return nearestMiles(origin, a) - nearestMiles(origin, b); });
+    if (state.filter !== "near") return ranked;
+    const nearby = ranked.filter(function (trail) { return nearestMiles(origin, trail) <= 100; });
+    return nearby.length ? nearby : ranked.slice(0, 20);
   }
 
   function spotsFor(trail) {
@@ -623,15 +661,6 @@
     else pending.reject(new Error(text || "network error"));
   }
 
-  function bannerDetail(trail, fit) {
-    const note = fit.notes[0] || "";
-    if (state.fix) {
-      const away = miles(state.fix, trail).toFixed(1);
-      return "Gate: " + trail.gate + " · Ford: " + trail.water + '" · ' + away + " mi · " + note;
-    }
-    return "Gate: " + trail.gate + " · Ford: " + trail.water + '" · ' + note;
-  }
-
   function maneuverSvg(step) {
     if (!step || step.type === "arrive") {
       return '<svg viewBox="0 0 48 48"><path fill="currentColor" d="M10 30 V14 h12 l4-6 4 6 h8 v16 l-8 8 h-12 z"/></svg>';
@@ -657,7 +686,6 @@
 
   function renderTop() {
     const top = document.getElementById("top");
-    const trail = selected();
     if (state.route && !state.route.confirmed) {
       const spot = state.route.destination;
       const remaining = remainingMeters(state.route);
@@ -676,10 +704,10 @@
       return;
     }
     const list = pickerTrails();
-    const fit = trail ? evaluate(trail) : null;
-    const color = !list.length || !fit ? "#8ea6bb" : fitColor(fit.verdict);
-    const title = !list.length || !trail ? "No routes for " + filterTitle() : fit.verdict + " · " + corridorLabel(trail);
-    const detail = !list.length || !trail ? "Pick another state or tap Near Me." : bannerDetail(trail, fit);
+    const locating = state.filter === "near" && !nearAnchor();
+    const color = "#8ea6bb";
+    const title = locating ? "Near Me • Locating you" : (!list.length ? "No routes for " + filterTitle() : filterTitle() + " • " + list.length + (list.length === 1 ? " Route" : " Routes"));
+    const detail = locating ? "Waiting for GPS. Pan the map to browse another area." : (state.filter === "near" || state.filter === "all" ? "Closest trails first" : "Pick a route below");
     top.innerHTML = '<div class="fit"><div class="lamp" style="background:' + color + ";color:" + color + '"></div><div class="fit-copy"><div class="fit-title">' + esc(title) + '</div><div class="sub">' + esc(detail) + '</div>' + liveFlagHtml() + '</div><button type="button" class="pill-btn" data-act="offline">' + (state.offlineSaved ? "Offline" : "Save") + "</button></div>";
   }
 
@@ -718,15 +746,16 @@
     const chips = ['<button type="button" class="chip' + (state.filter === "near" ? " on" : "") + '" data-act="filter" data-id="near">Near Me</button>', '<button type="button" class="chip' + (state.filter === "all" ? " on" : "") + '" data-act="filter" data-id="all">All USA</button>', '<button type="button" class="chip' + (state.filter === "bdr" ? " on" : "") + '" data-act="filter" data-id="bdr">Backcountry Corridors</button>'].concat(ATLAS.states.map(function (box) {
       return '<button type="button" class="chip' + (state.filter === box.code ? " on" : "") + '" data-act="filter" data-id="' + box.code + '">' + box.code + "</button>";
     })).join("");
+    const origin = (state.filter === "near" && nearAnchor()) || listOrigin();
     const rows = list.map(function (trail) {
       const fit = evaluate(trail);
-      const away = state.fix ? " · " + miles(state.fix, trail).toFixed(1) + " mi away" : "";
+      const away = " · " + nearestMiles(origin, trail).toFixed(1) + " mi away";
       const where = trail.states && trail.states.length > 1 ? trail.states.join("/") : trail.state;
       return '<button type="button" class="row" data-act="pick" data-id="' + esc(trail.id) + '"><i class="dot" style="background:' + fitColor(fit.verdict) + '"></i><span class="meta"><b>' + esc(where + " · " + corridorLabel(trail)) + "</b><small>" + esc(trail.miles + " mi · " + num(trail.clearance) + '" · ' + shortFit(fit.verdict) + away) + "</small></span></button>";
     }).join("") || '<div class="row"><span class="meta"><b>No matching routes</b></span></div>';
     const pills = list.slice(0, 24).map(function (trail) {
       const shown = corridorLabel(trail);
-      const label = state.fix ? shown + " · " + Math.round(miles(state.fix, trail)) + " mi" : shown;
+      const label = shown + " · " + Math.round(nearestMiles(origin, trail)) + " mi";
       return '<button type="button" class="trail-pill' + (trail.id === state.selectedId ? " on" : "") + '" data-act="pick" data-id="' + esc(trail.id) + '">' + esc(label) + "</button>";
     }).join("");
     const trail = selected();
@@ -810,7 +839,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.6 · build 18<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.7 · build 19<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -1111,14 +1140,25 @@
       if (fallback) state.selectedId = fallback.id;
     }
     if (!state.follow) {
-      const trail = selected();
-      if (state.filter === "bdr" && trail && trail.bdr && trail.coordinates && trail.coordinates.length && map) map.fitBounds(trail.coordinates, { padding: [28, 28] });
-      else if (state.filter !== "bdr") focusTrail(trail, state.filter === "all" ? 4 : 8);
+      if (state.filter === "near") {
+        const anchor = nearAnchor();
+        if (anchor && state.fix && map && miles(anchor, { lat: state.fix.lat, lon: state.fix.lon }) < 1) {
+          map.setView([anchor.lat, anchor.lon], Math.max(map.getZoom(), 11));
+        }
+      } else {
+        const trail = selected();
+        if (state.filter === "bdr" && trail && trail.bdr && trail.coordinates && trail.coordinates.length && map) map.fitBounds(trail.coordinates, { padding: [28, 28] });
+        else if (state.filter !== "bdr") focusTrail(trail, state.filter === "all" ? 4 : 8);
+      }
     }
     renderAll();
     if (!scan || SHOT) return;
-    if (state.filter === "near") scanAt(state.fix || mapCenter());
-    else if (state.filter !== "all" && state.filter !== "bdr") {
+    if (state.filter === "near") {
+      const anchor = nearAnchor();
+      if (!anchor) return;
+      const closest = list.length ? nearestMiles(anchor, list[0]) : Infinity;
+      if (closest > 50 || !areaScanned(anchor)) scanAt(anchor);
+    } else if (state.filter !== "all" && state.filter !== "bdr") {
       const trail = selected();
       if (trail) scanAt({ lat: trail.lat, lon: trail.lon });
     }
@@ -1893,8 +1933,9 @@
     noteParcelFix();
     if (!state.centeredOnce && !state.route && !SHOT) {
       state.centeredOnce = true;
+      state.userPanned = false;
       if (state.filter === "near") applyFilter(true);
-      else map.setView([fix.lat, fix.lon], Math.max(map.getZoom(), 12));
+      else if (map) map.setView([fix.lat, fix.lon], Math.max(map.getZoom(), 12));
     }
     if (state.follow) map.panTo([fix.lat, fix.lon]);
     maybeSpeakCues();
@@ -2144,9 +2185,15 @@
       return;
     }
     if (act === "filter") {
-      state.filter = button.dataset.id;
+      const next = button.dataset.id;
       state.menuOpen = false;
       state.follow = false;
+      if (next === "near") {
+        state.userPanned = false;
+        requestGpsFix();
+        if (state.fix && map) map.setView([state.fix.lat, state.fix.lon], Math.max(map.getZoom(), 11));
+      }
+      state.filter = next;
       applyFilter(true);
       return;
     }
@@ -2527,7 +2574,24 @@
     });
   }
 
+  function requestGpsFix() {
+    if (!navigator.geolocation || SHOT) return;
+    navigator.geolocation.getCurrentPosition(function (position) {
+      onFix({
+        lat: position.coords.latitude,
+        lon: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        altitude: position.coords.altitude,
+        speed: position.coords.speed,
+        heading: position.coords.heading,
+        time: position.timestamp,
+        source: "web"
+      });
+    }, function () {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+  }
+
   function startGeolocation() {
+    requestGpsFix();
     if (!navigator.geolocation || SHOT) return;
     navigator.geolocation.watchPosition(function (position) {
       onFix({
@@ -6271,7 +6335,7 @@
     installLongPress();
     installPitchGesture();
     applyMapPitch(false);
-    map.on("dragstart", function () { state.follow = false; });
+    map.on("dragstart", function () { state.follow = false; state.userPanned = true; });
     map.on("zoomend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
     map.on("moveend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); scheduleParcels(); refreshAreaChrome(); scheduleTrailScan(); });
     map.on("move", function () { syncAreaPreview(); });

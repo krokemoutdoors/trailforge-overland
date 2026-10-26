@@ -99,6 +99,7 @@ struct MainCockpitView: View {
     @State private var offlineSaved: Bool = true
     @State private var showProPaywall: Bool = false
     @State private var mapCenter = CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352)
+    private let bootCoordinate = CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352)
     @State private var skipNextFocus = false
     @State private var activeRoute: ActiveCampRoute?
     @State private var followRoute = false
@@ -200,15 +201,17 @@ struct MainCockpitView: View {
         let query = trailQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         func matchesQuery(_ trail: OverlandTrail) -> Bool {
             if query.isEmpty { return true }
-            let corridorWords = trail.isBDR ? " BDR WABDR backcountry discovery route corridor" : ""
+            let corridorWords = trail.isBDR ? " BDR backcountry discovery route corridor \(trail.id)" : ""
             let haystack = [trail.name, trail.region, trail.state, trail.alsoStates.joined(separator: " "), trail.agency, corridorWords].joined(separator: " ")
             return haystack.localizedCaseInsensitiveContains(query)
         }
         func matchesFilter(_ trail: OverlandTrail) -> Bool {
             guard matchesQuery(trail) else { return false }
             switch regionFilter {
-            case "all", "near":
-                return true
+            case "near":
+                return !trail.isBDR
+            case "all":
+                return !trail.isBDR || !query.isEmpty
             case "bdr":
                 return trail.isBDR
             default:
@@ -216,14 +219,26 @@ struct MainCockpitView: View {
             }
         }
         var seen = Set<String>()
-        var trails = (USATrailAtlas.all + telemetry.discoveredTrails).filter { trail in
+        let trails = (USATrailAtlas.all + telemetry.discoveredTrails).filter { trail in
             matchesFilter(trail) && seen.insert(trail.id).inserted
         }
-        guard regionFilter == "near" else { return trails }
-        let origin = mapCenter
-        trails.sort { miles(from: origin, to: $0.centerCoordinate) < miles(from: origin, to: $1.centerCoordinate) }
-        let nearby = trails.filter { miles(from: origin, to: $0.centerCoordinate) <= 250 }
-        return nearby.isEmpty ? Array(trails.prefix(8)) : nearby
+        if regionFilter == "bdr" { return trails }
+        let origin: CLLocationCoordinate2D
+        if regionFilter == "near" {
+            guard let anchor = nearAnchor else { return [] }
+            origin = anchor
+        } else if regionFilter == "all" {
+            origin = locationTracker.userCoordinate ?? mapCenter
+        } else {
+            return trails
+        }
+        let ranked = trails
+            .map { (trail: $0, away: nearestMiles(from: origin, to: $0)) }
+            .sorted { $0.away < $1.away }
+        guard regionFilter == "near" else { return ranked.map { $0.trail } }
+        let nearby = ranked.filter { $0.away <= 100 }
+        let chosen = nearby.isEmpty ? Array(ranked.prefix(20)) : nearby
+        return chosen.map { $0.trail }
     }
 
     private var activeTrail: OverlandTrail {
@@ -452,7 +467,7 @@ struct MainCockpitView: View {
             let miles = liveRemainingMiles ?? (route.selected.distanceMeters / 1609.344)
             return String(format: "%@ • %.1f mi", step, miles)
         }
-        return "\(shortFit(activeTrail)) • \(activeTrail.name)"
+        return listHeadline
     }
 
     private var listedCamps: [CampSpot] {
@@ -499,7 +514,7 @@ struct MainCockpitView: View {
             }
             .onAppear {
                 motionManager.startUpdates()
-                locationTracker.start()
+                locationTracker.requestLocation()
                 refreshSelectedTrailDraw()
                 community.start()
                 community.setOfflineSimulation(offlineFirst)
@@ -645,18 +660,17 @@ struct MainCockpitView: View {
     }
 
     private var fitBanner: some View {
-        let fit = rigStore.evaluate(trail: activeTrail)
-        return VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Circle()
-                    .fill(pickerTrails.isEmpty ? Color.gray : fitColor(activeTrail))
+                    .fill(Color.gray.opacity(0.85))
                     .frame(width: 14, height: 14)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(pickerTrails.isEmpty ? "No routes for \(filterTitle)" : "\(fit.verdict.rawValue) • \(activeTrail.name)")
+                    Text(listHeadline)
                         .font(.subheadline.bold())
                         .foregroundColor(.white)
                         .lineLimit(1)
-                    Text(bannerDetail(fitNotes: fit.notes))
+                    Text(listSubtitle)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -1028,7 +1042,11 @@ struct MainCockpitView: View {
 
     private func filterPill(_ title: String, tag: String) -> some View {
         Button {
-            regionFilter = tag
+            if tag == "near" {
+                selectNearMe()
+            } else {
+                regionFilter = tag
+            }
         } label: {
             Text(title)
                 .font(.caption2.bold())
@@ -1060,35 +1078,75 @@ struct MainCockpitView: View {
             break
         }
         guard let user = locationTracker.userCoordinate else { return "Waiting for GPS…" }
-        let selected = miles(from: user, to: activeTrail.centerCoordinate)
-        let nearest = pickerTrails.map { miles(from: user, to: $0.centerCoordinate) }.min() ?? selected
+        let selected = nearestMiles(from: user, to: activeTrail)
+        let nearest = pickerTrails.map { nearestMiles(from: user, to: $0) }.min() ?? selected
         return String(format: "%d ft · %.0f mph · %.1f mi to trail · %.1f mi nearest", locationTracker.altitudeFt, locationTracker.speedMph, selected, nearest)
     }
 
-    private func bannerDetail(fitNotes: [String]) -> String {
-        guard !pickerTrails.isEmpty else { return "Pick another state or tap Near Me." }
-        let note = fitNotes.first ?? ""
-        let gate = CommunityStatus.badge(for: activeTrail.id, reports: reports, publishedGate: activeTrail.gateStatus)
-        if let user = locationTracker.userCoordinate {
-            let away = miles(from: user, to: activeTrail.centerCoordinate)
-            return String(format: "Gate: %@ • Ford: %d\" • %.1f mi • %@", gate, activeTrail.waterCrossingIn, away, note)
+    private var listHeadline: String {
+        if regionFilter == "near", nearAnchor == nil {
+            return "Near Me • Locating you"
         }
-        return "Gate: \(gate) • Ford: \(activeTrail.waterCrossingIn)\" • \(note)"
+        let count = pickerTrails.count
+        if count == 0 { return "No routes for \(filterTitle)" }
+        let noun = count == 1 ? "Route" : "Routes"
+        return "\(filterTitle) • \(count) \(noun)"
+    }
+
+    private var listSubtitle: String {
+        if regionFilter == "near", nearAnchor == nil {
+            return "Waiting for GPS. Pan the map to browse another area."
+        }
+        if let anchor = nearAnchor, let gps = locationTracker.userCoordinate, miles(from: gps, to: anchor) < 1 {
+            return "Closest trails from your location"
+        }
+        if regionFilter == "near" || regionFilter == "all" {
+            return "Closest trails from the map center"
+        }
+        return "Pick a route below"
+    }
+
+    private var distanceOrigin: CLLocationCoordinate2D {
+        if regionFilter == "near", let anchor = nearAnchor { return anchor }
+        return locationTracker.userCoordinate ?? mapCenter
+    }
+
+    /// GPS when it exists, unless the map has been panned well away from it.
+    /// The boot trailhead is not a Near Me anchor.
+    private var nearAnchor: CLLocationCoordinate2D? {
+        if let gps = locationTracker.userCoordinate {
+            if miles(from: gps, to: mapCenter) > 30 { return mapCenter }
+            return gps
+        }
+        if miles(from: mapCenter, to: bootCoordinate) > 15 { return mapCenter }
+        return nil
+    }
+
+    private func nearestMiles(from origin: CLLocationCoordinate2D, to trail: OverlandTrail) -> Double {
+        var best = miles(from: origin, to: trail.centerCoordinate)
+        let coordinates = trail.coordinates
+        guard !coordinates.isEmpty else { return best }
+        let step = max(1, coordinates.count / 24)
+        var index = 0
+        while index < coordinates.count {
+            best = min(best, miles(from: origin, to: coordinates[index]))
+            index += step
+        }
+        if let last = coordinates.last {
+            best = min(best, miles(from: origin, to: last))
+        }
+        return best
     }
 
     private func routeMenuLabel(_ trail: OverlandTrail) -> String {
         let fit = shortFit(trail)
         let clearance = String(format: "%.0f\"", trail.reqClearanceIn)
-        guard let user = locationTracker.userCoordinate else {
-            return "\(trail.state) · \(trail.name) · \(clearance) · \(fit)"
-        }
-        let away = String(format: "%.1f mi away", miles(from: user, to: trail.centerCoordinate))
+        let away = String(format: "%.1f mi away", nearestMiles(from: distanceOrigin, to: trail))
         return "\(trail.state) · \(trail.name) · \(away) · \(clearance) · \(fit)"
     }
 
     private func routePillLabel(_ trail: OverlandTrail) -> String {
-        guard let user = locationTracker.userCoordinate else { return trail.name }
-        return String(format: "%@ · %.0f mi", trail.name, miles(from: user, to: trail.centerCoordinate))
+        String(format: "%@ · %.0f mi", trail.name, nearestMiles(from: distanceOrigin, to: trail))
     }
 
     private func destinationTitle(_ spot: CampSpot) -> String {
@@ -1221,6 +1279,24 @@ struct MainCockpitView: View {
     }
 
     private func applyFilterSelection(scanIfNear: Bool) {
+        if regionFilter == "near" {
+            locationTracker.requestLocation()
+            if let gps = locationTracker.userCoordinate, !followRoute {
+                mapCenter = gps
+                pushCamera(userTrackingCamera(followsHeading: false))
+            }
+            if !pickerTrails.contains(where: { $0.id == selectedTrailID }),
+               let first = pickerTrails.first {
+                if !followRoute { skipNextFocus = true }
+                selectedTrailID = first.id
+            } else if pickerTrails.isEmpty {
+                showTrailMenu = true
+                if detent == .peek { detent = .half }
+            }
+            guard scanIfNear, let anchor = nearAnchor else { return }
+            refreshTrails(around: anchor)
+            return
+        }
         if regionFilter == "bdr" {
             showTrailMenu = true
             if detent == .peek { detent = .half }
@@ -1238,15 +1314,14 @@ struct MainCockpitView: View {
             showTrailMenu = true
             if detent == .peek { detent = .half }
         }
-        guard scanIfNear, regionFilter == "near" else { return }
-        let center = locationTracker.userCoordinate ?? mapCenter
-        Task { await telemetry.fetchTrailsInMapRegion(center: center) }
     }
 
     private func selectNearMe() {
         followRoute = false
+        locationTracker.requestLocation()
         if let coordinate = locationTracker.userCoordinate {
             mapCenter = coordinate
+            pushCamera(userTrackingCamera(followsHeading: false))
         }
         if regionFilter != "near" {
             regionFilter = "near"
