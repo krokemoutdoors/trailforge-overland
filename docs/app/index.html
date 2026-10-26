@@ -48,9 +48,10 @@
     #stage { flex: 1 1 auto; min-height: 180px; position: relative; }
     #map { position: absolute; inset: 0; background: #0c1b27; }
     .hud-left, .hud-read, .legend, .clin-pill, .coords { position: absolute; z-index: 500; }
-    .hud-left { top: 8px; left: 8px; display: flex; flex-direction: column; gap: 6px; max-width: 214px; }
+    .hud-left { top: 8px; left: 8px; display: flex; flex-direction: column; gap: 6px; max-width: 230px; }
     .hud-left button, .clin-pill, .legend { background: rgba(8, 16, 28, 0.78); backdrop-filter: blur(8px); }
-    .hud-left button { border: 0; border-radius: 999px; text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 800; }
+    .hud-left button { border: 0; border-radius: 999px; text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .hud-left button.on { background: rgba(226, 182, 87, 0.94); color: #1c1402; }
     .hud-read { top: 8px; right: 8px; display: flex; gap: 6px; }
     .hud-read div { background: rgba(0, 0, 0, 0.58); border-radius: 12px; min-width: 68px; text-align: center; padding: 6px 8px; }
     .hud-read b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; font-weight: 800; }
@@ -62,6 +63,23 @@
     .coords b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
     .coords button.line { cursor: pointer; touch-action: manipulation; }
     .coords button.line:active { background: rgba(62, 203, 255, 0.24); }
+    .lot-label { background: transparent; border: 0; }
+    .lot-label span { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: white; font-size: 10px; font-weight: 800; text-shadow: 0 1px 2px #041018, 0 0 4px #041018; }
+    .lot-card { position: absolute; z-index: 650; left: 8px; right: 8px; bottom: 108px; background: rgba(8, 16, 28, 0.94); border: 1px solid rgba(226, 182, 87, 0.65); border-radius: 16px; padding: 10px 12px 12px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35); }
+    .lot-card.usfs { border-color: #14915a; } .lot-card.blm { border-color: #f5e642; } .lot-card.state { border-color: #38bdf8; }
+    .lot-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .lot-card .badge { border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; color: #1c1402; }
+    .lot-card.usfs .badge, .lot-card.state .badge { color: #04140c; }
+    .lot-card .owner { display: block; margin-top: 6px; font-size: 16px; }
+    .lot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
+    .lot-grid div { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 6px 8px; }
+    .lot-grid span { display: block; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 0.04em; }
+    .lot-grid b { display: block; font-size: 12px; }
+    .lot-card .line, .lot-card .go { width: 100%; border: 0; border-radius: 999px; font-weight: 800; }
+    .lot-card .line { text-align: left; background: rgba(7, 16, 24, 0.9); color: #e8f1f8; padding: 8px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .lot-card .go { margin-top: 8px; background: #1d6dff; color: white; padding: 9px 10px; font-size: 13px; }
+    .lot-card .src { margin-top: 6px; color: var(--muted); font-size: 10px; }
+    .lot-top button { border: 0; background: transparent; color: white; font-size: 16px; }
     .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
     .legend .g { background: var(--green); } .legend .o { background: var(--amber); } .legend .r { background: var(--red); }
     .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 7px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; }
@@ -166,6 +184,7 @@
         <button type="button" data-act="center">Center on My GPS</button>
         <button type="button" data-act="near">Near My GPS</button>
         <button type="button" data-act="scan" id="scanBtn">Scan Area for All USA 4x4 Trails</button>
+        <button type="button" id="parcelToggle" data-act="parcels" class="on">Parcels &amp; Owners</button>
       </div>
       <div class="hud-read">
         <div><b id="speedRead">—</b><span>mph</span></div>
@@ -177,6 +196,7 @@
       </div>
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
       <div class="clin-pill" id="clinPill">Roll 0° / Pitch 0° · Air Down —</div>
+      <div class="lot-card" id="lotCard" hidden></div>
     </div>
     <footer id="dock">
       <div id="routebar"></div>
