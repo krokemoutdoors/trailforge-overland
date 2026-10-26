@@ -489,7 +489,6 @@ struct OfflineAreaDownload {
     var areaSqMiles: Int
     var label: String
     var satellite: Bool
-    var gridColumns: Int
     var trails: [OverlandTrail]
     var hazards: [MapHazard]
     var dropped: [DroppedHazard]
@@ -574,12 +573,6 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
         task.resume()
     }
 
-    static func parcels(in packID: String) -> [PropertyParcel]? {
-        let url = directory().appendingPathComponent(packID).appendingPathComponent("parcels.json")
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return (try? JSONDecoder().decode([ParcelSnapshot].self, from: data))?.map(\.parcel)
-    }
-
     private func prepareArea(
         folder: URL,
         trail: OverlandTrail,
@@ -587,12 +580,6 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
         tier: String
     ) async -> OfflineCorridorPack {
         let box = area.box
-        let points = Self.grid(box, columns: area.gridColumns)
-        let parcels = await ParcelGridFetcher.load(across: points)
-        if let data = try? JSONEncoder().encode(parcels.map(ParcelSnapshot.init)) {
-            try? data.write(to: folder.appendingPathComponent("parcels.json"))
-            CockpitStore.saveParcels(parcels, limit: 80)
-        }
         let gpx = Self.areaGPX(trails: area.trails, hazards: area.hazards, dropped: area.dropped)
         try? gpx.data(using: .utf8)?.write(to: folder.appendingPathComponent("route.gpx"))
         let payload: [String: Any] = [
@@ -603,7 +590,6 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
             "minLon": box.minLon,
             "maxLon": box.maxLon,
             "satellite": area.satellite,
-            "parcelCount": parcels.count,
             "trailCount": area.trails.count,
             "trails": area.trails.map { ["id": $0.id, "name": $0.name, "state": $0.state] as [String: Any] },
             "camps": area.trails.flatMap { trail in
@@ -660,19 +646,6 @@ final class CorridorDownloader: NSObject, URLSessionDownloadDelegate {
         content.body = "\(area.label) is saved on this iPhone."
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil), withCompletionHandler: nil)
         return record
-    }
-
-    private static func grid(_ box: OfflineAreaBox, columns: Int) -> [CLLocationCoordinate2D] {
-        let count = max(2, min(columns, 4))
-        var points: [CLLocationCoordinate2D] = []
-        for row in 0..<count {
-            for column in 0..<count {
-                let lat = box.minLat + (box.maxLat - box.minLat) * (Double(row) + 0.5) / Double(count)
-                let lon = box.minLon + (box.maxLon - box.minLon) * (Double(column) + 0.5) / Double(count)
-                points.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
-            }
-        }
-        return points
     }
 
     private static func quadrants(_ box: OfflineAreaBox) -> [OfflineAreaBox] {
