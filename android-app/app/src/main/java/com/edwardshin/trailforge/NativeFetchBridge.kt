@@ -10,7 +10,7 @@ import java.util.concurrent.Executors
 class NativeFetchBridge(
     private val onResult: (String, String, Boolean) -> Unit
 ) {
-    private val executor = Executors.newFixedThreadPool(3)
+    private val executor = Executors.newFixedThreadPool(6)
     private val allowed = setOf(
         "router.project-osrm.org",
         "overpass-api.de",
@@ -18,7 +18,10 @@ class NativeFetchBridge(
         "waterservices.usgs.gov",
         "services3.arcgis.com",
         "apps.fs.usda.gov",
-        "wcc.sc.egov.usda.gov"
+        "wcc.sc.egov.usda.gov",
+        "gis.blm.gov",
+        "geocoding.geo.census.gov",
+        "nominatim.openstreetmap.org"
     )
 
     @JavascriptInterface
@@ -38,7 +41,7 @@ class NativeFetchBridge(
                     readTimeout = 40000
                     instanceFollowRedirects = true
                     setRequestProperty("Accept", "application/json,text/plain,*/*")
-                    setRequestProperty("User-Agent", "TrailForgeOverland/1.0.0")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.1.0")
                     if (requestMethod == "POST") {
                         doOutput = true
                         setRequestProperty("Content-Type", "text/plain; charset=utf-8")
