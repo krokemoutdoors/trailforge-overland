@@ -26,7 +26,8 @@
     query: "",
     selectedId: "imogene",
     trails: [],
-    discovered: [],
+    discovered: loadDiscovered(),
+    scanAnchors: [],
     fix: null,
     pitch: 0,
     roll: 0,
@@ -746,7 +747,8 @@
     const pills = REPORTS.map(function (status) {
       return '<button type="button" data-act="report" data-id="' + esc(status) + '" class="' + (latest && latest.status === status ? "on" : "") + '">' + esc(reportLabel(status)) + "</button>";
     }).join("");
-    const crux = cruxPins(trail).map(function (pin) {
+    const pins = visibleCruxPins();
+    const crux = pins.map(function (pin) {
       return '<div class="crux">' + esc(pin.title) + "</div>";
     }).join("");
     const badge = mvumBadge(trail);
@@ -755,7 +757,7 @@
       ? '<button type="button" data-act="call-ranger" data-id="' + esc(ranger.phone) + '">Call ' + esc(ranger.name) + "</button>"
       : '<button type="button" data-act="ranger-page">Ranger district contacts</button>';
     const disclaimer = trail.bdr ? '<div class="sub">' + esc(CORRIDOR_NOTE) + "</div>" : "";
-    return '<div class="profile"><div class="profile-top"><b>Elevation</b><span id="elevRead">—</span></div><canvas id="elevChart" height="92"></canvas><div class="obs-key">💧 Ford · 🪨 Ledge · ⛺ &lt;3° Pad</div>' + (crux ? '<div class="crux-list">' + crux + "</div>" : "") + (badge ? '<div class="sub mvum">' + esc(badge) + "</div>" : "") + '<div class="actions"><button type="button" data-act="share-trip">Share Trip Package (QR / Export)</button>' + rangerBtn + '</div>' + disclaimer + '<div class="reports"><span>Report Trail Status</span>' + pills + "</div>" + communityListHtml(trail) + "</div>";
+    return '<div class="profile"><div class="profile-top"><b>Elevation</b><span id="elevRead">—</span></div><canvas id="elevChart" height="92"></canvas><div class="obs-key">💧 Ford · 🪨 Ledge · ⛺ &lt;3° Pad</div>' + (crux ? '<div class="crux-list" id="cruxSection"><b>Crux Obstacles</b>' + crux + "</div>" : "") + (badge ? '<div class="sub mvum">' + esc(badge) + "</div>" : "") + '<div class="actions"><button type="button" data-act="share-trip">Share Trip Package (QR / Export)</button>' + rangerBtn + '</div>' + disclaimer + '<div class="reports"><span>Report Trail Status</span>' + pills + "</div>" + communityListHtml(trail) + "</div>";
   }
 
   function telemetryHtml(trail) {
@@ -808,7 +810,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.5 · build 17<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.6 · build 18<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -950,7 +952,7 @@
   }
 
   function drawableTrails() {
-    const bounds = map && map.getBounds ? map.getBounds().pad(0.35) : null;
+    const bounds = map && map.getBounds ? map.getBounds().pad(0.65) : null;
     const seen = new Set();
     const visible = [];
     allTrails().forEach(function (trail) {
@@ -961,6 +963,19 @@
       visible.push(trail);
     });
     const origin = mapCenter();
+    if (visible.length < 12) {
+      const extras = [];
+      allTrails().forEach(function (trail) {
+        if (!trail || trail.bdr || seen.has(trail.id)) return;
+        extras.push(trail);
+      });
+      extras.sort(function (a, b) { return meters(origin, a) - meters(origin, b); });
+      extras.forEach(function (trail) {
+        if (visible.length >= 12) return;
+        seen.add(trail.id);
+        visible.push(trail);
+      });
+    }
     visible.sort(function (a, b) { return meters(origin, a) - meters(origin, b); });
     const chosen = visible.slice(0, 80);
     const current = selected();
@@ -974,6 +989,7 @@
     campLayer.clearLayers();
     const draw = drawableTrails();
     const zoom = map.getZoom();
+    const view = map.getBounds().pad(0.5);
     draw.forEach(function (trail) {
       if (!trail.coordinates || trail.coordinates.length < 2) return;
       const fit = evaluate(trail);
@@ -995,8 +1011,7 @@
         lineCap: "round",
         lineJoin: "round"
       }).addTo(trailLayer);
-      const view = map.getBounds().pad(0.2);
-      const showPads = state.mode === "camp" || zoom >= 8 || selectedTrail;
+      const showPads = zoom >= 5 || state.mode === "camp" || selectedTrail;
       if (showPads) {
         spotsFor(trail).forEach(function (spot) {
           if (spot.slope >= 3 || !view.contains([spot.lat, spot.lon])) return;
@@ -1019,12 +1034,10 @@
           beginRoute(head);
         }).addTo(campLayer);
       }
-      if (selectedTrail) {
-        cruxPins(trail).forEach(function (pin) {
-          const icon = L.divIcon({ className: "hazard-pin", html: "<span>" + esc(pin.short) + "</span>", iconAnchor: [14, 12] });
-          L.marker([pin.lat, pin.lon], { icon: icon, zIndexOffset: 520 }).addTo(campLayer);
-        });
-      }
+    });
+    visibleCruxPins().forEach(function (pin) {
+      const icon = L.divIcon({ className: "hazard-pin", html: "<span>" + esc(pin.short) + "</span>", iconAnchor: [14, 12] });
+      L.marker([pin.lat, pin.lon], { icon: icon, zIndexOffset: 520 }).addTo(campLayer);
     });
     drawDropped();
     drawCommunity();
@@ -1141,7 +1154,46 @@
 
   function parseOverpass(text) {
     const root = JSON.parse(text);
-    return (root.elements || []).map(parseWay).filter(Boolean);
+    return (root.elements || []).map(parseElement).filter(Boolean);
+  }
+
+  function parseElement(element) {
+    if (!element) return null;
+    if (element.type === "node") return parseCampNode(element);
+    return parseWay(element);
+  }
+
+  function parseCampNode(element) {
+    const tags = element.tags || {};
+    const lat = Number(element.lat);
+    const lon = Number(element.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const id = "osm-camp-" + element.id;
+    const name = tags.name || tags.ref || "Camp";
+    const seed = seedFor(id);
+    const slope = Math.min(2.4, 1.1 + (Math.abs(seed) % 10) * 0.1);
+    return {
+      id: id,
+      name: name,
+      region: "Camp",
+      agency: tags.operator || "OpenStreetMap",
+      state: stateCode(lat, lon, tags["addr:state"] || tags["is_in:state"]),
+      miles: 0.1,
+      elev: 0,
+      clearance: 8.6,
+      canopy: 12.5,
+      water: 0,
+      locker: false,
+      gate: "CHECK",
+      snow: 0,
+      flow: 0,
+      lat: lat,
+      lon: lon,
+      coordinates: [[lat, lon]],
+      flatCamps: [{ name: name, lat: lat, lon: lon, slope: Math.round(slope * 10) / 10, starlink: 82 + (Math.abs(seed) % 17) }],
+      signature: false,
+      live: true
+    };
   }
 
   function parseWay(element) {
@@ -1178,9 +1230,30 @@
     }).filter(Boolean);
   }
 
+  function livePads(name, coordinates, seed) {
+    if (!coordinates || coordinates.length < 2) return [];
+    const slopeA = Math.min(2.7, 1.2 + (Math.abs(seed) % 12) * 0.12);
+    const indexes = coordinates.length >= 4
+      ? [Math.floor(coordinates.length / 3), Math.floor(coordinates.length * 2 / 3)]
+      : [Math.min(coordinates.length - 1, Math.max(1, Math.floor(coordinates.length / 3)))];
+    const pads = [];
+    indexes.forEach(function (index, padIndex) {
+      const point = coordinates[index];
+      const slope = padIndex === 0 ? slopeA : Math.min(2.8, slopeA + 0.4);
+      if (slope >= 3) return;
+      const label = coordinates.length >= 4 ? (name + (padIndex === 0 ? " Pad A" : " Pad B")) : (name + " Flat Pad");
+      pads.push({
+        name: label,
+        lat: point[0],
+        lon: point[1],
+        slope: Math.round(slope * 10) / 10,
+        starlink: 82 + (Math.abs(seed + padIndex * 3) % 17)
+      });
+    });
+    return pads;
+  }
+
   function liveTrail(id, name, region, agency, coordinates, mid, fit, seed, tagged) {
-    const slope = Math.min(2.7, 1.2 + (Math.abs(seed) % 12) * 0.12);
-    const point = coordinates[Math.min(coordinates.length - 1, Math.max(1, Math.floor(coordinates.length / 3)))];
     return {
       id: id,
       name: name,
@@ -1199,21 +1272,35 @@
       lat: mid[0],
       lon: mid[1],
       coordinates: coordinates,
-      flatCamps: slope < 3 ? [{ name: name + " Flat Pad", lat: point[0], lon: point[1], slope: Math.round(slope * 10) / 10, starlink: 82 + (Math.abs(seed) % 17) }] : [],
+      flatCamps: livePads(name, coordinates, seed),
       signature: false,
       live: true
     };
   }
 
   async function fetchOverpass(center) {
-    const radius = 25000;
-    const query = "[out:json][timeout:25];(" +
-      'way["highway"~"track|path"]["tracktype"~"grade2|grade3|grade4|grade5"](around:' + radius + "," + center.lat + "," + center.lon + ");" +
-      'way["highway"="track"]["4wd_only"="yes"](around:' + (radius + 10000) + "," + center.lat + "," + center.lon + ");" +
-      'way["highway"="unclassified"]["surface"~"unpaved|gravel|dirt|sand|rock"](around:' + Math.max(5000, radius - 5000) + "," + center.lat + "," + center.lon + ");" +
-      ");out geom 40;";
-    const text = await net("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
-    return parseOverpass(text);
+    const south = center.lat - 0.09;
+    const north = center.lat + 0.09;
+    const west = center.lon - 0.11;
+    const east = center.lon + 0.11;
+    const box = south + "," + west + "," + north + "," + east;
+    const query = "[out:json][timeout:10];(" +
+      'way["highway"~"track|path"]["tracktype"~"grade2|grade3|grade4|grade5"](' + box + ");" +
+      'way["highway"="track"]["4wd_only"="yes"](' + box + ");" +
+      'way["highway"="unclassified"]["surface"~"unpaved|gravel|dirt|sand|rock"](' + box + ");" +
+      'node["tourism"~"camp_site|camp_pitch"](' + box + ");" +
+      ");out geom 60;";
+    const urls = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter"
+    ];
+    for (let index = 0; index < urls.length; index += 1) {
+      try {
+        const text = await net(urls[index], { method: "POST", body: query });
+        return parseOverpass(text);
+      } catch (error) { /* try the next Overpass mirror */ }
+    }
+    return [];
   }
 
   async function fetchUsfs(center) {
@@ -1223,7 +1310,7 @@
       geometryType: "esriGeometryPoint",
       inSR: "4326",
       spatialRel: "esriSpatialRelIntersects",
-      distance: "25000",
+      distance: "18000",
       units: "esriSRUnit_Meter",
       outFields: "NAME,ROAD_NAME,ROAD_SYMBOL,ID,OBJECTID,SURFACE_TYPE,SURFACE,STATE,STATE_CODE,ADMIN_STATE",
       returnGeometry: "true",
@@ -1235,51 +1322,113 @@
     return parseUsfs(text);
   }
 
+  function areaScanned(center) {
+    return state.scanAnchors.some(function (anchor) { return meters(anchor, center) < 1500; });
+  }
+
   function scheduleTrailScan() {
     if (!map || SHOT) return;
     clearTimeout(state.trailScanTimer);
     state.trailScanTimer = setTimeout(function () {
       const center = mapCenter();
-      if (state.lastScanAnchor && meters(state.lastScanAnchor, center) < 2500) return;
-      state.lastScanAnchor = { lat: center.lat, lon: center.lon };
+      if (areaScanned(center)) return;
       scanAt(center);
-    }, 550);
+    }, 180);
   }
 
-  async function scanAt(center) {
-    if (!center || SHOT) return;
+  function absorbDiscovered(center, incoming, gen) {
+    if (gen !== state.scanGen || !incoming || !incoming.length) return;
+    const byId = {};
+    state.discovered.forEach(function (trail) { byId[trail.id] = trail; });
+    incoming.forEach(function (trail) {
+      if (trail && trail.id) byId[trail.id] = trail;
+    });
+    let merged = Object.keys(byId).map(function (id) { return byId[id]; });
+    if (merged.length > 200) {
+      merged.sort(function (a, b) { return meters(center, a) - meters(center, b); });
+      merged = merged.slice(0, 200);
+    }
+    state.discovered = merged;
+    saveDiscovered();
+    state.scanStatus = merged.length + " local USA trails";
+    renderAll();
+  }
+
+  function scanAt(center) {
+    if (!center || SHOT || areaScanned(center)) return;
+    if (state.scanning && state.lastScanAnchor && meters(state.lastScanAnchor, center) < 1500) return;
     const gen = ++state.scanGen;
     state.scanning = true;
+    state.lastScanAnchor = { lat: center.lat, lon: center.lon };
     state.scanStatus = "Scanning USA 4x4 trails…";
     renderTop();
     const status = document.getElementById("scanStatus");
     if (status) status.textContent = state.scanStatus;
-    try {
-      const results = await Promise.all([
-        fetchOverpass(center).catch(function () { return []; }),
-        fetchUsfs(center).catch(function () { return []; })
-      ]);
-      if (gen !== state.scanGen) return;
-      const merged = results[0].concat(results[1]);
-      const seen = new Set(allTrails().map(function (trail) { return trail.id; }));
-      const fresh = [];
-      merged.forEach(function (trail) {
-        if (seen.has(trail.id)) return;
-        seen.add(trail.id);
-        fresh.push(trail);
-      });
-      state.discovered = state.discovered.concat(fresh);
-      if (state.discovered.length > 200) {
-        state.discovered.sort(function (a, b) { return meters(center, a) - meters(center, b); });
-        state.discovered = state.discovered.slice(0, 200);
-      }
+    let pending = 2;
+    function finish() {
+      pending -= 1;
+      if (gen !== state.scanGen || pending > 0) return;
+      state.scanning = false;
+      state.scanAnchors.push({ lat: center.lat, lon: center.lon });
+      if (state.scanAnchors.length > 40) state.scanAnchors = state.scanAnchors.slice(-40);
       state.scanStatus = state.discovered.length ? (state.discovered.length + " local USA trails") : "No public 4x4 tracks returned for this area.";
-    } catch (error) {
-      if (gen !== state.scanGen) return;
-      state.scanStatus = "Trail scan unavailable right now.";
+      renderTop();
     }
-    state.scanning = false;
-    renderAll();
+    fetchOverpass(center).then(function (trails) {
+      absorbDiscovered(center, trails, gen);
+    }).catch(function () {}).finally(finish);
+    fetchUsfs(center).then(function (trails) {
+      absorbDiscovered(center, trails, gen);
+    }).catch(function () {}).finally(finish);
+  }
+
+  function thinLine(coordinates, limit) {
+    if (!coordinates || coordinates.length <= limit) return coordinates || [];
+    const step = (coordinates.length - 1) / (limit - 1);
+    const line = [];
+    for (let index = 0; index < limit; index += 1) {
+      line.push(coordinates[Math.min(coordinates.length - 1, Math.round(index * step))]);
+    }
+    return line;
+  }
+
+  function loadDiscovered() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("tf-discovered-trails") || "[]");
+      return Array.isArray(parsed) ? parsed.slice(0, 200) : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function saveDiscovered() {
+    try {
+      const slim = state.discovered.slice(0, 200).map(function (trail) {
+        return {
+          id: trail.id,
+          name: trail.name,
+          region: trail.region,
+          agency: trail.agency,
+          state: trail.state,
+          miles: trail.miles,
+          elev: trail.elev || 0,
+          clearance: trail.clearance,
+          canopy: trail.canopy,
+          water: trail.water,
+          locker: !!trail.locker,
+          gate: trail.gate || "CHECK",
+          snow: trail.snow || 0,
+          flow: trail.flow || 0,
+          lat: trail.lat,
+          lon: trail.lon,
+          coordinates: thinLine(trail.coordinates, 60),
+          flatCamps: trail.flatCamps || [],
+          signature: false,
+          live: true
+        };
+      });
+      localStorage.setItem("tf-discovered-trails", JSON.stringify(slim));
+    } catch (error) { /* storage full */ }
   }
 
   function displaySteps(route) {
@@ -1442,25 +1591,97 @@
     }
   }
 
+  function allowsTrailStitch(spot) {
+    if (!spot) return false;
+    const kind = spot.kind || "";
+    const id = String(spot.id || "");
+    if (kind === "place" || kind === "parcel") return false;
+    if (id.indexOf("pin-") === 0 || id.indexOf("place-") === 0 || id.indexOf("parcel-") === 0) return false;
+    return kind === "pad" || kind === "trailhead";
+  }
+
+  function spurLimit(spot) {
+    return allowsTrailStitch(spot) ? 3218 : 250;
+  }
+
+  function routeOrigin(spot) {
+    const view = mapCenter();
+    const gps = state.fix && !state.fix.shotOnly ? state.fix : null;
+    if (gps && (meters(gps, view) <= 500000 || meters(gps, spot) <= 500000)) {
+      return { lat: gps.lat, lon: gps.lon, gps: true };
+    }
+    return { lat: view.lat, lon: view.lon, gps: false };
+  }
+
+  function roadLooksDrivable(road, origin) {
+    if (!road || road.length < 2) return false;
+    if (meters(road[0], origin) > 5000) return false;
+    const direct = meters(road[0], road[road.length - 1]);
+    if (direct < 800) return true;
+    if (road.length <= 3 && direct > 1500) return false;
+    const path = polylineMeters(road);
+    if (path < direct * 1.08 && direct > 3000 && road.length < 12) return false;
+    return true;
+  }
+
   function overlandSpur(road, spot) {
-    const last = road[road.length - 1] || [spot.lat, spot.lon];
+    if (!road || !road.length) return [];
+    const last = road[road.length - 1];
+    const gap = meters(last, spot);
+    const limit = spurLimit(spot);
+    if (gap < 30 || gap > limit) return [];
     return [last, [spot.lat, spot.lon]];
   }
 
-  function fallbackRoad(origin, spot, trail) {
-    const line = trail && trail.coordinates && trail.coordinates.length >= 2 ? trail.coordinates : [[origin.lat, origin.lon], [spot.lat, spot.lon]];
-    let start = 0;
-    let end = 0;
+  function stitchPadTrail(option, trail, spot) {
+    if (!allowsTrailStitch(spot) || !trail || !trail.coordinates || trail.coordinates.length < 2) return option;
+    const road = option.road.slice();
+    if (road.length < 2) return option;
+    const end = { lat: road[road.length - 1][0], lon: road[road.length - 1][1] };
+    if (meters(end, spot) <= 80) return option;
+    const coords = trail.coordinates;
+    let startIndex = 0;
+    let endIndex = 0;
     let bestStart = Infinity;
     let bestEnd = Infinity;
-    line.forEach(function (point, index) {
-      const fromOrigin = meters(origin, point);
+    coords.forEach(function (point, index) {
+      const fromEnd = meters(end, point);
       const fromSpot = meters(spot, point);
-      if (fromOrigin < bestStart) { bestStart = fromOrigin; start = index; }
-      if (fromSpot < bestEnd) { bestEnd = fromSpot; end = index; }
+      if (fromEnd < bestStart) { bestStart = fromEnd; startIndex = index; }
+      if (fromSpot < bestEnd) { bestEnd = fromSpot; endIndex = index; }
     });
-    const slice = start <= end ? line.slice(start, end + 1) : line.slice(end, start + 1).reverse();
-    return [[origin.lat, origin.lon]].concat(slice);
+    if (bestStart > 3218) return option;
+    const slice = startIndex <= endIndex ? coords.slice(startIndex, endIndex + 1) : coords.slice(endIndex, startIndex + 1).slice().reverse();
+    if (slice.length < 2) return option;
+    const gap = meters(end, slice[0]);
+    if (gap > 3218) return option;
+    const joined = gap < 40 ? road.concat(slice.slice(1)) : road.concat(slice);
+    const next = Object.assign({}, option);
+    next.road = joined;
+    next.distanceMeters = polylineMeters(joined);
+    return next;
+  }
+
+  function drivingRouteBases() {
+    return [
+      "https://router.project-osrm.org/route/v1/driving/",
+      "https://routing.openstreetmap.de/routed-car/route/v1/driving/"
+    ];
+  }
+
+  async function fetchOsrmOptions(origin, spot) {
+    const path = origin.lon + "," + origin.lat + ";" + spot.lon + "," + spot.lat + "?overview=full&geometries=geojson&steps=true&alternatives=true";
+    const bases = drivingRouteBases();
+    for (let index = 0; index < bases.length; index += 1) {
+      try {
+        const text = await net(bases[index] + path);
+        const options = parseOsrm(JSON.parse(text), spot).filter(function (option) {
+          return roadLooksDrivable(option.road, origin);
+        });
+        if (options.length) return options;
+      } catch (error) { /* try the next router */ }
+    }
+    return [];
   }
 
   function parseOsrm(data, spot) {
@@ -1503,47 +1724,44 @@
     if (!spot) return;
     const generation = ++state.routeGen;
     const preview = !!previewOnly;
-    const trail = trailById(spot.trailID) || selected();
+    const trail = trailById(spot.trailID);
     const originWasGPS = !!(state.fix && !state.fix.shotOnly);
-    const origin = state.fix || { lat: trailhead(trail).lat, lon: trailhead(trail).lon };
+    const origin = routeOrigin(spot);
     const prior = state.route;
     const wasFollowing = !!(prior && state.follow && refit === false && !preview);
+    const sameDestination = !!(prior && prior.destination && prior.destination.id === spot.id);
     state.routing = true;
     state.aim = spot;
     state.selectedId = spot.trailID || state.selectedId;
+    if (!sameDestination) {
+      state.route = null;
+      if (routeLayer) routeLayer.clearLayers();
+    }
     updateHud();
     renderTop();
-    let options = [];
-    try {
-      const url = "https://router.project-osrm.org/route/v1/driving/" + origin.lon + "," + origin.lat + ";" + spot.lon + "," + spot.lat + "?overview=full&geometries=geojson&steps=true&alternatives=true";
-      const text = await net(url);
-      if (generation !== state.routeGen) return;
-      options = parseOsrm(JSON.parse(text), spot);
-    } catch (error) {
-      options = [];
-    }
+    let options = await fetchOsrmOptions(origin, spot);
     if (generation !== state.routeGen) return;
+    if (options.length && allowsTrailStitch(spot)) {
+      options = options.map(function (option) { return stitchPadTrail(option, trail, spot); });
+    }
     if (!options.length) {
-      const road = fallbackRoad(origin, spot, trail);
-      const distance = polylineMeters(road);
       options = [{
         id: 0,
-        title: "Trail approach",
-        expectedTravelTime: (distance / 1609.344) / 15 * 3600,
-        distanceMeters: distance,
-        road: road,
-        steps: [{ id: 0, instruction: "Follow the trail toward " + spot.name, distanceMeters: distance, name: trail.name, type: "continue", modifier: "straight", lat: spot.lat, lon: spot.lon, approach: false, at: false }]
+        title: "No road route",
+        expectedTravelTime: 0,
+        distanceMeters: 0,
+        road: [],
+        steps: [{ id: 0, instruction: "No drivable road route yet. Check the signal and try again.", distanceMeters: 0, name: spot.name, type: "continue", modifier: "", lat: spot.lat, lon: spot.lon, approach: false, at: false }]
       }];
     }
     const road = options[0].road;
-    const firstBuild = !prior || prior.destination.id !== spot.id;
-    const keepAnnounced = !firstBuild && prior && prior.announced && !preview;
+    const keepAnnounced = sameDestination && prior && prior.announced && !preview;
     state.route = {
       destination: spot,
       options: options,
       selected: 0,
       spur: overlandSpur(road, spot),
-      originWasGPS: !!state.fix,
+      originWasGPS: originWasGPS,
       stepIndex: 0,
       arrived: false,
       spurApproach: false,
@@ -1559,31 +1777,39 @@
       localStorage.setItem("tf-detent", "peek");
     }
     renderAll();
-    if (refit !== false) {
+    if (refit !== false && road.length >= 2) {
       requestAnimationFrame(function () {
         map.invalidateSize();
         frameRoute();
       });
+    } else if (refit !== false && map) {
+      map.setView([spot.lat, spot.lon], Math.max(map.getZoom(), 12));
     }
     const first = options[0].steps.find(function (step) { return step.type !== "depart"; }) || options[0].steps[0];
     const milesText = (options[0].distanceMeters / 1609.344).toFixed(1);
-    if (!preview && !state.route.announced) {
+    if (!preview && road.length >= 2 && !state.route.announced) {
       state.route.announced = true;
       speak("Starting GPS route to " + spot.name + ". " + (first ? first.instruction : "Follow the route.") + " " + milesText + " miles.");
+    } else if (!preview && road.length < 2) {
+      toast("No drivable road route yet. Check the signal and try again.");
     }
-    if (!preview) maybeSpeakCues();
+    if (!preview && road.length >= 2) maybeSpeakCues();
     const app = document.getElementById("app");
     app.dataset.route = "1";
     if (SHOT) app.dataset.shotReady = "1";
-    if (!originWasGPS) state.route.originWasGPS = false;
   }
 
   function frameRoute() {
     const route = state.route;
     if (!route || !map) return;
-    const coords = roadAndSpur(route).slice();
-    if (state.fix) coords.push([state.fix.lat, state.fix.lon]);
-    coords.push([route.destination.lat, route.destination.lon]);
+    const option = route.options[route.selected] || route.options[0];
+    const coords = option && option.road ? option.road.slice() : [];
+    if (route.spur && route.spur.length >= 2) coords.push.apply(coords, route.spur);
+    if (route.originWasGPS && state.fix) coords.push([state.fix.lat, state.fix.lon]);
+    if (coords.length < 2) {
+      map.setView([route.destination.lat, route.destination.lon], Math.max(map.getZoom(), 12));
+      return;
+    }
     map.fitBounds(coords, { padding: [28, 28] });
   }
 
@@ -4244,20 +4470,28 @@
   function fetchPlotRoad(prev, next, key) {
     if (plotRoutePending[key]) return;
     plotRoutePending[key] = true;
-    const url = "https://router.project-osrm.org/route/v1/driving/" + prev.lon + "," + prev.lat + ";" + next.lon + "," + next.lat + "?overview=full&geometries=geojson";
-    const straight = [[Number(prev.lat), Number(prev.lon)], [Number(next.lat), Number(next.lon)]];
-    fetch(url).then(function (response) { return response.json(); }).then(function (data) {
-      plotRoutePending[key] = false;
-      const coords = data && data.code === "Ok" && data.routes && data.routes[0] && data.routes[0].geometry && data.routes[0].geometry.coordinates;
-      plotRouteCache[key] = coords && coords.length >= 2
-        ? coords.map(function (pair) { return [pair[1], pair[0]]; })
-        : straight;
-      drawPlot();
-      renderDrawer();
-    }).catch(function () {
-      plotRoutePending[key] = false;
-      if (!plotRouteCache[key]) plotRouteCache[key] = straight;
-    });
+    const bases = drivingRouteBases();
+    const path = prev.lon + "," + prev.lat + ";" + next.lon + "," + next.lat + "?overview=full&geometries=geojson&steps=true";
+    function tryIndex(index) {
+      if (index >= bases.length) {
+        plotRoutePending[key] = false;
+        drawPlot();
+        return;
+      }
+      fetch(bases[index] + path).then(function (response) { return response.json(); }).then(function (data) {
+        const coords = data && data.code === "Ok" && data.routes && data.routes[0] && data.routes[0].geometry && data.routes[0].geometry.coordinates;
+        const road = coords && coords.length >= 2 ? coords.map(function (pair) { return [pair[1], pair[0]]; }) : null;
+        if (road && roadLooksDrivable(road, prev)) {
+          plotRoutePending[key] = false;
+          plotRouteCache[key] = road;
+          drawPlot();
+          renderDrawer();
+          return;
+        }
+        tryIndex(index + 1);
+      }).catch(function () { tryIndex(index + 1); });
+    }
+    tryIndex(0);
   }
 
   function resolvePlotSegment(prev, next) {
@@ -4266,10 +4500,10 @@
     const slice = bestTrailSlice(prev, next);
     if (slice.length >= 3) return slice.map(function (point) { return [point.lat, point.lon]; });
     const key = plotSegmentKey(prev, next);
-    if (plotRouteCache[key] && plotRouteCache[key].length >= 2) return plotRouteCache[key];
+    if (plotRouteCache[key] && plotRouteCache[key].length >= 2 && roadLooksDrivable(plotRouteCache[key], prev)) return plotRouteCache[key];
     fetchPlotRoad(prev, next, key);
     if (slice.length >= 2) return slice.map(function (point) { return [point.lat, point.lon]; });
-    return [[Number(prev.lat), Number(prev.lon)], [Number(next.lat), Number(next.lon)]];
+    return [];
   }
 
   function fullPlotPolyline() {
@@ -4308,6 +4542,7 @@
       const next = state.plot[index];
       const free = prev.mode === "freehand" || next.mode === "freehand";
       const line = resolvePlotSegment(prev, next);
+      if (!line || line.length < 2) continue;
       L.polyline(line, { color: "#071428", weight: 5, opacity: 0.95, dashArray: free ? "6 8" : null }).addTo(plotLayer);
       L.polyline(line, { color: fit ? fitColor(fit.verdict) : "#38bdf8", weight: 3.2, opacity: 1, dashArray: free ? "6 8" : null }).addTo(plotLayer);
     }
@@ -4860,31 +5095,26 @@
     return { lat: coords[index][0], lon: coords[index][1] };
   }
 
+  function trailDifficulty(trail) {
+    if (!trail) return "easy";
+    const id = String(trail.id || "");
+    if (trail.live || id.indexOf("osm-") === 0 || id.indexOf("usfs-") === 0) return "easy";
+    const clearance = Number(trail.clearance) || 0;
+    const water = Number(trail.water) || 0;
+    if (trail.locker && clearance >= 11.5) return "extreme";
+    if (trail.locker || clearance >= 10.5 || water >= 18) return "hard";
+    if (clearance >= 9 || water >= 8) return "moderate";
+    return "easy";
+  }
+
   function cruxPins(trail) {
     const coords = trail && trail.coordinates;
     if (!coords || coords.length < 2) return [];
+    const difficulty = trailDifficulty(trail);
+    if (difficulty === "easy") return [];
     const pins = [];
-    const fit = evaluate(trail);
-    const main = fit.verdict.indexOf("NO-GO") >= 0 ? "No-Go" : fit.verdict === "CAUTION" ? "Caution" : "Fits";
-    if (Number(trail.clearance) > 0) {
-      const inches = Math.max(1, Math.round(Number(trail.clearance)));
-      pins.push(Object.assign({
-        id: trail.id + "-rock",
-        short: "🪨 " + inches + '"',
-        title: "🪨 Obstacle #1: " + inches + '" Rock Ledge — Main Line: ' + main + " / Bypass: Fits All Rigs",
-        speak: inches + " inch rock ledge. Main line " + main + ". Bypass fits all rigs."
-      }, alongTrack(coords, 0.62)));
-    }
-    if (Number(trail.water) > 0) {
-      const inches = Math.max(1, Math.round(Number(trail.water)));
-      pins.push(Object.assign({
-        id: trail.id + "-ford",
-        short: "💧 " + inches + '"',
-        title: "💧 Obstacle #2: " + inches + '" Creek Ford — Check USGS Gauge',
-        speak: inches + " inch creek ford. Check the USGS gauge."
-      }, alongTrack(coords, 0.38)));
-    }
-    if (trail.gate && String(trail.gate).toUpperCase() !== "OPEN") {
+    const gate = String(trail.gate || "OPEN").toUpperCase();
+    if (gate !== "OPEN" && gate !== "CHECK") {
       pins.push(Object.assign({
         id: trail.id + "-gate",
         short: "🔒 Gate",
@@ -4892,14 +5122,60 @@
         speak: "Gate ahead. Status " + trail.gate + "."
       }, alongTrack(coords, 0.18)));
     }
-    if (Number(trail.canopy) > 0 && Number(trail.canopy) < 11) {
+    if (Number(trail.water) > 0) {
+      const inches = Math.max(1, Math.round(Number(trail.water)));
       pins.push(Object.assign({
-        id: trail.id + "-shelf",
-        short: "⚠️ Shelf",
-        title: "⚠️ Narrow Off-Camber Shelf",
-        speak: "Narrow off-camber shelf ahead. Canopy " + num(trail.canopy) + " feet."
-      }, alongTrack(coords, 0.78)));
+        id: trail.id + "-ford",
+        short: "💧 " + inches + '"',
+        title: "💧 Obstacle: " + inches + '" Creek Ford — Check USGS Gauge',
+        speak: inches + " inch creek ford. Check the USGS gauge."
+      }, alongTrack(coords, 0.38)));
     }
+    if (difficulty === "hard" || difficulty === "extreme") {
+      const fit = evaluate(trail);
+      const main = fit.verdict.indexOf("NO-GO") >= 0 ? "No-Go" : fit.verdict === "CAUTION" ? "Caution" : "Fits";
+      const inches = Math.max(1, Math.round(Number(trail.clearance) || 0));
+      pins.push(Object.assign({
+        id: trail.id + "-rock",
+        short: "🪨 " + inches + '"',
+        title: "🪨 Obstacle: " + inches + '" Rock Ledge — Main Line: ' + main + " / Bypass: Walk it first",
+        speak: inches + " inch rock ledge. Main line " + main + ". Walk the bypass before you commit."
+      }, alongTrack(coords, 0.62)));
+    }
+    return pins;
+  }
+
+  function contextNear(point) {
+    if (!point) return false;
+    const here = { lat: Number(point.lat), lon: Number(point.lon) };
+    if (!Number.isFinite(here.lat) || !Number.isFinite(here.lon)) return false;
+    if (map && map.getBounds && map.getBounds().pad(0.2).contains([here.lat, here.lon])) return true;
+    if (meters(mapCenter(), here) <= 40000) return true;
+    if (state.fix && !state.fix.shotOnly && meters(state.fix, here) <= 40000) return true;
+    return false;
+  }
+
+  function trailIsNearContext(trail) {
+    if (!trail) return false;
+    const bounds = map && map.getBounds ? map.getBounds().pad(0.35) : null;
+    if (bounds && trailInView(trail, bounds)) return true;
+    if (meters(mapCenter(), trail) <= 40000) return true;
+    if (state.fix && !state.fix.shotOnly && meters(state.fix, trail) <= 40000) return true;
+    return false;
+  }
+
+  function visibleCruxPins() {
+    const seen = {};
+    const pins = [];
+    allTrails().forEach(function (trail) {
+      if (!trail || seen[trail.id] || !trailIsNearContext(trail)) return;
+      seen[trail.id] = true;
+      cruxPins(trail).forEach(function (pin) {
+        if (seen[pin.id] || !contextNear(pin)) return;
+        seen[pin.id] = true;
+        pins.push(pin);
+      });
+    });
     return pins;
   }
 
@@ -4907,7 +5183,7 @@
     if (!state.fix || (!state.route && !state.follow)) return;
     const trail = selected();
     if (!trail) return;
-    cruxPins(trail).forEach(function (pin) {
+    visibleCruxPins().forEach(function (pin) {
       if (state.spokenHazards[pin.id]) return;
       const distance = meters(state.fix, pin) / 1609.344;
       if (distance > 0.15) return;

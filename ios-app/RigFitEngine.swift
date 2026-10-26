@@ -19,6 +19,10 @@ enum RigFitVerdict: String {
     case noGo = "NO-GO CLEARANCE"
 }
 
+enum TrailDifficulty: String {
+    case easy, moderate, hard, extreme
+}
+
 enum CampSpotKind: String, Hashable {
     case pad
     case trailhead
@@ -84,6 +88,16 @@ struct OverlandTrail: Identifiable {
                 kind: .pad
             )
         }
+    }
+
+    var difficulty: TrailDifficulty {
+        if id.hasPrefix("osm-") || id.hasPrefix("usfs-") || legalStatus == "osm" || region == "USFS road" || region == "Live USA scan" || region == "Camp" {
+            return .easy
+        }
+        if reqLocker && reqClearanceIn >= 11.5 { return .extreme }
+        if reqLocker || reqClearanceIn >= 10.5 || waterCrossingIn >= 18 { return .hard }
+        if reqClearanceIn >= 9 || waterCrossingIn >= 8 { return .moderate }
+        return .easy
     }
 
     var trailhead: CampSpot {

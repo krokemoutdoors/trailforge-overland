@@ -250,6 +250,91 @@ struct DroppedPinTarget: Identifiable {
     }
 }
 
+struct DiscoveredTrailSnapshot: Codable {
+    struct Coord: Codable {
+        var lat: Double
+        var lon: Double
+    }
+
+    struct Pad: Codable {
+        var name: String
+        var lat: Double
+        var lon: Double
+        var slopeDeg: Double
+        var starlinkPct: Int
+    }
+
+    var id: String
+    var name: String
+    var region: String
+    var agency: String
+    var state: String
+    var distanceMi: Double
+    var reqClearanceIn: Double
+    var minCanopyFt: Double
+    var waterCrossingIn: Int
+    var reqLocker: Bool
+    var centerLat: Double
+    var centerLon: Double
+    var legalStatus: String
+    var coordinates: [Coord]
+    var pads: [Pad]
+
+    init(_ trail: OverlandTrail) {
+        id = trail.id
+        name = trail.name
+        region = trail.region
+        agency = trail.agency
+        state = trail.state
+        distanceMi = trail.distanceMi
+        reqClearanceIn = trail.reqClearanceIn
+        minCanopyFt = trail.minCanopyFt
+        waterCrossingIn = trail.waterCrossingIn
+        reqLocker = trail.reqLocker
+        centerLat = trail.centerLat
+        centerLon = trail.centerLon
+        legalStatus = trail.legalStatus
+        let source = trail.coordinates
+        let limit = 60
+        if source.count <= limit {
+            coordinates = source.map { Coord(lat: $0.latitude, lon: $0.longitude) }
+        } else {
+            let step = Double(source.count - 1) / Double(limit - 1)
+            coordinates = (0..<limit).map { index in
+                let point = source[min(source.count - 1, Int((Double(index) * step).rounded()))]
+                return Coord(lat: point.latitude, lon: point.longitude)
+            }
+        }
+        pads = trail.flatCamps.map {
+            Pad(name: $0.name, lat: $0.lat, lon: $0.lon, slopeDeg: $0.slopeDeg, starlinkPct: $0.starlinkPct)
+        }
+    }
+
+    var trail: OverlandTrail {
+        OverlandTrail(
+            id: id,
+            name: name,
+            region: region,
+            agency: agency,
+            distanceMi: distanceMi,
+            peakElevFt: 0,
+            reqClearanceIn: reqClearanceIn,
+            minCanopyFt: minCanopyFt,
+            waterCrossingIn: waterCrossingIn,
+            reqLocker: reqLocker,
+            gateStatus: "CHECK",
+            snotelSnowIn: 0,
+            usgsFlowCfs: 0,
+            state: state,
+            centerLat: centerLat,
+            centerLon: centerLon,
+            coordinates: coordinates.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) },
+            flatCamps: pads.map { (name: $0.name, lat: $0.lat, lon: $0.lon, slopeDeg: $0.slopeDeg, starlinkPct: $0.starlinkPct) },
+            legalStatus: legalStatus
+        )
+    }
+}
+
 enum CockpitStore {
     private static let reportsKey = "trailforge.trailReports"
     private static let packsKey = "trailforge.offlinePacks"
@@ -257,6 +342,7 @@ enum CockpitStore {
     private static let hazardsKey = "trailforge.hazardPins"
     private static let recordedRoutesKey = "trailforge.recordedRoutes"
     private static let savedMarkersKey = "trailforge.savedMarkers.v1"
+    private static let discoveredTrailsKey = "trailforge.discoveredTrails"
 
     static func loadReports() -> [TrailConditionReport] {
         decode([TrailConditionReport].self, key: reportsKey) ?? []
@@ -312,6 +398,14 @@ enum CockpitStore {
 
     static func saveSavedMarkers(_ markers: [SavedMarker]) {
         encode(markers, key: savedMarkersKey)
+    }
+
+    static func loadDiscoveredTrails() -> [OverlandTrail] {
+        (decode([DiscoveredTrailSnapshot].self, key: discoveredTrailsKey) ?? []).map(\.trail)
+    }
+
+    static func saveDiscoveredTrails(_ trails: [OverlandTrail]) {
+        encode(trails.prefix(200).map(DiscoveredTrailSnapshot.init), key: discoveredTrailsKey)
     }
 
     private static var recordedRoutesURL: URL {

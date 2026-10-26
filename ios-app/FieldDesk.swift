@@ -45,8 +45,11 @@ enum CruxCatalog {
     static func pins(for trail: OverlandTrail) -> [CruxPin] {
         let line = trail.coordinates
         guard line.count >= 2 else { return [] }
+        let difficulty = trail.difficulty
+        guard difficulty != .easy else { return [] }
         var pins: [CruxPin] = []
-        if trail.gateStatus != "OPEN" {
+        let gate = trail.gateStatus.uppercased()
+        if gate != "OPEN" && gate != "CHECK" && !gate.isEmpty {
             pins.append(make(
                 trail: trail,
                 index: 1,
@@ -67,7 +70,7 @@ enum CruxCatalog {
                 spoken: "Water crossing ahead. Listed depth \(depth) inches. Check the gauge and stay on the posted line."
             ))
         }
-        if trail.reqClearanceIn >= 9 || trail.reqLocker {
+        if difficulty == .hard || difficulty == .extreme {
             let height = Int(trail.reqClearanceIn.rounded())
             let main = trail.reqLocker ? "Caution — locker listed" : "Caution"
             pins.append(make(
