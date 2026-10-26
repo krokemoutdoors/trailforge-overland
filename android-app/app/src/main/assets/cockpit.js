@@ -296,7 +296,7 @@
   }
 
   function selected() {
-    return trailById(state.selectedId) || pickerTrails().find(function (trail) { return !trail.bdr; }) || state.trails.find(function (trail) { return !trail.bdr; }) || state.trails[0];
+    return trailById(state.selectedId) || pickerTrails().find(function (trail) { return !isBdrTrail(trail); }) || state.trails.find(function (trail) { return !isBdrTrail(trail); }) || state.trails[0];
   }
 
   function ll(point) {
@@ -404,8 +404,16 @@
     return state.filter;
   }
 
+  function isBdrTrail(trail) {
+    if (!trail) return false;
+    if (trail.bdr) return true;
+    const id = String(trail.id || "").toLowerCase();
+    if (id.indexOf("bdr") >= 0) return true;
+    return /backcountry discovery|\bBDR\b/i.test(String(trail.name || ""));
+  }
+
   function corridorLabel(trail) {
-    if (!trail || !trail.bdr) return trail ? trail.name : "";
+    if (!trail || !isBdrTrail(trail)) return trail ? trail.name : "";
     const code = trail.state || "US";
     return code + " Backcountry Corridor (" + String(trail.id || "corridor").toUpperCase() + " Ref)";
   }
@@ -448,14 +456,17 @@
         const hay = (trail.name + " " + corridorHay + trail.region + " " + trail.state + " " + (trail.states || []).join(" ") + " " + trail.agency).toLowerCase();
         if (!hay.includes(query)) return false;
       }
-      if (state.filter === "bdr") return !!trail.bdr;
-      if (state.filter === "near") return !trail.bdr;
-      if (state.filter === "all") return !trail.bdr || !!query;
+      if (state.filter === "bdr") return isBdrTrail(trail);
+      if (state.filter === "near") return !isBdrTrail(trail);
+      if (state.filter === "all") return !isBdrTrail(trail) || !!query;
       const codes = trail.states && trail.states.length ? trail.states : [trail.state];
       return codes.indexOf(state.filter) >= 0;
     });
     if (state.filter === "bdr") {
-      list.sort(function (a, b) { return (a.bdrOrder || 0) - (b.bdrOrder || 0); });
+      list.sort(function (a, b) {
+        const order = (a.bdrOrder || 99) - (b.bdrOrder || 99);
+        return order || String(a.name).localeCompare(String(b.name));
+      });
       return list;
     }
     const origin = state.filter === "near" ? nearAnchor() : (state.filter === "all" ? listOrigin() : null);
@@ -497,7 +508,7 @@
   }
 
   function listedCamps() {
-    const source = map ? drawableTrails() : pickerTrails().filter(function (trail) { return !trail.bdr || trail.id === state.selectedId; });
+    const source = map ? drawableTrails() : pickerTrails().filter(function (trail) { return !isBdrTrail(trail) || trail.id === state.selectedId; });
     const pads = [];
     source.forEach(function (trail) {
       spotsFor(trail).forEach(function (spot) {
@@ -785,7 +796,7 @@
     const rangerBtn = ranger
       ? '<button type="button" data-act="call-ranger" data-id="' + esc(ranger.phone) + '">Call ' + esc(ranger.name) + "</button>"
       : '<button type="button" data-act="ranger-page">Ranger district contacts</button>';
-    const disclaimer = trail.bdr ? '<div class="sub">' + esc(CORRIDOR_NOTE) + "</div>" : "";
+    const disclaimer = isBdrTrail(trail) ? '<div class="sub">' + esc(CORRIDOR_NOTE) + "</div>" : "";
     return '<div class="profile"><div class="profile-top"><b>Elevation</b><span id="elevRead">—</span></div><canvas id="elevChart" height="92"></canvas><div class="obs-key">💧 Ford · 🪨 Ledge · ⛺ &lt;3° Pad</div>' + (crux ? '<div class="crux-list" id="cruxSection"><b>Crux Obstacles</b>' + crux + "</div>" : "") + (badge ? '<div class="sub mvum">' + esc(badge) + "</div>" : "") + '<div class="actions"><button type="button" data-act="share-trip">Share Trip Package (QR / Export)</button>' + rangerBtn + '</div>' + disclaimer + '<div class="reports"><span>Report Trail Status</span>' + pills + "</div>" + communityListHtml(trail) + "</div>";
   }
 
@@ -986,7 +997,7 @@
     const visible = [];
     allTrails().forEach(function (trail) {
       if (!trail || seen.has(trail.id)) return;
-      if (trail.bdr && trail.id !== state.selectedId) return;
+      if (isBdrTrail(trail) && trail.id !== state.selectedId) return;
       if (bounds && trail.id !== state.selectedId && !trailInView(trail, bounds)) return;
       seen.add(trail.id);
       visible.push(trail);
@@ -995,7 +1006,7 @@
     if (visible.length < 12) {
       const extras = [];
       allTrails().forEach(function (trail) {
-        if (!trail || trail.bdr || seen.has(trail.id)) return;
+        if (!trail || isBdrTrail(trail) || seen.has(trail.id)) return;
         extras.push(trail);
       });
       extras.sort(function (a, b) { return meters(origin, a) - meters(origin, b); });
@@ -1008,7 +1019,7 @@
     visible.sort(function (a, b) { return meters(origin, a) - meters(origin, b); });
     const chosen = visible.slice(0, 80);
     const current = selected();
-    if (current && (!current.bdr || current.id === state.selectedId) && !chosen.some(function (trail) { return trail.id === current.id; })) chosen.push(current);
+    if (current && (!isBdrTrail(current) || current.id === state.selectedId) && !chosen.some(function (trail) { return trail.id === current.id; })) chosen.push(current);
     return chosen;
   }
 
@@ -1127,7 +1138,7 @@
   function applyFilter(scan) {
     const list = pickerTrails();
     if (state.filter === "bdr") {
-      const current = list.find(function (trail) { return trail.id === state.selectedId && trail.bdr; });
+      const current = list.find(function (trail) { return trail.id === state.selectedId && isBdrTrail(trail); });
       if (!current) {
         state.menuOpen = true;
         if (state.detent === "peek") {
@@ -1136,7 +1147,7 @@
         }
       }
     } else if (!list.some(function (trail) { return trail.id === state.selectedId; })) {
-      const fallback = list.find(function (trail) { return !trail.bdr; });
+      const fallback = list.find(function (trail) { return !isBdrTrail(trail); });
       if (fallback) state.selectedId = fallback.id;
     }
     if (!state.follow) {
@@ -1147,7 +1158,7 @@
         }
       } else {
         const trail = selected();
-        if (state.filter === "bdr" && trail && trail.bdr && trail.coordinates && trail.coordinates.length && map) map.fitBounds(trail.coordinates, { padding: [28, 28] });
+        if (state.filter === "bdr" && trail && isBdrTrail(trail) && trail.coordinates && trail.coordinates.length && map) map.fitBounds(trail.coordinates, { padding: [28, 28] });
         else if (state.filter !== "bdr") focusTrail(trail, state.filter === "all" ? 4 : 8);
       }
     }
@@ -2202,7 +2213,7 @@
       state.menuOpen = false;
       state.follow = false;
       const picked = selected();
-      if (picked && picked.bdr && picked.coordinates && map) map.fitBounds(picked.coordinates, { padding: [28, 28] });
+      if (picked && isBdrTrail(picked) && picked.coordinates && map) map.fitBounds(picked.coordinates, { padding: [28, 28] });
       else focusTrail(picked, 11);
       renderAll();
       loadTelemetry();
@@ -6362,7 +6373,7 @@
         const list = pickerTrails();
         if (state.filter === "bdr") state.menuOpen = true;
         else if (!list.some(function (trail) { return trail.id === state.selectedId; })) {
-          const fallback = list.find(function (trail) { return !trail.bdr; });
+          const fallback = list.find(function (trail) { return !isBdrTrail(trail); });
           if (fallback) state.selectedId = fallback.id;
         }
         if (state.query.trim().length < 3) {

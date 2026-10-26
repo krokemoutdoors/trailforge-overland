@@ -209,11 +209,11 @@ struct MainCockpitView: View {
             guard matchesQuery(trail) else { return false }
             switch regionFilter {
             case "near":
-                return !trail.isBDR
+                return !isBackcountryCorridor(trail)
             case "all":
-                return !trail.isBDR || !query.isEmpty
+                return !isBackcountryCorridor(trail) || !query.isEmpty
             case "bdr":
-                return trail.isBDR
+                return isBackcountryCorridor(trail)
             default:
                 return trail.containsState(regionFilter)
             }
@@ -246,10 +246,10 @@ struct MainCockpitView: View {
         if let selected = catalog.first(where: { $0.id == selectedTrailID }) {
             return selected
         }
-        if let visible = pickerTrails.first(where: { !$0.isBDR }) {
+        if let visible = pickerTrails.first(where: { !isBackcountryCorridor($0) }) {
             return visible
         }
-        return catalog.first(where: { !$0.isBDR }) ?? catalog[0]
+        return catalog.first(where: { !isBackcountryCorridor($0) }) ?? catalog[0]
     }
 
     private var mapTrails: [OverlandTrail] {
@@ -258,7 +258,7 @@ struct MainCockpitView: View {
         if regionFilter == "near" || regionFilter == "all" {
             return viewportTrails(activeID: activeID)
         }
-        return pickerTrails.filter { !$0.isBDR || $0.id == activeID }
+        return pickerTrails.filter { !isBackcountryCorridor($0) || $0.id == activeID }
     }
 
     private var mapCampSpots: [CampSpot] {
@@ -586,7 +586,7 @@ struct MainCockpitView: View {
                 if regionFilter == "bdr" {
                     showTrailMenu = true
                 } else if !pickerTrails.contains(where: { $0.id == selectedTrailID }),
-                          let first = pickerTrails.first(where: { !$0.isBDR }) {
+                          let first = pickerTrails.first(where: { !isBackcountryCorridor($0) }) {
                     selectedTrailID = first.id
                 }
                 schedulePlaceSearch(newValue)
@@ -1122,6 +1122,14 @@ struct MainCockpitView: View {
         return nil
     }
 
+    private func isBackcountryCorridor(_ trail: OverlandTrail) -> Bool {
+        if trail.isBDR { return true }
+        if trail.id.range(of: "bdr", options: .caseInsensitive) != nil { return true }
+        if trail.name.range(of: "backcountry discovery", options: .caseInsensitive) != nil { return true }
+        if trail.name.range(of: "bdr", options: .caseInsensitive) != nil { return true }
+        return false
+    }
+
     private func nearestMiles(from origin: CLLocationCoordinate2D, to trail: OverlandTrail) -> Double {
         var best = miles(from: origin, to: trail.centerCoordinate)
         let coordinates = trail.coordinates
@@ -1185,7 +1193,7 @@ struct MainCockpitView: View {
         var pool: [OverlandTrail] = []
         for trail in USATrailAtlas.all + telemetry.discoveredTrails {
             guard seen.insert(trail.id).inserted else { continue }
-            if trail.isBDR && trail.id != activeID { continue }
+            if isBackcountryCorridor(trail) && trail.id != activeID { continue }
             if trail.id == activeID || trailInView(trail) {
                 pool.append(trail)
             }
@@ -1193,7 +1201,7 @@ struct MainCockpitView: View {
         let origin = mapCenter
         if pool.count < 12 {
             let extras = (USATrailAtlas.all + telemetry.discoveredTrails)
-                .filter { trail in !trail.isBDR && !pool.contains(where: { $0.id == trail.id }) }
+                .filter { trail in !isBackcountryCorridor(trail) && !pool.contains(where: { $0.id == trail.id }) }
                 .sorted { miles(from: origin, to: $0.centerCoordinate) < miles(from: origin, to: $1.centerCoordinate) }
             for trail in extras {
                 if pool.count >= 12 { break }
@@ -1300,14 +1308,14 @@ struct MainCockpitView: View {
         if regionFilter == "bdr" {
             showTrailMenu = true
             if detent == .peek { detent = .half }
-            if let selected = pickerTrails.first(where: { $0.id == selectedTrailID && $0.isBDR }), !followRoute {
+            if let selected = pickerTrails.first(where: { $0.id == selectedTrailID && isBackcountryCorridor($0) }), !followRoute {
                 focus(on: selected)
             }
         } else if pickerTrails.contains(where: { $0.id == selectedTrailID }) {
             if !followRoute, let selected = pickerTrails.first(where: { $0.id == selectedTrailID }) {
                 focus(on: selected)
             }
-        } else if let first = pickerTrails.first(where: { !$0.isBDR }) {
+        } else if let first = pickerTrails.first(where: { !isBackcountryCorridor($0) }) {
             if followRoute { skipNextFocus = true }
             selectedTrailID = first.id
         } else {
@@ -2796,7 +2804,7 @@ struct MainCockpitView: View {
                 .font(.caption.bold())
                 .foregroundColor(activeTrail.legalStatus == "osm" ? .orange : .green)
                 .fixedSize(horizontal: false, vertical: true)
-            if activeTrail.isBDR {
+            if isBackcountryCorridor(activeTrail) {
                 Text(USATrailAtlas.corridorDisclaimer)
                     .font(.caption2)
                     .foregroundColor(.secondary)
