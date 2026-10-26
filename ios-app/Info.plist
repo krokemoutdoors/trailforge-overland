@@ -19,7 +19,15 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>8</string>
+	<string>9</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TrailForge records a 5-second voice note when you drop a hazard pin.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TrailForge attaches a photo you choose to a georeferenced hazard pin.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>comgooglemaps</string>
@@ -34,6 +42,8 @@
 	<array>
 		<string>_trailforge-convoy._tcp</string>
 		<string>_trailforge-convoy._udp</string>
+		<string>_tf-convoy._tcp</string>
+		<string>_tf-convoy._udp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TrailForge Overland uses peer-to-peer mesh networking to share convoy waypoints offline without cell service.</string>

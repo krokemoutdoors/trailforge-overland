@@ -23,9 +23,16 @@ struct PropertyParcel: Identifiable, Hashable {
     let centerLat: Double
     let centerLon: Double
     let boundaryCoordinates: [CLLocationCoordinate2D]
+    let streetAddress: String
+    let sourceName: String
+    let censusLabel: String
 
     var centerCoordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+    }
+
+    var hasBoundary: Bool {
+        boundaryCoordinates.count >= 4
     }
 
     var accessBadge: String {
@@ -43,40 +50,38 @@ struct PropertyParcel: Identifiable, Hashable {
 
     var pinLabel: String {
         let acres = acreage >= 100 ? String(format: "%.0f ac", acreage) : String(format: "%.1f ac", acreage)
+        let size = acreage >= 0.05 ? acres : "address"
         switch ownershipType {
         case .publicUSFS:
-            return "USFS • \(acres)"
+            return "USFS • \(size)"
         case .publicBLM:
-            return "BLM • \(acres)"
+            return "BLM • \(size)"
         case .publicStateDNR:
-            return "DNR • \(acres)"
+            return "State • \(size)"
         case .publicNPS:
-            return "NPS • \(acres)"
+            return "NPS • \(size)"
         case .privateParcel:
-            if ownerIsPublished, let token = Self.ownerToken(ownerName) {
-                return "\(token) • \(acres)"
+            if let street = streetAddress.split(separator: ",").first, !street.isEmpty {
+                return "\(street) • \(size)"
             }
-            return "\(lotPhrase) • \(acres)"
+            if ownerIsPublished, let token = Self.ownerToken(ownerName) {
+                return "\(token) • \(size)"
+            }
+            return "Private • \(size)"
         }
-    }
-
-    private var lotPhrase: String {
-        if let range = apnLotNumber.range(of: #"Lot\s+\d+"#, options: .regularExpression) {
-            return String(apnLotNumber[range])
-        }
-        return "Lot"
     }
 
     private static func ownerToken(_ name: String) -> String? {
-        let parts = name.split(whereSeparator: { $0 == " " || $0 == "/" || $0 == "," })
+        let parts = name.split(whereSeparator: { $0 == " " || $0 == "/" || $0 == "," || $0 == "—" })
         guard let last = parts.last else { return nil }
         let cleaned = last.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        guard cleaned.count >= 2, cleaned.count <= 14 else { return nil }
+        guard cleaned.count >= 2, cleaned.count <= 18 else { return nil }
         return cleaned
     }
 
     func contains(_ coordinate: CLLocationCoordinate2D) -> Bool {
-        ParcelGeometry.contains(coordinate, in: boundaryCoordinates)
+        guard hasBoundary else { return false }
+        return ParcelGeometry.contains(coordinate, in: boundaryCoordinates)
     }
 
     static func == (lhs: PropertyParcel, rhs: PropertyParcel) -> Bool {
@@ -94,47 +99,61 @@ final class ParcelBoundaryService: ObservableObject {
     @Published private(set) var selectedID: String?
     @Published private(set) var isLoading = false
     @Published private(set) var status = ""
+    @Published private(set) var inspectedCoordinate: CLLocationCoordinate2D?
 
     private var lastFetch: CLLocationCoordinate2D?
     private var generation = 0
+    private var pendingInspect: CLLocationCoordinate2D?
 
     var selected: PropertyParcel? {
         parcels.first { $0.id == selectedID }
     }
 
     func refresh(around coordinate: CLLocationCoordinate2D, force: Bool = false) {
-        if !force, let lastFetch, ParcelGeometry.meters(lastFetch, coordinate) < 1_300 {
+        if !force, let lastFetch, ParcelGeometry.meters(lastFetch, coordinate) < 900 {
             return
         }
         lastFetch = coordinate
         generation += 1
         let token = generation
         isLoading = true
-        status = "Scanning parcels…"
+        status = "Querying public land and address sources…"
         Task {
             let loaded = await ParcelGIS.load(around: coordinate)
             guard token == generation else { return }
             parcels = loaded
-            if let selectedID, !loaded.contains(where: { $0.id == selectedID }) {
+            if let pendingInspect {
+                self.pendingInspect = nil
+                inspectedCoordinate = pendingInspect
+                if let hit = loaded.first(where: { $0.contains(pendingInspect) })
+                    ?? loaded.first(where: { ParcelGeometry.meters($0.centerCoordinate, pendingInspect) < 8 })
+                    ?? loaded.first(where: { $0.id.hasPrefix("addr-") }) {
+                    selectedID = hit.id
+                } else if let selectedID, !loaded.contains(where: { $0.id == selectedID }) {
+                    self.selectedID = nil
+                }
+            } else if let selectedID, !loaded.contains(where: { $0.id == selectedID }) {
                 self.selectedID = nil
             }
             isLoading = false
-            let estimated = loaded.filter { $0.id.hasPrefix("est-") }.count
-            let published = loaded.count - estimated
-            if loaded.isEmpty {
-                status = "No parcels returned for this point."
-            } else if estimated == 0 {
-                status = "\(loaded.count) published parcels"
-            } else if published == 0 {
-                status = "\(loaded.count) estimated lots • confirm with the county assessor"
-            } else {
-                status = "\(published) published • \(estimated) estimated lots"
-            }
+            status = ParcelGIS.statusLine(for: loaded)
         }
+    }
+
+    func inspect(at coordinate: CLLocationCoordinate2D) {
+        pendingInspect = coordinate
+        inspectedCoordinate = coordinate
+        if let hit = parcels.first(where: { $0.contains(coordinate) }) {
+            selectedID = hit.id
+        }
+        refresh(around: coordinate, force: true)
     }
 
     func select(_ parcel: PropertyParcel?) {
         selectedID = parcel?.id
+        if let parcel {
+            inspectedCoordinate = parcel.centerCoordinate
+        }
     }
 
     func replace(_ next: [PropertyParcel]) {
@@ -152,36 +171,58 @@ final class ParcelBoundaryService: ObservableObject {
 private enum ParcelGIS {
     static func load(around coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
         async let blm = fetchBLM(coordinate)
-        async let clark = fetchClark(coordinate)
+        async let clarkLots = fetchClarkTaxlots(coordinate)
+        async let clarkPublic = fetchClarkPublic(coordinate)
+        async let usfs = fetchUSFS(coordinate)
+        async let parks = fetchParks(coordinate)
         async let osm = fetchOverpass(coordinate)
         async let place = reverseGeocode(coordinate)
-        let (blmParcels, clarkParcels, osmParcels, placemark) = await (blm, clark, osm, place)
+        async let census = fetchCensus(coordinate)
+        let batch = await (blm, clarkLots, clarkPublic, usfs, parks, osm, place, census)
+        let placemark = batch.6
+        let censusCard = batch.7
 
         var real: [PropertyParcel] = []
         var seen = Set<String>()
-        for parcel in clarkParcels + blmParcels + osmParcels {
+        for parcel in batch.1 + batch.2 + batch.3 + batch.4 + batch.0 + batch.5 {
             if seen.insert(parcel.id).inserted {
                 real.append(parcel)
             }
         }
-        real = Array(real.prefix(18))
-
-        var merged = real
-        if merged.count < 8 {
-            let grid = estimatedGrid(around: coordinate, placemark: placemark, avoiding: real)
-            for parcel in grid where merged.count < 16 {
-                merged.append(parcel)
+        let ranked = real.sorted { lhs, rhs in
+            let leftHit = lhs.contains(coordinate)
+            let rightHit = rhs.contains(coordinate)
+            if leftHit != rightHit { return leftHit }
+            return ParcelGeometry.meters(lhs.centerCoordinate, coordinate) < ParcelGeometry.meters(rhs.centerCoordinate, coordinate)
+        }
+        var merged = Array(ranked.prefix(18))
+        let covered = merged.contains { parcel in
+            parcel.contains(coordinate) || ParcelGeometry.meters(parcel.centerCoordinate, coordinate) < 8
+        }
+        if !covered {
+            if let card = addressCard(at: coordinate, placemark: placemark, census: censusCard) {
+                merged.insert(card, at: 0)
             }
         }
         return Array(merged.prefix(18))
+    }
+
+    static func statusLine(for loaded: [PropertyParcel]) -> String {
+        if loaded.isEmpty {
+            return "No published parcel or public-land polygon at this point."
+        }
+        let sources = Array(Set(loaded.map(\.sourceName).filter { !$0.isEmpty })).sorted().joined(separator: ", ")
+        if sources.isEmpty {
+            return "\(loaded.count) published shapes"
+        }
+        return "\(loaded.count) published shapes • \(sources)"
     }
 
     private static func fetchBLM(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
         let lat = coordinate.latitude
         let lon = coordinate.longitude
         let delta = 0.05
-        var components = URLComponents(string: "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/identify")
-        components?.queryItems = [
+        guard let root = await json(urlString: "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_Cached_without_PriUnk/MapServer/identify", query: [
             URLQueryItem(name: "geometry", value: "\(lon),\(lat)"),
             URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
             URLQueryItem(name: "sr", value: "4326"),
@@ -191,35 +232,80 @@ private enum ParcelGIS {
             URLQueryItem(name: "imageDisplay", value: "400,400,96"),
             URLQueryItem(name: "returnGeometry", value: "true"),
             URLQueryItem(name: "f", value: "json")
-        ]
-        guard let url = components?.url else { return [] }
-        guard let root = await json(url: url) else { return [] }
+        ]) else { return [] }
         let rows = root["results"] as? [[String: Any]] ?? []
-        return rows.prefix(4).compactMap { row in
-            makeEsriParcel(row, near: coordinate, source: "blm", defaultOwner: .publicBLM)
+        return rows.prefix(3).compactMap { row in
+            makeEsriParcel(row, near: coordinate, source: "blm", sourceName: "BLM SMA", defaultOwner: .publicBLM, census: "")
         }
     }
 
-    private static func fetchClark(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
-        let lat = coordinate.latitude
-        let lon = coordinate.longitude
-        guard lat >= 45.55, lat <= 46.00, lon >= -122.85, lon <= -122.25 else { return [] }
-        var components = URLComponents(string: "https://gis.clark.wa.gov/gishome/rest/services/Maps/Assessor/MapServer/0/query")
-        components?.queryItems = [
-            URLQueryItem(name: "geometry", value: "\(lon),\(lat)"),
-            URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
-            URLQueryItem(name: "inSR", value: "4326"),
-            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
-            URLQueryItem(name: "outFields", value: "*"),
-            URLQueryItem(name: "returnGeometry", value: "true"),
-            URLQueryItem(name: "outSR", value: "4326"),
-            URLQueryItem(name: "f", value: "json")
-        ]
-        guard let url = components?.url else { return [] }
-        guard let root = await json(url: url) else { return [] }
+    private static func fetchClarkTaxlots(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        guard coordinate.latitude >= 45.55, coordinate.latitude <= 46.05, coordinate.longitude >= -122.90, coordinate.longitude <= -122.20 else {
+            return []
+        }
+        let span = 0.012
+        guard let root = await json(urlString: "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/TaxlotsPublic/MapServer/0/query", query: envelopeQuery(coordinate, span: span)) else {
+            return []
+        }
         let rows = root["features"] as? [[String: Any]] ?? []
-        return rows.prefix(4).compactMap { row in
-            makeEsriParcel(row, near: coordinate, source: "clark", defaultOwner: .privateParcel)
+        return rows.prefix(10).compactMap { row in
+            makeEsriParcel(row, near: coordinate, source: "clark", sourceName: "Clark County taxlots", defaultOwner: .privateParcel, census: "")
+        }
+    }
+
+    private static func fetchClarkPublic(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        guard coordinate.latitude >= 45.55, coordinate.latitude <= 46.05, coordinate.longitude >= -122.90, coordinate.longitude <= -122.20 else {
+            return []
+        }
+        async let state = layer(
+            "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/PublicLandState/MapServer/0/query",
+            coordinate,
+            source: "clark-public",
+            sourceName: "Clark County public land",
+            owner: .publicStateDNR
+        )
+        async let county = layer(
+            "https://gis.clark.wa.gov/arcgisfed/rest/services/ClarkView_Public/CountyLandsbyOwner/MapServer/0/query",
+            coordinate,
+            source: "clark-county",
+            sourceName: "Clark County lands",
+            owner: .publicStateDNR
+        )
+        let (stateRows, countyRows) = await (state, county)
+        return stateRows + countyRows
+    }
+
+    private static func fetchUSFS(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        guard let root = await json(urlString: "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query", query: pointQuery(coordinate, offset: 0.02)) else {
+            return []
+        }
+        let rows = root["features"] as? [[String: Any]] ?? []
+        return rows.prefix(2).compactMap { row in
+            makeEsriParcel(row, near: coordinate, source: "usfs", sourceName: "USFS forest boundaries", defaultOwner: .publicUSFS, census: "")
+        }
+    }
+
+    private static func fetchParks(_ coordinate: CLLocationCoordinate2D) async -> [PropertyParcel] {
+        guard let root = await json(urlString: "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Parks/FeatureServer/0/query", query: pointQuery(coordinate, offset: 0.02)) else {
+            return []
+        }
+        let rows = root["features"] as? [[String: Any]] ?? []
+        return rows.prefix(2).compactMap { row in
+            makeEsriParcel(row, near: coordinate, source: "parks", sourceName: "Esri USA Parks", defaultOwner: .publicNPS, census: "")
+        }
+    }
+
+    private static func layer(
+        _ url: String,
+        _ coordinate: CLLocationCoordinate2D,
+        source: String,
+        sourceName: String,
+        owner: OwnershipCategory
+    ) async -> [PropertyParcel] {
+        guard let root = await json(urlString: url, query: pointQuery(coordinate, offset: 0.004)) else { return [] }
+        let rows = root["features"] as? [[String: Any]] ?? []
+        return rows.prefix(2).compactMap { row in
+            makeEsriParcel(row, near: coordinate, source: source, sourceName: sourceName, defaultOwner: owner, census: "")
         }
     }
 
@@ -227,27 +313,29 @@ private enum ParcelGIS {
         let lat = coordinate.latitude
         let lon = coordinate.longitude
         let query = """
-        [out:json][timeout:12];
+        [out:json][timeout:18];
         (
-          way["place"="plot"](around:900,\(lat),\(lon));
-          way["boundary"="lot"](around:900,\(lat),\(lon));
-          way["landuse"~"residential|farmland|forest|meadow|industrial"](around:900,\(lat),\(lon));
-          way["leisure"~"nature_reserve|park"](around:900,\(lat),\(lon));
-          way["addr:housenumber"](around:900,\(lat),\(lon));
+          way["building"](around:450,\(lat),\(lon));
+          way["addr:housenumber"](around:450,\(lat),\(lon));
+          way["boundary"="lot"](around:700,\(lat),\(lon));
+          way["landuse"~"residential|farmland|forest|meadow|industrial|orchard"](around:700,\(lat),\(lon));
+          way["amenity"](around:450,\(lat),\(lon));
+          way["leisure"~"park|nature_reserve|garden"](around:700,\(lat),\(lon));
+          way["boundary"~"protected_area|national_park"](around:1200,\(lat),\(lon));
         );
-        out geom 8;
+        out geom 14;
         """
         guard let url = URL(string: "https://overpass-api.de/api/interpreter") else { return [] }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 12
+        request.timeoutInterval = 18
         request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = query.data(using: .utf8)
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
             guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let elements = root["elements"] as? [[String: Any]] else { return [] }
-            return elements.prefix(8).compactMap { element in
+            return elements.prefix(14).compactMap { element in
                 makeOverpassParcel(element, near: coordinate)
             }
         } catch {
@@ -262,9 +350,96 @@ private enum ParcelGIS {
         return places?.first
     }
 
-    private static func json(url: URL) async -> [String: Any]? {
+    private static func fetchCensus(_ coordinate: CLLocationCoordinate2D) async -> String {
+        guard let root = await json(urlString: "https://geocoding.geo.census.gov/geocoder/geographies/coordinates", query: [
+            URLQueryItem(name: "x", value: String(coordinate.longitude)),
+            URLQueryItem(name: "y", value: String(coordinate.latitude)),
+            URLQueryItem(name: "benchmark", value: "Public_AR_Current"),
+            URLQueryItem(name: "vintage", value: "Current_Current"),
+            URLQueryItem(name: "format", value: "json")
+        ]) else { return "" }
+        let result = root["result"] as? [String: Any]
+        let geos = result?["geographies"] as? [String: Any] ?? [:]
+        let county = firstName(geos["Counties"])
+        let tract = firstName(geos["Census Tracts"])
+        let blockKey = geos.keys.first { $0.localizedCaseInsensitiveContains("Block") }
+        let block = blockKey.flatMap { firstName(geos[$0]) }
+        return [county, tract, block].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " • ")
+    }
+
+    private static func addressCard(at coordinate: CLLocationCoordinate2D, placemark: CLPlacemark?, census: String) -> PropertyParcel? {
+        let address = formattedAddress(placemark)
+        guard !address.isEmpty || !census.isEmpty else { return nil }
+        let state = placemark?.administrativeArea ?? USStateLocator.code(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let county = placemark?.subAdministrativeArea ?? censusCounty(census) ?? "County not in the geocoder response"
+        let countyAndState = county.contains(state) ? county : "\(county), \(state)"
+        let label: String
+        if address.isEmpty {
+            label = "Private land — owner name not published"
+        } else {
+            label = "Private Residential Lot — \(address)"
+        }
+        let id = String(format: "addr-%.4f-%.4f", coordinate.latitude, coordinate.longitude)
+        return PropertyParcel(
+            id: id,
+            apnLotNumber: census.isEmpty ? "No published parcel ID at this point" : census,
+            ownerName: label,
+            ownerIsPublished: false,
+            ownershipType: .privateParcel,
+            acreage: 0,
+            subdivisionOrTract: address.isEmpty ? "Address not returned" : address,
+            zoningOrUse: "Land use not in the public response",
+            assessedValueOrStatus: "No county polygon at this coordinate. Address is from Apple Maps and the U.S. Census geocoder.",
+            countyAndState: countyAndState,
+            centerLat: coordinate.latitude,
+            centerLon: coordinate.longitude,
+            boundaryCoordinates: [],
+            streetAddress: address,
+            sourceName: "Apple Maps + Census",
+            censusLabel: census
+        )
+    }
+
+    private static func pointQuery(_ coordinate: CLLocationCoordinate2D, offset: Double) -> [URLQueryItem] {
+        [
+            URLQueryItem(name: "geometry", value: "\(coordinate.longitude),\(coordinate.latitude)"),
+            URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
+            URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
+            URLQueryItem(name: "outFields", value: "*"),
+            URLQueryItem(name: "returnGeometry", value: "true"),
+            URLQueryItem(name: "outSR", value: "4326"),
+            URLQueryItem(name: "maxAllowableOffset", value: String(offset)),
+            URLQueryItem(name: "resultRecordCount", value: "2"),
+            URLQueryItem(name: "f", value: "json")
+        ]
+    }
+
+    private static func envelopeQuery(_ coordinate: CLLocationCoordinate2D, span: Double) -> [URLQueryItem] {
+        let west = coordinate.longitude - span
+        let south = coordinate.latitude - span
+        let east = coordinate.longitude + span
+        let north = coordinate.latitude + span
+        return [
+            URLQueryItem(name: "geometry", value: "\(west),\(south),\(east),\(north)"),
+            URLQueryItem(name: "geometryType", value: "esriGeometryEnvelope"),
+            URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
+            URLQueryItem(name: "outFields", value: "*"),
+            URLQueryItem(name: "returnGeometry", value: "true"),
+            URLQueryItem(name: "outSR", value: "4326"),
+            URLQueryItem(name: "maxAllowableOffset", value: "0.00035"),
+            URLQueryItem(name: "resultRecordCount", value: "10"),
+            URLQueryItem(name: "f", value: "json")
+        ]
+    }
+
+    private static func json(urlString: String, query: [URLQueryItem]) async -> [String: Any]? {
+        var components = URLComponents(string: urlString)
+        components?.queryItems = query
+        guard let url = components?.url else { return nil }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 12
+        request.timeoutInterval = 16
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
             return try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -277,14 +452,16 @@ private enum ParcelGIS {
         _ row: [String: Any],
         near: CLLocationCoordinate2D,
         source: String,
-        defaultOwner: OwnershipCategory
+        sourceName: String,
+        defaultOwner: OwnershipCategory,
+        census: String
     ) -> PropertyParcel? {
         let attributes = row["attributes"] as? [String: Any] ?? [:]
         let geometry = row["geometry"] as? [String: Any]
         guard let ring = ParcelGeometry.bestRing(geometry?["rings"], near: near) else { return nil }
         let anchor = ring.first ?? near
         let fallback = String(format: "%.4f-%.4f", anchor.latitude, anchor.longitude)
-        let identifier = text(attributes, keys: ["OBJECTID", "objectid", "APN", "PIN", "ACCT", "GLOBALID", "SMA_CODE", "UNIT_ID"]) ?? fallback
+        let identifier = text(attributes, keys: ["OBJECTID", "objectid", "Prop_id", "APN", "PIN", "ACCT", "GLOBALID", "SMA_ID", "adminforestid", "FID"]) ?? fallback
         return assemble(
             id: "\(source)-\(identifier)",
             ring: ring,
@@ -292,8 +469,8 @@ private enum ParcelGIS {
             attributes: attributes,
             tags: [:],
             defaultOwner: defaultOwner,
-            placemark: nil,
-            estimated: false
+            sourceName: sourceName,
+            census: census
         )
     }
 
@@ -313,8 +490,8 @@ private enum ParcelGIS {
             attributes: [:],
             tags: tags,
             defaultOwner: .privateParcel,
-            placemark: nil,
-            estimated: false
+            sourceName: "OpenStreetMap",
+            census: ""
         )
     }
 
@@ -325,220 +502,257 @@ private enum ParcelGIS {
         attributes: [String: Any],
         tags: [String: String],
         defaultOwner: OwnershipCategory,
-        placemark: CLPlacemark?,
-        estimated: Bool
+        sourceName: String,
+        census: String
     ) -> PropertyParcel? {
-        let sourceAcres = acresValue(attributes)
         let measured = ParcelGeometry.acreage(of: ring)
+        let sourceAcres = acresValue(attributes)
         let acres = sourceAcres ?? measured
-        if !estimated, acres > 200_000 || acres < 0.05 { return nil }
-
-        var displayRing = ring
-        var outlineNote = ""
-        if acres > 2_500 {
-            displayRing = ParcelGeometry.localSquare(around: near, halfSpan: 0.006)
-            outlineNote = "Map outline clipped from a larger source polygon."
-        }
-        let simplified = ParcelGeometry.simplify(displayRing, limit: 30)
-        guard simplified.count >= 4 else { return nil }
-        let center = ParcelGeometry.centroid(simplified)
-
-        let publishedOwner = text(attributes, keys: ["OWNER", "OWNERNAME", "OWNER_NAME", "OWN_NAME", "TAXPAYER", "AGENCY", "ADMIN_AGENCY", "SMA_NAME", "UNIT_NAME", "LOCAL_NAME", "NAME"])
-            ?? tags["owner"]
-            ?? tags["operator"]
-            ?? tags["name"]
-        let agencyBlob = [
-            publishedOwner,
-            text(attributes, keys: ["AGENCY", "ADMIN_AGENCY", "SMA_NAME", "UNIT_NAME", "LANDUSE", "ZONING", "OWNER"]),
-            tags["landuse"], tags["leisure"], tags["boundary"], tags["operator"], tags["owner"], tags["name"]
-        ].compactMap { $0 }.joined(separator: " ")
-        var ownership = classify(agencyBlob, fallback: defaultOwner)
-        if publishedOwner == nil, tags["landuse"] == "forest" || tags["leisure"] == "nature_reserve" {
+        let containsQuery = ParcelGeometry.contains(near, in: ring)
+        let gisAddress = situsAddress(attributes) ?? tagAddress(tags)
+        let publishedOwner = publishedEntity(attributes, tags: tags)
+        var ownership = classify(
+            [publishedOwner, text(attributes, keys: ["ADMIN_AGENCY_CODE", "FEATTYPE", "PubLandGroup", "PropertyUseClass", "LANDUSE"]), tags["landuse"], tags["leisure"], tags["boundary"], tags["operator"]].compactMap { $0 }.joined(separator: " "),
+            fallback: defaultOwner
+        )
+        if tags["boundary"] == "national_park" || (tags["boundary"] == "protected_area" && ownership == .privateParcel) {
             ownership = tags["operator"]?.localizedCaseInsensitiveContains("BLM") == true ? .publicBLM : .publicUSFS
         }
-        if tags["leisure"] == "park", ownership == .privateParcel {
-            ownership = tags["operator"]?.localizedCaseInsensitiveContains("National") == true ? .publicNPS : .publicStateDNR
+        if tags["landuse"] == "forest", ownership == .privateParcel {
+            ownership = .publicUSFS
         }
-
-        let ownerIsPublished = publishedOwner != nil
-        let ownerName: String
-        if let publishedOwner {
-            ownerName = publishedOwner
-        } else if ownership == .privateParcel {
-            ownerName = "Private owner • name not published"
-        } else {
-            ownerName = fallbackAgencyName(ownership)
+        if let feature = text(attributes, keys: ["FEATTYPE"]), feature.localizedCaseInsensitiveContains("forest") {
+            ownership = .publicUSFS
         }
-
-        let apn = text(attributes, keys: ["APN", "PIN", "ACCT", "PARCEL", "PARCELID", "PARCEL_ID", "TAXLOT"])
-            ?? tags["addr:housenumber"].map { "House \($0)" }
-            ?? id
-        let tract = text(attributes, keys: ["SUBDIVISION", "TRACT", "LEGAL", "SUBNAME", "QSEC"])
-            ?? tags["addr:street"]
-            ?? (estimated ? "Estimated street grid" : "Published parcel")
-        let zoning = text(attributes, keys: ["ZONING", "LANDUSE", "USE_CODE", "USECODE", "PROP_USE"])
+        if defaultOwner != .privateParcel, publishedOwner == nil {
+            ownership = defaultOwner
+        }
+        let publicLand = ownership != .privateParcel
+        if !publicLand, acres > 20_000 || acres < 0.02 { return nil }
+        if publicLand, acres < 0.05 { return nil }
+        let simplified = ParcelGeometry.simplify(ring, limit: 40)
+        guard simplified.count >= 4 else { return nil }
+        let center = containsQuery ? near : ParcelGeometry.centroid(simplified)
+        let street = gisAddress ?? ""
+        let useClass = text(attributes, keys: ["PropertyUseClass", "ZoneDesc", "Description", "FEATTYPE", "ADMIN_UNIT_TYPE"])
             ?? tags["landuse"]
             ?? tags["leisure"]
-            ?? (estimated ? "Estimated lot grid • confirm with the county assessor" : "See county assessor")
-        let value = text(attributes, keys: ["ASSESSED", "TOTALVALUE", "MARKET", "VALUE"])
-        let county = text(attributes, keys: ["COUNTY", "COUNTY_NAME"])
-            ?? placemark?.subAdministrativeArea
-            ?? placemark?.locality
+            ?? tags["building"]
+        let ownerName: String
+        let ownerIsPublished: Bool
+        if let publishedOwner {
+            ownerName = agencyPrefix(publishedOwner, ownership: ownership)
+            ownerIsPublished = true
+        } else if publicLand {
+            ownerName = fallbackAgencyName(ownership)
+            ownerIsPublished = true
+        } else if !street.isEmpty {
+            ownerName = "\(privateKind(useClass)) — \(street)"
+            ownerIsPublished = false
+        } else {
+            ownerName = "Private land — owner name not published"
+            ownerIsPublished = false
+        }
+        let apn = text(attributes, keys: ["Prop_id", "APN", "PIN", "ACCT", "PARCEL", "PARCELID", "PARCEL_ID", "LandProp_id"])
+            ?? tags["addr:housenumber"].map { "OSM house \($0)" }
+            ?? id
+        let tract = text(attributes, keys: ["PlatName", "LegalShort", "SUBDIVISION", "TRACT", "Nbrhd"])
+            ?? tags["addr:street"]
+            ?? sourceName
+        let zoning = useClass ?? "See the publishing agency"
+        let value = assessedText(attributes)
+        let county = text(attributes, keys: ["COUNTY", "COUNTY_NAME", "SitusCity"])
+            ?? (sourceName.contains("Clark") ? "Clark County" : nil)
             ?? "USA"
-        let state = text(attributes, keys: ["STATE", "STATE_CODE"])
-            ?? placemark?.administrativeArea
+        let state = text(attributes, keys: ["ADMIN_ST", "STATE", "STATE_CODE"])
+            ?? (sourceName.contains("Clark") ? "WA" : nil)
             ?? USStateLocator.code(latitude: center.latitude, longitude: center.longitude)
-        let countyAndState = county.contains(state) ? county : "\(county), \(state)"
-
-        var status = value ?? ""
-        if ownership == .privateParcel, status.isEmpty {
-            status = "Private Property • Permission Required"
+        let countyAndState: String
+        if county.localizedCaseInsensitiveContains("county") {
+            countyAndState = county.contains(state) ? county : "\(county), \(state)"
+        } else if sourceName.contains("Clark") {
+            countyAndState = "Clark County, WA"
+        } else {
+            countyAndState = "\(county), \(state)"
         }
-        if !outlineNote.isEmpty {
-            status = status.isEmpty ? outlineNote : "\(status) • \(outlineNote)"
+        var censusLabel = census
+        if let tractID = text(attributes, keys: ["CensusTract"]), !tractID.isEmpty {
+            let tractLine = "Census tract \(tractID)"
+            censusLabel = censusLabel.isEmpty ? tractLine : "\(tractLine) • \(censusLabel)"
         }
-        if estimated, ownership == .privateParcel {
-            status = "Private Property • Permission Required • Estimated lot grid • confirm with the county assessor"
+        var status = value ?? sourceName
+        if ownership == .privateParcel, value == nil {
+            status = "Owner name is not in this public layer. \(sourceName)."
         }
-
+        if publicLand {
+            status = "Managing agency from \(sourceName)."
+        }
         return PropertyParcel(
             id: id,
             apnLotNumber: apn,
             ownerName: ownerName,
             ownerIsPublished: ownerIsPublished,
             ownershipType: ownership,
-            acreage: max(0.1, (sourceAcres ?? ParcelGeometry.acreage(of: simplified))),
+            acreage: acres,
             subdivisionOrTract: tract,
             zoningOrUse: zoning,
             assessedValueOrStatus: status,
             countyAndState: countyAndState,
             centerLat: center.latitude,
             centerLon: center.longitude,
-            boundaryCoordinates: simplified
+            boundaryCoordinates: simplified,
+            streetAddress: street,
+            sourceName: sourceName,
+            censusLabel: censusLabel
         )
     }
 
-    private static func estimatedGrid(
-        around coordinate: CLLocationCoordinate2D,
-        placemark: CLPlacemark?,
-        avoiding real: [PropertyParcel]
-    ) -> [PropertyParcel] {
-        let step = 0.002
-        let state = USStateLocator.code(
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
-            tagged: placemark?.administrativeArea
-        )
-        let agency = agencyHint(placemark)
-        var cells: [PropertyParcel] = []
-        var seen = Set<String>()
-        for band in [2, 3] {
-            let start = -(band - 1)
-            let originLat = floor(coordinate.latitude / step) * step
-            let originLon = floor(coordinate.longitude / step) * step
-            for row in start..<(start + band * 2) {
-                for col in start..<(start + band * 2) {
-                    if band == 3, abs(row) < 2, abs(col) < 2 { continue }
-                    let south = originLat + Double(row) * step
-                    let west = originLon + Double(col) * step
-                    let center = CLLocationCoordinate2D(latitude: south + step / 2, longitude: west + step / 2)
-                    if real.contains(where: { ParcelGeometry.meters($0.centerCoordinate, center) < 400 }) {
-                        continue
-                    }
-                    let latIndex = Int((south / step).rounded())
-                    let lonIndex = Int((west / step).rounded())
-                    let cellID = "est-\(latIndex)-\(lonIndex)"
-                    if !seen.insert(cellID).inserted { continue }
-                    let lot = abs((latIndex * 17 &+ lonIndex) % 90) + 1
-                    let ring = [
-                        CLLocationCoordinate2D(latitude: south, longitude: west),
-                        CLLocationCoordinate2D(latitude: south, longitude: west + step),
-                        CLLocationCoordinate2D(latitude: south + step, longitude: west + step),
-                        CLLocationCoordinate2D(latitude: south + step, longitude: west),
-                        CLLocationCoordinate2D(latitude: south, longitude: west)
-                    ]
-                    let street = [placemark?.subThoroughfare, placemark?.thoroughfare].compactMap { $0 }.joined(separator: " ")
-                    let locality = placemark?.subLocality ?? placemark?.locality
-                    var tract = street.isEmpty ? "Estimated street grid" : "\(street) • estimated lot"
-                    if let locality, !tract.localizedCaseInsensitiveContains(locality) {
-                        tract = "\(tract) • \(locality)"
-                    }
-                    if state == "OR" || state == "WA" {
-                        tract += " • approximate cadastral grid, not a surveyed description"
-                        if abs(coordinate.latitude - 45.519) < 2, abs(coordinate.longitude + 122.745) < 2 {
-                            tract += " • Willamette meridian reference only"
-                        }
-                    }
-                    let ownership = agency?.type ?? .privateParcel
-                    let ownerName = agency?.name ?? "Private owner • name not published"
-                    let published = agency != nil
-                    let acres = ParcelGeometry.acreage(of: ring)
-                    let county = placemark?.subAdministrativeArea ?? placemark?.locality ?? "Local"
-                    let admin = placemark?.administrativeArea ?? state
-                    cells.append(PropertyParcel(
-                        id: cellID,
-                        apnLotNumber: "APN EST-\(latIndex)-\(lonIndex) • Lot \(lot)",
-                        ownerName: ownerName,
-                        ownerIsPublished: published,
-                        ownershipType: ownership,
-                        acreage: acres,
-                        subdivisionOrTract: tract,
-                        zoningOrUse: "Estimated lot grid • confirm with the county assessor",
-                        assessedValueOrStatus: published
-                            ? "Estimated boundary • agency name from Apple Maps"
-                            : "Private Property • Permission Required • Estimated lot grid • confirm with the county assessor",
-                        countyAndState: "\(county), \(admin)",
-                        centerLat: center.latitude,
-                        centerLon: center.longitude,
-                        boundaryCoordinates: ring
-                    ))
-                    if cells.count >= 16 { return cells }
-                }
-            }
-            if cells.count >= 8 { break }
+    private static func publishedEntity(_ attributes: [String: Any], tags: [String: String]) -> String? {
+        let raw = text(attributes, keys: [
+            "PubLandOwner", "OwnerName", "PACSOwner", "forestname", "ADMIN_AGENCY_CODE", "NAME", "AGENCY", "ADMIN_AGENCY", "SMA_NAME", "UNIT_NAME"
+        ]) ?? tags["owner"] ?? tags["operator"]
+        guard let raw else { return nil }
+        let upper = raw.uppercased()
+        if upper == "NULL" || upper == "PRIVATE" || upper == "UNKNOWN" || upper == "NONE" || upper == "NOT AVAILABLE" {
+            return nil
         }
-        return cells
+        if raw.allSatisfy({ $0.isNumber }) { return nil }
+        if upper == "USFS" { return "U.S. Forest Service (USFS)" }
+        if upper == "BLM" { return "Bureau of Land Management (BLM)" }
+        if upper == "NPS" { return "National Park Service" }
+        return raw
     }
 
-    private static func agencyHint(_ placemark: CLPlacemark?) -> (name: String, type: OwnershipCategory)? {
-        let interests = placemark?.areasOfInterest ?? []
-        for interest in interests {
-            let kind = classify(interest, fallback: .privateParcel)
-            if kind != .privateParcel {
-                return (interest, kind)
+    private static func agencyPrefix(_ name: String, ownership: OwnershipCategory) -> String {
+        let upper = name.uppercased()
+        switch ownership {
+        case .publicUSFS:
+            if upper.contains("FOREST SERVICE") || upper.contains("USFS") { return name }
+            return "U.S. Forest Service (USFS) • \(name)"
+        case .publicBLM:
+            if upper.contains("LAND MANAGEMENT") || upper.contains("BLM") { return name }
+            return "Bureau of Land Management (BLM) • \(name)"
+        case .publicNPS:
+            if upper.contains("PARK SERVICE") || upper.contains("NPS") { return name }
+            return "National Park Service • \(name)"
+        case .publicStateDNR:
+            if upper.contains("DNR") || upper.contains("COUNTY") || upper.contains("STATE") || upper.contains("CITY") { return name }
+            return "State or local agency • \(name)"
+        case .privateParcel:
+            return name
+        }
+    }
+
+    private static func privateKind(_ use: String?) -> String {
+        let upper = (use ?? "").uppercased()
+        if upper.contains("FARM") || upper.contains("AGRI") || upper.contains("ORCHARD") || upper.contains("VACANT") {
+            return "Private Agricultural Lot"
+        }
+        if upper.contains("COMM") || upper.contains("INDUST") || upper.contains("BUSINESS") {
+            return "Private Parcel"
+        }
+        return "Private Residential Lot"
+    }
+
+    private static func situsAddress(_ attributes: [String: Any]) -> String? {
+        if let full = text(attributes, keys: ["SitusAddrsFull"]) {
+            let cityLine = text(attributes, keys: ["SitusCityStateZip"]) ?? ""
+            if cityLine.isEmpty { return titleCaseAddress(full) }
+            if full.localizedCaseInsensitiveContains("WA") || full.contains(",") {
+                let street = text(attributes, keys: ["SitusAddrs"]) ?? full
+                let city = text(attributes, keys: ["SitusCity"]) ?? ""
+                let zip = text(attributes, keys: ["SitusZip1"]) ?? ""
+                return joinAddress(street: street, city: city, state: "WA", zip: zip)
             }
+            return titleCaseAddress(full)
+        }
+        if let line = text(attributes, keys: ["addr_line1"]) {
+            let city = text(attributes, keys: ["City", "addr_city"]) ?? ""
+            let state = text(attributes, keys: ["State"]) ?? "WA"
+            let zip = text(attributes, keys: ["zip"]) ?? ""
+            return joinAddress(street: line, city: city, state: state, zip: zip)
         }
         return nil
+    }
+
+    private static func tagAddress(_ tags: [String: String]) -> String? {
+        let house = tags["addr:housenumber"] ?? ""
+        let street = tags["addr:street"] ?? ""
+        let city = tags["addr:city"] ?? ""
+        let state = tags["addr:state"] ?? ""
+        let zip = tags["addr:postcode"] ?? ""
+        let line = [house, street].filter { !$0.isEmpty }.joined(separator: " ")
+        guard !line.isEmpty || !city.isEmpty else { return nil }
+        return joinAddress(street: line, city: city, state: state, zip: zip)
+    }
+
+    private static func joinAddress(street: String, city: String, state: String, zip: String) -> String {
+        let place = [titleCaseAddress(city), state.uppercased()].filter { !$0.isEmpty }.joined(separator: ", ")
+        return [titleCaseAddress(street), place, zip].filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
+    private static func titleCaseAddress(_ raw: String) -> String {
+        raw.split(separator: " ").map { word -> String in
+            let lower = word.lowercased()
+            if lower == "nw" || lower == "ne" || lower == "sw" || lower == "se" { return lower.uppercased() }
+            return lower.prefix(1).uppercased() + lower.dropFirst()
+        }.joined(separator: " ")
+    }
+
+    private static func formattedAddress(_ placemark: CLPlacemark?) -> String {
+        guard let placemark else { return "" }
+        let street = [placemark.subThoroughfare, placemark.thoroughfare].compactMap { $0 }.joined(separator: " ")
+        let city = placemark.locality ?? ""
+        let state = placemark.administrativeArea ?? ""
+        let zip = placemark.postalCode ?? ""
+        return joinAddress(street: street, city: city, state: state, zip: zip)
+    }
+
+    private static func censusCounty(_ census: String) -> String? {
+        let parts = census.split(separator: "•").map { $0.trimmingCharacters(in: .whitespaces) }
+        return parts.first { $0.localizedCaseInsensitiveContains("county") }
+    }
+
+    private static func assessedText(_ attributes: [String: Any]) -> String? {
+        if let total = double(from: lowered(attributes)["taxtotval"] ?? lowered(attributes)["mkttotval"]), total > 1 {
+            let formatted = NumberFormatter.localizedString(from: NSNumber(value: total), number: .currency)
+            return "County assessed value \(formatted)"
+        }
+        return text(attributes, keys: ["ASSESSED", "TOTALVALUE", "MARKET", "VALUE"])
     }
 
     private static func classify(_ text: String, fallback: OwnershipCategory) -> OwnershipCategory {
         let upper = text.uppercased()
         if upper.contains("BLM") || upper.contains("BUREAU OF LAND") { return .publicBLM }
         if upper.contains("NATIONAL PARK") || upper.contains("NPS") || upper.contains("PARK SERVICE") { return .publicNPS }
-        if upper.contains("STATE PARK") || upper.contains("STATE FOREST") || upper.contains("DNR") || upper.contains("NATURAL RESOURCES") {
+        if upper.contains("STATE PARK") || upper.contains("STATE FOREST") || upper.contains("DNR") || upper.contains("NATURAL RESOURCES") || upper.contains("COUNTY") || upper.contains("CITY OF") {
             return .publicStateDNR
         }
-        if upper.contains("NATIONAL FOREST") || upper.contains("USFS") || upper.contains("FOREST SERVICE") {
+        if upper.contains("NATIONAL FOREST") || upper.contains("USFS") || upper.contains("FOREST SERVICE") || upper.contains("FOREST") {
             return .publicUSFS
         }
-        if upper.contains("PRIVATE") || upper.contains("PVT") { return .privateParcel }
+        if upper.contains("PRIVATE") || upper.contains("PVT") || upper.contains("RESIDENTIAL") { return .privateParcel }
         return fallback
     }
 
     private static func fallbackAgencyName(_ ownership: OwnershipCategory) -> String {
         switch ownership {
-        case .publicUSFS: return "U.S. Forest Service"
+        case .publicUSFS: return "U.S. Forest Service (USFS)"
         case .publicBLM: return "Bureau of Land Management (BLM)"
-        case .publicStateDNR: return "State land agency"
+        case .publicStateDNR: return "State or local public land"
         case .publicNPS: return "National Park Service"
-        case .privateParcel: return "Private owner • name not published"
+        case .privateParcel: return "Private land — owner name not published"
         }
     }
 
+    private static func lowered(_ attributes: [String: Any]) -> [String: Any] {
+        Dictionary(attributes.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
+    }
+
     private static func text(_ attributes: [String: Any], keys: [String]) -> String? {
-        let lowered = Dictionary(attributes.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
+        let map = lowered(attributes)
         for key in keys {
-            if let value = lowered[key.lowercased()] {
+            if let value = map[key.lowercased()] {
                 let raw = string(from: value).trimmingCharacters(in: .whitespacesAndNewlines)
                 let upper = raw.uppercased()
                 if !raw.isEmpty, upper != "NULL", upper != "<NULL>", upper != "NONE", raw != "0" {
@@ -550,17 +764,25 @@ private enum ParcelGIS {
     }
 
     private static func acresValue(_ attributes: [String: Any]) -> Double? {
-        let lowered = Dictionary(attributes.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { first, _ in first })
-        for key in ["acres", "gis_acres", "acreage", "calc_acres", "land_acres"] {
-            if let number = double(from: lowered[key]), number > 0.05, number < 5_000_000 {
+        let map = lowered(attributes)
+        for key in ["gisac", "acres", "gis_acres", "acreage", "calc_acres", "land_acres"] {
+            if let number = double(from: map[key]), number > 0.02, number < 8_000_000 {
                 return number
             }
         }
-        if let shape = double(from: lowered["shape_area"] ?? lowered["shape.area"]), shape > 1_000 {
-            let acres = shape / 4_046.8564224
-            if acres > 0.05, acres < 5_000_000 { return acres }
+        if let sqmi = double(from: map["sqmi"]), sqmi > 0.001 {
+            return sqmi * 640
+        }
+        if let shape = double(from: map["gissqft"] ?? map["assrsqft"]), shape > 200 {
+            return shape / 43_560
         }
         return nil
+    }
+
+    private static func firstName(_ value: Any?) -> String? {
+        guard let rows = value as? [[String: Any]], let row = rows.first else { return nil }
+        let name = string(from: row["NAME"] ?? "")
+        return name.isEmpty ? nil : name
     }
 
     private static func string(from value: Any) -> String {
@@ -650,18 +872,6 @@ private enum ParcelGeometry {
             kept.append(last)
         }
         return close(kept)
-    }
-
-    static func localSquare(around center: CLLocationCoordinate2D, halfSpan: Double) -> [CLLocationCoordinate2D] {
-        let lat = center.latitude
-        let lon = center.longitude
-        return [
-            CLLocationCoordinate2D(latitude: lat - halfSpan, longitude: lon - halfSpan),
-            CLLocationCoordinate2D(latitude: lat - halfSpan, longitude: lon + halfSpan),
-            CLLocationCoordinate2D(latitude: lat + halfSpan, longitude: lon + halfSpan),
-            CLLocationCoordinate2D(latitude: lat + halfSpan, longitude: lon - halfSpan),
-            CLLocationCoordinate2D(latitude: lat - halfSpan, longitude: lon - halfSpan)
-        ]
     }
 
     static func centroid(_ ring: [CLLocationCoordinate2D]) -> CLLocationCoordinate2D {

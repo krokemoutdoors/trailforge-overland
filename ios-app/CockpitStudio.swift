@@ -76,6 +76,9 @@ struct ParcelSnapshot: Codable {
     var centerLat: Double
     var centerLon: Double
     var ring: [Double]
+    var streetAddress: String
+    var sourceName: String
+    var censusLabel: String
 
     init(_ parcel: PropertyParcel) {
         id = parcel.id
@@ -91,6 +94,9 @@ struct ParcelSnapshot: Codable {
         centerLat = parcel.centerLat
         centerLon = parcel.centerLon
         ring = parcel.boundaryCoordinates.flatMap { [$0.latitude, $0.longitude] }
+        streetAddress = parcel.streetAddress
+        sourceName = parcel.sourceName
+        censusLabel = parcel.censusLabel
     }
 
     var parcel: PropertyParcel {
@@ -113,7 +119,10 @@ struct ParcelSnapshot: Codable {
             countyAndState: countyAndState,
             centerLat: centerLat,
             centerLon: centerLon,
-            boundaryCoordinates: coordinates
+            boundaryCoordinates: coordinates,
+            streetAddress: streetAddress,
+            sourceName: sourceName,
+            censusLabel: censusLabel
         )
     }
 }
@@ -122,6 +131,7 @@ enum CockpitStore {
     private static let reportsKey = "trailforge.trailReports"
     private static let packsKey = "trailforge.offlinePacks"
     private static let parcelsKey = "trailforge.parcelCache"
+    private static let hazardsKey = "trailforge.hazardPins"
 
     static func loadReports() -> [TrailConditionReport] {
         decode([TrailConditionReport].self, key: reportsKey) ?? []
@@ -146,6 +156,14 @@ enum CockpitStore {
     static func saveParcels(_ parcels: [PropertyParcel]) {
         guard !parcels.isEmpty else { return }
         encode(parcels.prefix(18).map(ParcelSnapshot.init), key: parcelsKey)
+    }
+
+    static func loadHazards() -> [DroppedHazard] {
+        decode([DroppedHazard].self, key: hazardsKey) ?? []
+    }
+
+    static func saveHazards(_ pins: [DroppedHazard]) {
+        encode(Array(pins.prefix(80)), key: hazardsKey)
     }
 
     private static func decode<T: Decodable>(_ type: T.Type, key: String) -> T? {

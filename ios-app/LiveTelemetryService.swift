@@ -380,7 +380,8 @@ extension LiveTelemetryService {
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: coordinates,
-            flatCamps: padsAlong(coordinates, seed: seed)
+            flatCamps: padsAlong(coordinates, seed: seed),
+            legalStatus: "osm"
         )
     }
 
@@ -449,7 +450,8 @@ extension LiveTelemetryService {
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: sampled,
-            flatCamps: padsAlong(sampled, seed: TrailGeometry.seed(for: "usfs-\(identifier)"))
+            flatCamps: padsAlong(sampled, seed: TrailGeometry.seed(for: "usfs-\(identifier)")),
+            legalStatus: "mvum"
         )
     }
 
