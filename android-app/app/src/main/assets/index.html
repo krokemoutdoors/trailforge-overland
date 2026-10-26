@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#071018" />
+  <meta name="description" content="TrailForge Overland — rig-fit 4x4 maps, flat camp pads, and live GPS turn-by-turn for all 50 states." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>TrailForge Overland</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="stylesheet" href="leaflet.css" />
+  <style>
+    :root {
+      --bg: #071018;
+      --panel: #0c1520;
+      --text: #e8f1f8;
+      --muted: #8ea6bb;
+      --cyan: #3ecbff;
+      --green: #3ddc84;
+      --amber: #ff9f1a;
+      --red: #ff4d4d;
+      --line: rgba(148, 184, 214, 0.18);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Roboto, "Segoe UI", sans-serif; }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    #app { height: 100dvh; display: flex; flex-direction: column; }
+    #top { flex: 0 0 auto; background: var(--panel); border-bottom: 1px solid var(--line); }
+    .fit, .nav { display: flex; gap: 10px; align-items: center; padding: 10px 12px; }
+    .nav { background: #071833; align-items: flex-start; }
+    .lamp { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 10px currentColor; }
+    .fit-copy, .nav-copy { min-width: 0; flex: 1; }
+    .fit-title, .nav-dist { font-weight: 800; font-size: 14px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nav-dist { font-size: 20px; letter-spacing: -0.03em; }
+    .sub { color: var(--muted); font-size: 11px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nav-street { color: var(--cyan); font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pill-btn, .icon-btn { border: 0; border-radius: 999px; background: rgba(61, 220, 132, 0.16); color: var(--green); font-size: 12px; font-weight: 800; padding: 6px 10px; }
+    .icon-btn { background: transparent; color: white; font-size: 20px; padding: 2px 4px; line-height: 1; }
+    .man { width: 46px; height: 46px; flex: 0 0 auto; color: var(--cyan); }
+    .man svg { width: 46px; height: 46px; display: block; }
+    .steps { max-height: 150px; overflow: auto; padding: 0 12px 10px; }
+    .step { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 4px 0; color: #d5e4f0; }
+    .step.on { color: white; font-weight: 700; }
+    #stage { flex: 1 1 auto; min-height: 180px; position: relative; }
+    #map { position: absolute; inset: 0; background: #0c1b27; }
+    .hud-left, .hud-read, .legend, .clin-pill { position: absolute; z-index: 500; }
+    .hud-left { top: 8px; left: 8px; display: flex; flex-direction: column; gap: 6px; max-width: 214px; }
+    .hud-left button, .clin-pill, .legend { background: rgba(8, 16, 28, 0.78); backdrop-filter: blur(8px); }
+    .hud-left button { border: 0; border-radius: 999px; text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 800; }
+    .hud-read { top: 8px; right: 8px; display: flex; gap: 6px; }
+    .hud-read div { background: rgba(0, 0, 0, 0.58); border-radius: 12px; min-width: 68px; text-align: center; padding: 6px 8px; }
+    .hud-read b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; font-weight: 800; }
+    .hud-read span, .legend, .clin-pill { font-size: 10px; color: #c5d5e4; letter-spacing: 0.04em; }
+    .legend { left: 8px; bottom: 46px; display: flex; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; }
+    .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    .legend .g { background: var(--green); } .legend .o { background: var(--amber); } .legend .r { background: var(--red); }
+    .clin-pill { left: 50%; bottom: 8px; transform: translateX(-50%); border-radius: 999px; padding: 7px 12px; white-space: nowrap; font-weight: 800; color: var(--cyan); max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; }
+    .clin-pill.warn { color: var(--red); }
+    #dock { flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--line); }
+    .route-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 8px 10px 0; }
+    .route-stats div { background: rgba(62, 203, 255, 0.08); border-radius: 10px; text-align: center; padding: 6px 2px; }
+    .route-stats b { display: block; color: var(--cyan); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .route-stats span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: 0.03em; }
+    .actions, .modes, .seg { display: flex; gap: 6px; }
+    .actions { flex-wrap: wrap; padding: 8px 10px 4px; }
+    .actions button, .modes button, .seg button, .menu-btn, .chip, .trail-pill, .pad button.cta { border: 0; border-radius: 999px; font-weight: 800; }
+    .actions button, .seg button { background: #163044; color: white; font-size: 12px; padding: 8px 10px; }
+    .actions .primary { background: #1d6dff; }
+    .actions .primary.on { background: var(--green); color: #04140c; }
+    .actions .end { background: #c43434; }
+    #sheet { max-height: 42dvh; overflow: auto; padding: 8px 10px 12px; }
+    #app[data-mode="rig"] #stage { flex: 0 0 22dvh; }
+    #app[data-mode="rig"] #sheet { max-height: 66dvh; }
+    .modes { padding-bottom: 8px; }
+    .modes button { flex: 1; background: #13202e; color: #d5e2ee; font-size: 12px; padding: 9px 4px; }
+    .modes button.on { background: var(--cyan); color: #041018; }
+    .search { width: 100%; border: 0; border-radius: 10px; background: #13202e; padding: 9px 10px; margin-bottom: 8px; }
+    .chips, .pills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 8px; }
+    .chips::-webkit-scrollbar, .pills::-webkit-scrollbar { display: none; }
+    .chip, .trail-pill { flex: 0 0 auto; background: rgba(255,255,255,0.08); color: white; font-size: 11px; padding: 7px 10px; }
+    .chip.on, .trail-pill.on, .seg button.on { background: var(--cyan); color: #041018; }
+    .menu-btn { width: 100%; text-align: left; background: rgba(62, 203, 255, 0.16); color: var(--cyan); padding: 9px 12px; margin-bottom: 8px; }
+    .menu { display: none; max-height: 34vh; overflow: auto; background: #101c2b; border: 1px solid var(--line); border-radius: 14px; margin: -2px 0 8px; }
+    .menu.open { display: block; }
+    .row { width: 100%; display: flex; gap: 8px; align-items: center; text-align: left; background: transparent; border: 0; border-bottom: 1px solid rgba(255,255,255,0.05); padding: 8px 10px; }
+    .row .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+    .row .meta { min-width: 0; flex: 1; }
+    .row b { display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row small { color: var(--muted); font-size: 10px; }
+    .status { color: var(--muted); font-size: 11px; min-height: 14px; }
+    .pad { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .pad .meta { flex: 1; min-width: 0; }
+    .pad b { display: block; font-size: 13px; }
+    .pad small { color: var(--green); font-size: 11px; }
+    .pad .cta { background: var(--cyan); color: #041018; font-size: 11px; padding: 7px 8px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    label.field { display: block; background: #13202e; border-radius: 12px; padding: 8px; }
+    label.field span { display: flex; justify-content: space-between; font-size: 11px; font-weight: 800; color: #d5e4f0; }
+    label.field input[type="range"] { width: 100%; accent-color: var(--cyan); }
+    .name { width: 100%; border: 0; border-radius: 10px; background: #13202e; padding: 9px 10px; margin-bottom: 8px; }
+    .rig-live { display: grid; grid-template-columns: 116px 1fr; gap: 8px; margin: 8px 0; align-items: center; }
+    .dial { width: 116px; height: 116px; border-radius: 50%; background: radial-gradient(circle at 50% 50%, #123, #071018 70%); border: 2px solid rgba(62,203,255,.4); position: relative; overflow: hidden; }
+    .horizon { position: absolute; left: -20%; right: -20%; height: 200%; top: -50%; background: linear-gradient(#1a4d74 50%, #6b4a28 50%); transform-origin: 50% 50%; }
+    .cross { position: absolute; inset: 18px; border: 1px solid rgba(255,255,255,.7); border-radius: 50%; }
+    .cross:before, .cross:after { content: ""; position: absolute; background: rgba(255,255,255,.8); }
+    .cross:before { left: 50%; top: -6px; bottom: -6px; width: 1px; }
+    .cross:after { top: 50%; left: -6px; right: -6px; height: 1px; }
+    .psi b { font-size: 28px; letter-spacing: -0.04em; }
+    .psi span, .pass small, .foot { color: var(--muted); font-size: 11px; }
+    .pass { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; background: #13202e; border-radius: 12px; padding: 8px; margin-top: 6px; border: 1px solid transparent; }
+    .pass.founders { border-color: #e2b657; background: linear-gradient(180deg, #2a2416, #13202e); }
+    .pass .meta { flex: 1; min-width: 0; }
+    .pass b { display: block; font-size: 13px; }
+    .pass .price { color: var(--cyan); font-weight: 800; font-size: 13px; }
+    .pass button { border: 0; border-radius: 999px; background: var(--cyan); color: #041018; font-weight: 800; padding: 7px 10px; }
+    .telemetry { margin-top: 6px; background: #101c2b; border-radius: 12px; padding: 8px 10px; font-size: 11px; line-height: 1.45; }
+    .telemetry b { color: var(--cyan); }
+    .foot { padding-top: 8px; }
+    .foot a { color: var(--green); }
+    #toast { position: fixed; z-index: 800; left: 50%; bottom: 18px; transform: translateX(-50%); background: #041018; color: white; border: 1px solid var(--cyan); border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 700; max-width: 90vw; }
+    .puck-icon { background: transparent; border: 0; }
+    .puck { width: 86px; height: 86px; position: relative; }
+    .cone-rot { position: absolute; inset: 0; transform: rotate(var(--h, 0deg)); }
+    .cone { position: absolute; left: 50%; bottom: 46%; width: 42px; height: 54px; transform: translateX(-50%); background: linear-gradient(to top, rgba(47,140,255,.7), rgba(47,140,255,0)); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+    .pulse, .dot { position: absolute; left: 50%; top: 50%; border-radius: 50%; transform: translate(-50%, -50%); }
+    .pulse { width: 26px; height: 26px; background: rgba(47,128,255,.4); animation: ping 1.7s ease-out infinite; }
+    .dot { width: 16px; height: 16px; background: #2f80ff; border: 2.5px solid white; box-shadow: 0 0 0 5px rgba(47,128,255,.28); }
+    @keyframes ping { 0% { transform: translate(-50%, -50%) scale(.7); opacity: .85; } 100% { transform: translate(-50%, -50%) scale(2.15); opacity: 0; } }
+    .camp-pin, .flag-pin { background: transparent; border: 0; }
+    .camp-pin span, .flag-pin span { display: inline-block; font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 999px; white-space: nowrap; }
+    .camp-pin span { background: var(--green); color: #04140c; }
+    .camp-pin.warn span { background: #ffe14a; color: #1c1602; }
+    .flag-pin span { background: white; color: #124; }
+    .leaflet-control-attribution { font-size: 9px !important; background: rgba(7,16,24,.55) !important; color: #9fb3c8 !important; }
+    .leaflet-control-attribution a { color: #c5d7e6 !important; }
+  </style>
+  <script>
+    window.TrailForge = window.TrailForge || {
+      _q: [],
+      onNativeFix(payload) { this._q.push(['fix', payload]); },
+      onNativeAttitude(payload) { this._q.push(['att', payload]); },
+      onNativeFetch(id, ok, body) { this._q.push(['fetch', id, ok, body]); },
+      onBilling(payload) { this._q.push(['bill', payload]); },
+      onNetwork(online) { this._q.push(['net', !!online]); },
+      onLocationPermission(granted) { this._q.push(['perm', !!granted]); },
+      onBack() { return false; }
+    };
+  </script>
+</head>
+<body>
+  <div id="app">
+    <header id="top"></header>
+    <div id="stage">
+      <div id="map"></div>
+      <div class="hud-left">
+        <button type="button" data-act="center">Center on My GPS</button>
+        <button type="button" data-act="near">Near My GPS</button>
+        <button type="button" data-act="scan" id="scanBtn">Scan Area for All USA 4x4 Trails</button>
+      </div>
+      <div class="hud-read">
+        <div><b id="speedRead">—</b><span>mph</span></div>
+        <div><b id="altRead">—</b><span>ft</span></div>
+      </div>
+      <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
+      <div class="clin-pill" id="clinPill">Roll 0° / Pitch 0° · Air Down —</div>
+    </div>
+    <footer id="dock">
+      <div id="routebar"></div>
+      <div id="sheet"></div>
+    </footer>
+  </div>
+  <div id="toast" hidden></div>
+  <script src="leaflet.js"></script>
+  <script src="atlas.js"></script>
+  <script src="cockpit.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.TrailForge" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/tf_navy</item>
+        <item name="android:statusBarColor">@color/tf_navy</item>
+        <item name="android:navigationBarColor">@color/tf_navy</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:hardwareAccelerated">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+</resources>
