@@ -64,18 +64,18 @@ jobs:
           echo "Handshake issue #${ISSUE_NUMBER} is waiting for HANDSHAKE_ENVELOPE."
 
           ENVELOPE=""
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 72); do
             curl -fsS "${AUTH[@]}" "${API}/issues/${ISSUE_NUMBER}" -o /tmp/issue_poll.json
             ENVELOPE=$(python3 -c 'import json; body=json.load(open("/tmp/issue_poll.json")).get("body") or ""; prefix="HANDSHAKE_ENVELOPE:"; print(body[len(prefix):] if body.startswith(prefix) else "", end="")')
             if [ -n "${ENVELOPE}" ]; then
               break
             fi
-            sleep 3
+            sleep 5
           done
           rm -f /tmp/issue_poll.json
 
           if [ -z "${ENVELOPE}" ]; then
-            echo "Timed out after 180 seconds waiting for HANDSHAKE_ENVELOPE."
+            echo "Timed out after 360 seconds waiting for HANDSHAKE_ENVELOPE."
             exit 1
           fi
 
