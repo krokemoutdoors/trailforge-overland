@@ -106,6 +106,8 @@ struct MainCockpitView: View {
     @State private var isRouting = false
     @State private var routeGeneration = 0
     @State private var lastReroute = Date.distantPast
+    @State private var lastMapLongPress = Date.distantPast
+    @State private var isRouteConfirmed = false
     @State private var isVoiceGuidanceEnabled = true
     @State private var activeStepIndex = 0
     @State private var announcedApproachStep: Int?
@@ -746,11 +748,13 @@ struct MainCockpitView: View {
         let seconds = liveRemainingSeconds ?? route.selected.expectedTravelTime
         let eta = Date().addingTimeInterval(seconds)
         return VStack(alignment: .leading, spacing: 8) {
-            Text(destinationTitle(route.destination))
+            Text(isRouteConfirmed ? destinationTitle(route.destination) : "Previewing Route to \(route.destination.name)")
                 .font(.subheadline.bold())
                 .foregroundColor(.white)
                 .lineLimit(2)
-            Text(formatCoordinate(route.destination.coordinate))
+            Text(isRouteConfirmed
+                ? formatCoordinate(route.destination.coordinate)
+                : "\(formatDistance(remaining)) • \(formatDuration(seconds)) • \(String(format: "%.1f° Slope", route.destination.slopeDeg))")
                 .font(.caption2.monospacedDigit())
                 .foregroundColor(.white.opacity(0.9))
             coordinatesBar(filled: false)
@@ -783,31 +787,47 @@ struct MainCockpitView: View {
                     }
                 }
             }
-            HStack(spacing: 8) {
-                Button {
-                    startFollow()
-                } label: {
-                    Label("Follow GPS", systemImage: "location.north.line.fill")
+            if isRouteConfirmed {
+                HStack(spacing: 8) {
+                    Button {
+                        startFollow()
+                    } label: {
+                        Label("Follow GPS", systemImage: "location.north.line.fill")
+                            .font(.caption.bold())
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(followRoute ? .green : .blue)
+                    Button("Overview") { showOverview() }
                         .font(.caption.bold())
+                        .buttonStyle(.bordered)
+                    mapsMenu(route.destination)
+                    Button {
+                        endRoute()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.bold())
+                            .padding(8)
+                            .background(Color.red.opacity(0.85))
+                            .foregroundColor(.white)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("End Route")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(followRoute ? .green : .blue)
-                Button("Overview") { showOverview() }
-                    .font(.caption.bold())
-                    .buttonStyle(.bordered)
-                mapsMenu(route.destination)
-                Button {
-                    endRoute()
-                } label: {
-                    Image(systemName: "xmark")
+            } else {
+                HStack(spacing: 8) {
+                    Button("Start GPS Route") { startFollow() }
                         .font(.caption.bold())
-                        .padding(8)
-                        .background(Color.red.opacity(0.85))
-                        .foregroundColor(.white)
-                        .clipShape(Circle())
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                    Button("Overview") { showOverview() }
+                        .font(.caption.bold())
+                        .buttonStyle(.bordered)
+                    mapsMenu(route.destination)
+                    Button("Cancel") { endRoute() }
+                        .font(.caption.bold())
+                        .buttonStyle(.bordered)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("End Route")
             }
         }
         .padding(.horizontal, 14)
@@ -821,7 +841,6 @@ struct MainCockpitView: View {
                 plotterCard
             }
             if includeFieldCards {
-                headUnitCard
                 trailRecorderCard
                 savedMarkersCard
             }
@@ -951,7 +970,7 @@ struct MainCockpitView: View {
                         HStack(spacing: 8) {
                             Button {
                                 selectedCampSpot = spot
-                                Task { await beginRoute(to: spot) }
+                                Task { await beginRoute(to: spot, previewOnly: true) }
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -1165,7 +1184,7 @@ struct MainCockpitView: View {
         Task { await telemetry.fetchTrailsInMapRegion(center: mapCenter) }
     }
 
-    private func beginRoute(to spot: CampSpot, refit: Bool = true) async {
+    private func beginRoute(to spot: CampSpot, refit: Bool = true, previewOnly: Bool = false) async {
         routeGeneration += 1
         let generation = routeGeneration
         let originWasGPS = locationTracker.userCoordinate != nil
@@ -1199,6 +1218,14 @@ struct MainCockpitView: View {
             skipNextFocus = true
             selectedTrailID = spot.trailID
         }
+        if previewOnly {
+            isRouteConfirmed = false
+            followRoute = false
+            detent = .peek
+            frame(built)
+            return
+        }
+        isRouteConfirmed = true
         if refit {
             followRoute = false
             frame(built)
@@ -1220,17 +1247,17 @@ struct MainCockpitView: View {
         guard let route = activeRoute, let user = locationTracker.userCoordinate else { return }
         if !routeStartedFromGPS {
             routeStartedFromGPS = true
-            Task { await beginRoute(to: route.destination, refit: !followRoute) }
+            Task { await beginRoute(to: route.destination, refit: !followRoute, previewOnly: !isRouteConfirmed) }
             return
         }
-        guard followRoute, Date().timeIntervalSince(lastReroute) > 25 else { return }
+        guard isRouteConfirmed, followRoute, Date().timeIntervalSince(lastReroute) > 25 else { return }
         guard offRouteMeters(user, route: route) > 450 else { return }
         lastReroute = Date()
         Task { await beginRoute(to: route.destination, refit: false) }
     }
 
     private func announceNearbyCrux() {
-        guard activeRoute != nil, isVoiceGuidanceEnabled, let user = locationTracker.userCoordinate else { return }
+        guard isRouteConfirmed, activeRoute != nil, isVoiceGuidanceEnabled, let user = locationTracker.userCoordinate else { return }
         for pin in CruxCatalog.pins(for: activeTrail) where !announcedCrux.contains(pin.id) {
             let distance = meters(from: user, to: pin.coordinate)
             if distance <= 241 {
@@ -1306,17 +1333,21 @@ struct MainCockpitView: View {
         announcedTurnStep = nil
         announcedArrival = false
         refreshLiveRouteMetrics()
-        announceRouteStart(route)
+        if isRouteConfirmed {
+            announceRouteStart(route)
+        }
         skipStepsAlreadyReached()
         if !followRoute { frame(route) }
     }
 
     private func startFollow() {
+        isRouteConfirmed = true
         followRoute = true
         followHeading = true
         detent = .peek
         showingRouteOverview = false
         followUserCamera()
+        skipStepsAlreadyReached()
         if let route = activeRoute {
             announceRouteStart(route)
         }
@@ -1343,6 +1374,7 @@ struct MainCockpitView: View {
     private func endRoute() {
         routeGeneration += 1
         activeRoute = nil
+        isRouteConfirmed = false
         followRoute = false
         showingRouteOverview = false
         showAllSteps = false
@@ -1431,7 +1463,7 @@ struct MainCockpitView: View {
     }
 
     private func refreshTurnProgress() {
-        guard let route = activeRoute, let user = locationTracker.userCoordinate else { return }
+        guard isRouteConfirmed, let route = activeRoute, let user = locationTracker.userCoordinate else { return }
         let steps = route.displaySteps
         guard !steps.isEmpty else { return }
         let index = min(activeStepIndex, steps.count - 1)
@@ -1468,24 +1500,34 @@ struct MainCockpitView: View {
         }
         if away <= 320, away > 80, announcedApproachStep != step.id {
             announcedApproachStep = step.id
-            voiceGuide.speak("In point two miles, \(step.instruction)", enabled: isVoiceGuidanceEnabled)
+            voiceGuide.speak("In \(spokenDistance(away)), \(step.instruction)", enabled: isVoiceGuidanceEnabled)
         }
     }
 
     private func announceRouteStart(_ route: ActiveCampRoute) {
-        let first = route.displaySteps.first?.instruction ?? "Follow the route"
-        var text = "Route to \(route.destination.name), \(spokenDuration(route.selected.expectedTravelTime)). \(first)."
+        guard isRouteConfirmed else { return }
+        let first = route.displaySteps.first?.instruction ?? "Follow the highlighted route"
+        let distance = spokenDistance(route.selected.distanceMeters)
+        var text = "Starting GPS route to \(route.destination.name). It's about \(distance), \(spokenDuration(route.selected.expectedTravelTime)). \(first)."
         if route.displaySteps.count > 1 {
-            text += " Then \(route.displaySteps[1].instruction)."
+            text += " Then, \(route.displaySteps[1].instruction)."
         }
         voiceGuide.speak(text, enabled: isVoiceGuidanceEnabled)
     }
 
     private func speakCurrentStep(_ route: ActiveCampRoute) {
+        guard isRouteConfirmed else { return }
         let steps = route.displaySteps
         guard !steps.isEmpty else { return }
         let step = steps[min(activeStepIndex, steps.count - 1)]
-        voiceGuide.speak(step.instruction, enabled: isVoiceGuidanceEnabled)
+        var phrase = step.instruction
+        if let user = locationTracker.userCoordinate, let maneuver = step.maneuver {
+            let away = meters(from: user, to: maneuver)
+            if away > 40 {
+                phrase = "In \(spokenDistance(away)), \(step.instruction)"
+            }
+        }
+        voiceGuide.speak(phrase, enabled: isVoiceGuidanceEnabled)
     }
 
     /// Steps whose maneuver is already under the vehicle (a depart pin) are marked
@@ -1815,6 +1857,34 @@ struct MainCockpitView: View {
         }
     }
 
+    private func routePreviewBanner(_ route: ActiveCampRoute) -> some View {
+        let remaining = (liveRemainingMiles ?? (route.selected.distanceMeters / 1609.344)) * 1609.344
+        let seconds = liveRemainingSeconds ?? route.selected.expectedTravelTime
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Previewing Route to \(route.destination.name)")
+                .font(.subheadline.bold())
+                .foregroundColor(.white)
+                .lineLimit(2)
+            Text("\(formatDistance(remaining)) • \(formatDuration(seconds)) • \(String(format: "%.1f° Slope", route.destination.slopeDeg))")
+                .font(.caption.bold())
+                .foregroundColor(.cyan)
+                .lineLimit(2)
+            HStack(spacing: 8) {
+                Button("Start GPS Route") { startFollow() }
+                    .font(.caption.bold())
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                Button("Cancel") { endRoute() }
+                    .font(.caption.bold())
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(red: 0.04, green: 0.12, blue: 0.22).opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
     private func mapStage(showGloveRow: Bool) -> some View {
         ZStack {
             routeMap
@@ -1846,6 +1916,11 @@ struct MainCockpitView: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
+                if let route = activeRoute, !isRouteConfirmed {
+                    routePreviewBanner(route)
+                        .padding(.leading, 4)
+                        .padding(.trailing, 46)
+                }
                 if showGloveRow {
                     gloveRow
                         .padding(.horizontal, 10)
@@ -1905,7 +1980,7 @@ struct MainCockpitView: View {
                 trackScreen(region)
             },
             onSpot: { spot in
-                Task { await beginRoute(to: spot) }
+                Task { await beginRoute(to: spot, previewOnly: spot.kind == .pad) }
             },
             onInspect: { coordinate in
                 if plotMode {
@@ -2103,7 +2178,6 @@ struct MainCockpitView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
-                    headUnitCard
                     if let route = activeRoute {
                         routeCard(route)
                     } else {
@@ -2293,6 +2367,9 @@ struct MainCockpitView: View {
                 Text("Pan the map. A 30, 100, or 250 sq mi box stays centered on the screen. Current Map View uses the exact bounds on screen.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                Text("Saved on-device in TrailForge local storage (offline-ready, zero cell required)")
+                    .font(.caption2)
+                    .foregroundColor(.cyan)
                 offlineAreaPicker
                 Text(offlineEstimateLine)
                     .font(.caption2.monospacedDigit())
@@ -2859,21 +2936,6 @@ struct MainCockpitView: View {
         return []
     }
 
-    private var headUnitCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("CarPlay & Head-Unit Ready")
-                .font(.caption.bold())
-                .foregroundColor(.cyan)
-            Text("Apple CarPlay and Android Auto read this phone’s GPS speed, elevation, trails, flat camps, and trail recording.")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-
     private var trailRecorderCard: some View {
         let _ = trailRecorder.elapsedTick
         return VStack(alignment: .leading, spacing: 8) {
@@ -3114,6 +3176,9 @@ struct MainCockpitView: View {
     }
 
     private func handleMapLongPress(_ coordinate: CLLocationCoordinate2D) {
+        let now = Date()
+        guard now.timeIntervalSince(lastMapLongPress) > 0.8 else { return }
+        lastMapLongPress = now
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let pin = DroppedPinTarget(id: UUID(), latitude: coordinate.latitude, longitude: coordinate.longitude)
         droppedPin = pin
@@ -3385,6 +3450,9 @@ struct MainCockpitView: View {
     }
 
     private var nextTurnLine: String {
+        if let route = activeRoute, !isRouteConfirmed {
+            return "Previewing Route to \(route.destination.name)"
+        }
         guard let route = activeRoute, !route.displaySteps.isEmpty else { return "Next turn • no active route" }
         let index = min(activeStepIndex, route.displaySteps.count - 1)
         let step = route.displaySteps[index]
@@ -4085,10 +4153,21 @@ private struct StableRouteMap: View, Equatable {
                         onInspect(coordinate)
                     }
                 )
+                .simultaneousGesture(mapHoldGesture(proxy: proxy))
                 .overlay {
                     MapTapOverlayView(proxy: proxy, onLongPress: onLongPress)
                 }
         }
+    }
+
+    private func mapHoldGesture(proxy: MapProxy) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.45)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+            .onChanged { value in
+                guard case .second(true, let drag?) = value else { return }
+                guard let coordinate = proxy.convert(drag.startLocation, from: .local) else { return }
+                onLongPress(coordinate)
+            }
     }
 
     private var mapBody: some View {
@@ -4681,9 +4760,45 @@ final class VoiceNavigationAnnouncer: ObservableObject {
         prepare()
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: trimmed)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.voice = Self.bestNaturalVoice()
+        utterance.rate = 0.49
+        utterance.pitchMultiplier = 1.03
+        utterance.preUtteranceDelay = 0.04
+        utterance.postUtteranceDelay = 0.08
         synthesizer.speak(utterance)
+    }
+
+    private static func bestNaturalVoice() -> AVSpeechSynthesisVoice? {
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        let english = voices.filter { $0.language.lowercased().hasPrefix("en") }
+        let unitedStates = english.filter { $0.language.lowercased().hasPrefix("en-us") }
+        let pool = unitedStates.isEmpty ? english : unitedStates
+        let novelty = [
+            "albert", "bad news", "bahh", "bells", "boing", "bubbles", "cellos", "fred",
+            "good news", "jester", "organ", "superstar", "trinoids", "whisper", "wobble",
+            "zarvox", "ralph", "kathy", "junior"
+        ]
+        let naturalNames = ["ava", "samantha", "evan", "allison", "zoe", "nicky", "siri", "premium", "enhanced"]
+        func isNovelty(_ voice: AVSpeechSynthesisVoice) -> Bool {
+            let blob = (voice.name + " " + voice.identifier).lowercased()
+            return novelty.contains { token in
+                blob.contains(token) || blob.contains(token.replacingOccurrences(of: " ", with: ""))
+            }
+        }
+        func score(_ voice: AVSpeechSynthesisVoice) -> Int {
+            if isNovelty(voice) { return -1 }
+            var value = 0
+            if voice.quality == .premium { value += 500 }
+            else if voice.quality == .enhanced { value += 300 }
+            let blob = (voice.name + " " + voice.identifier).lowercased()
+            if naturalNames.contains(where: { blob.contains($0) }) { value += 80 }
+            if voice.language.lowercased() == "en-us" { value += 20 }
+            return value
+        }
+        if let best = pool.max(by: { score($0) < score($1) }), score(best) > 0 {
+            return best
+        }
+        return AVSpeechSynthesisVoice(language: "en-US")
     }
 
     func stop() {
@@ -5133,9 +5248,25 @@ private func spokenDistance(_ metersValue: Double) -> String {
         let feet = max(1, Int((metersValue * 3.28084).rounded()))
         return feet == 1 ? "1 foot" : "\(feet) feet"
     }
-    if abs(miles - 1) < 0.05 { return "1 mile" }
-    if miles < 10 { return String(format: "%.1f miles", miles) }
-    return String(format: "%.0f miles", miles)
+    if miles < 0.16 { return "an eighth of a mile" }
+    if miles < 0.28 { return "a fifth of a mile" }
+    if miles < 0.4 { return "a third of a mile" }
+    if miles < 0.65 { return "half a mile" }
+    if miles < 0.85 { return "three quarters of a mile" }
+    if miles < 1.2 { return "a mile" }
+    if miles < 1.4 { return "a mile and a quarter" }
+    if miles < 1.65 { return "a mile and a half" }
+    if miles < 1.85 { return "a mile and three quarters" }
+    if miles < 10 {
+        let whole = Int(miles.rounded(.down))
+        let fraction = miles - Double(whole)
+        if fraction < 0.15 { return whole == 1 ? "a mile" : "\(whole) miles" }
+        if fraction < 0.4 { return "\(whole) and a quarter miles" }
+        if fraction < 0.65 { return "\(whole) and a half miles" }
+        if fraction < 0.85 { return "\(whole) and three quarters miles" }
+        return "\(whole + 1) miles"
+    }
+    return "\(Int(miles.rounded())) miles"
 }
 
 private func nearestVertex(_ point: CLLocationCoordinate2D, on trail: [CLLocationCoordinate2D]) -> Int {

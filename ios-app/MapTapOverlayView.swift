@@ -2,8 +2,9 @@ import MapKit
 import SwiftUI
 import UIKit
 
-/// Transparent installer that attaches a 0.5s long-press to the underlying map
-/// without stealing pans or pinches. The press point is converted with MapProxy.
+/// Transparent installer that attaches a 0.45s long-press to the map container.
+/// SwiftUI Map on iOS 17+ often has no MKMapView, so the recognizer lives on the
+/// hosting container and the press point is converted with MapProxy.
 struct MapTapOverlayView: UIViewRepresentable {
     var proxy: MapProxy
     var onLongPress: (CLLocationCoordinate2D) -> Void
@@ -17,12 +18,14 @@ struct MapTapOverlayView: UIViewRepresentable {
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear
         view.coordinator = context.coordinator
+        context.coordinator.installer = view
         return view
     }
 
     func updateUIView(_ uiView: MapPressInstaller, context: Context) {
         context.coordinator.proxy = proxy
         context.coordinator.onLongPress = onLongPress
+        context.coordinator.installer = uiView
         uiView.coordinator = context.coordinator
         uiView.installIfNeeded()
     }
@@ -30,16 +33,25 @@ struct MapTapOverlayView: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var proxy: MapProxy?
         var onLongPress: (CLLocationCoordinate2D) -> Void
+        weak var installer: MapPressInstaller?
 
         init(onLongPress: @escaping (CLLocationCoordinate2D) -> Void) {
             self.onLongPress = onLongPress
         }
 
         @objc func pressed(_ gesture: UILongPressGestureRecognizer) {
-            guard gesture.state == .began, let mapView = gesture.view as? MKMapView else { return }
-            let point = gesture.location(in: mapView)
-            let coordinate = proxy?.convert(point, from: .local) ?? mapView.convert(point, toCoordinateFrom: mapView)
-            onLongPress(coordinate)
+            guard gesture.state == .began, let installer else { return }
+            if installer.touchStartsOnControl(gesture) { return }
+            let localPoint = gesture.location(in: installer)
+            if let coordinate = proxy?.convert(localPoint, from: .local) {
+                onLongPress(coordinate)
+                return
+            }
+            let mapView = (gesture.view as? MKMapView) ?? MapPressInstaller.findMap(startingAt: installer)
+            if let mapView {
+                let point = gesture.location(in: mapView)
+                onLongPress(mapView.convert(point, toCoordinateFrom: mapView))
+            }
         }
 
         func gestureRecognizer(
@@ -66,17 +78,43 @@ final class MapPressInstaller: UIView {
     }
 
     func installIfNeeded() {
-        guard recognizer == nil, let coordinator, let map = Self.findMap(startingAt: self) else { return }
+        guard let coordinator else { return }
+        guard let host = pressHost() else { return }
+        if let recognizer, recognizer.view === host { return }
+        if let recognizer {
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            self.recognizer = nil
+        }
         let press = UILongPressGestureRecognizer(target: coordinator, action: #selector(MapTapOverlayView.Coordinator.pressed(_:)))
-        press.minimumPressDuration = 0.5
-        press.allowableMovement = 10
+        press.minimumPressDuration = 0.45
+        press.allowableMovement = 14
         press.cancelsTouchesInView = false
         press.delegate = coordinator
-        map.addGestureRecognizer(press)
+        host.addGestureRecognizer(press)
         recognizer = press
     }
 
-    private static func findMap(startingAt view: UIView) -> MKMapView? {
+    func touchStartsOnControl(_ gesture: UILongPressGestureRecognizer) -> Bool {
+        let local = gesture.location(in: self)
+        guard bounds.contains(local) else { return true }
+        guard let window else { return false }
+        let point = gesture.location(in: window)
+        guard let hit = window.hitTest(point, with: nil) else { return false }
+        var node: UIView? = hit
+        while let view = node {
+            if view is UIControl { return true }
+            node = view.superview
+        }
+        return false
+    }
+
+    private func pressHost() -> UIView? {
+        if let map = Self.findMap(startingAt: self) { return map }
+        if let superview, superview !== self { return superview }
+        return window
+    }
+
+    static func findMap(startingAt view: UIView) -> MKMapView? {
         var current: UIView? = view
         while let node = current {
             if let map = node as? MKMapView { return map }

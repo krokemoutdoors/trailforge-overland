@@ -33,6 +33,10 @@
     #top { flex: 0 0 auto; background: var(--panel); border-bottom: 1px solid var(--line); }
     .fit, .nav { display: flex; gap: 10px; align-items: center; padding: 10px 12px; }
     .nav { background: #071833; align-items: flex-start; }
+    .nav.preview { flex-wrap: wrap; align-items: center; }
+    .nav.preview .nav-dist, .nav.preview .nav-street { white-space: normal; }
+    .nav .primary { border: 0; border-radius: 999px; background: #3ddc84; color: #04140c; font-weight: 800; padding: 8px 12px; }
+    .nav .ghost { border: 0; border-radius: 999px; background: #163044; color: white; font-weight: 800; padding: 8px 12px; }
     .lamp { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 10px currentColor; }
     .fit-copy, .nav-copy { min-width: 0; flex: 1; }
     .fit-title, .nav-dist { font-weight: 800; font-size: 14px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -267,7 +271,8 @@
     .crux { font-size: 12px; font-weight: 800; padding: 4px 0; }
     #convoyBanner { position: absolute; z-index: 680; top: 74px; left: 50%; transform: translateX(-50%); background: #7f1d1d; color: white; border-radius: 999px; padding: 8px 14px; font-weight: 800; font-size: 13px; max-width: 92%; }
     #convoyBanner[hidden] { display: none; }
-    #hazardSheet, #pinSheet, #markerSheet { position: absolute; z-index: 670; left: 8px; right: 52px; bottom: 8px; background: rgba(8,16,28,.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
+    #hazardSheet, #markerSheet { position: absolute; z-index: 670; left: 8px; right: 52px; bottom: 8px; background: rgba(8,16,28,.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
+    #pinSheet { position: absolute; z-index: 1200; left: 8px; right: 52px; bottom: 8px; background: rgba(8,16,28,.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
     #hazardSheet[hidden], #pinSheet[hidden], #markerSheet[hidden] { display: none; }
     .record-card { background: #101c2b; border: 1px solid rgba(255, 45, 85, 0.55); border-radius: 12px; padding: 8px; margin: 8px 0; }
     .record-card .actions, .marker-list .actions { padding-left: 0; }
@@ -351,9 +356,10 @@
           <label class="field"><span>&lt;3° LIDAR Slope Shading <b data-read="slope">55%</b></span><input type="range" min="0" max="100" step="1" value="55" data-overlay="slope" aria-label="Slope shading opacity" /></label>
           <label class="field"><span>Wildfires &amp; Stream Gauges <b data-read="hazards">80%</b></span><input type="range" min="0" max="100" step="1" value="80" data-overlay="hazards" aria-label="Wildfire and stream gauge opacity" /></label>
         </section>
-        <section data-panel="corridor" hidden>
+        <section id="offlineDrawer" data-panel="corridor" hidden>
           <div class="drawer-label">AREA SIZE</div>
           <div class="sub">Pan the map. 30, 100, and 250 sq mi boxes stay centered on the screen. Current Map View downloads the exact bounds on screen.</div>
+          <div class="sub">Saved on-device in TrailForge local storage (offline-ready, zero cell required)</div>
           <div class="seg" id="packAreaSeg" style="margin-top:8px;flex-wrap:wrap">
             <button type="button" data-act="pack-area" data-id="corridor">5-Mi Route Corridor</button>
             <button type="button" data-act="pack-area" data-id="sq30">30 sq mi Area</button>
