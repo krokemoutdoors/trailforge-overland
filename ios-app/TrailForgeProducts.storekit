@@ -3,18 +3,18 @@
   "nonRenewingSubscriptions": [],
   "products": [
     {
-      "displayPrice": "59.99",
+      "displayPrice": "149.99",
       "familyShareable": true,
       "internalID": "founders_lifetime_001",
       "localizations": [
         {
-          "description": "Permanent Pro Unlock Forever + Offline Convoy Mesh + CarPlay Cockpit",
-          "displayName": "Lifetime Overland Founders Pass",
+          "description": "One-Time • 6-Yr Value Anchor. Permanent Pro unlock, offline convoy mesh, and the in-dash cockpit.",
+          "displayName": "Founders Lifetime Pass",
           "locale": "en_US"
         }
       ],
       "productID": "com.edwardshin.trailforge.founders.lifetime",
-      "referenceName": "Lifetime Founders Pass",
+      "referenceName": "Founders Lifetime Pass ($149.99)",
       "type": "NonConsumable"
     }
   ],

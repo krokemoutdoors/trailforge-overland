@@ -203,9 +203,81 @@ struct DroppedHazard: Codable, Identifiable {
     var photoPath: String?
     var voicePath: String?
     var createdAt: Date
+    var trailID: String
+    var confirmations: Int
+    var cleared: Bool
+    var updatedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id, category, latitude, longitude, elevationFt, note, photoPath, voicePath, createdAt, trailID, confirmations, cleared, updatedAt
+    }
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    init(
+        id: String,
+        category: String,
+        latitude: Double,
+        longitude: Double,
+        elevationFt: Int,
+        note: String,
+        photoPath: String? = nil,
+        voicePath: String? = nil,
+        createdAt: Date,
+        trailID: String = "",
+        confirmations: Int = 1,
+        cleared: Bool = false,
+        updatedAt: Date? = nil
+    ) {
+        self.id = id
+        self.category = category
+        self.latitude = latitude
+        self.longitude = longitude
+        self.elevationFt = elevationFt
+        self.note = note
+        self.photoPath = photoPath
+        self.voicePath = voicePath
+        self.createdAt = createdAt
+        self.trailID = trailID
+        self.confirmations = confirmations
+        self.cleared = cleared
+        self.updatedAt = updatedAt ?? createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        category = try container.decode(String.self, forKey: .category)
+        latitude = try container.decode(Double.self, forKey: .latitude)
+        longitude = try container.decode(Double.self, forKey: .longitude)
+        elevationFt = try container.decode(Int.self, forKey: .elevationFt)
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        photoPath = try container.decodeIfPresent(String.self, forKey: .photoPath)
+        voicePath = try container.decodeIfPresent(String.self, forKey: .voicePath)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        trailID = try container.decodeIfPresent(String.self, forKey: .trailID) ?? ""
+        confirmations = try container.decodeIfPresent(Int.self, forKey: .confirmations) ?? 1
+        cleared = try container.decodeIfPresent(Bool.self, forKey: .cleared) ?? false
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(category, forKey: .category)
+        try container.encode(latitude, forKey: .latitude)
+        try container.encode(longitude, forKey: .longitude)
+        try container.encode(elevationFt, forKey: .elevationFt)
+        try container.encode(note, forKey: .note)
+        try container.encodeIfPresent(photoPath, forKey: .photoPath)
+        try container.encodeIfPresent(voicePath, forKey: .voicePath)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(trailID, forKey: .trailID)
+        try container.encode(confirmations, forKey: .confirmations)
+        try container.encode(cleared, forKey: .cleared)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
