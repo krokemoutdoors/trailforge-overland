@@ -19,6 +19,26 @@ enum RigFitVerdict: String {
     case noGo = "NO-GO CLEARANCE"
 }
 
+enum CampSpotKind: String, Hashable {
+    case pad
+    case trailhead
+}
+
+struct CampSpot: Identifiable, Hashable {
+    let id: String
+    let trailID: String
+    let name: String
+    let lat: Double
+    let lon: Double
+    let slopeDeg: Double
+    let starlinkPct: Int
+    let kind: CampSpotKind
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+}
+
 struct OverlandTrail: Identifiable {
     let id: String
     let name: String
@@ -41,6 +61,36 @@ struct OverlandTrail: Identifiable {
 
     var centerCoordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+    }
+
+    var campSpots: [CampSpot] {
+        flatCamps.enumerated().compactMap { index, camp in
+            guard camp.slopeDeg < 3 else { return nil }
+            return CampSpot(
+                id: "\(id)#\(index)",
+                trailID: id,
+                name: camp.name,
+                lat: camp.lat,
+                lon: camp.lon,
+                slopeDeg: camp.slopeDeg,
+                starlinkPct: camp.starlinkPct,
+                kind: .pad
+            )
+        }
+    }
+
+    var trailhead: CampSpot {
+        let start = coordinates.first ?? centerCoordinate
+        return CampSpot(
+            id: "\(id)-trailhead",
+            trailID: id,
+            name: "\(name) Trailhead",
+            lat: start.latitude,
+            lon: start.longitude,
+            slopeDeg: 0,
+            starlinkPct: 0,
+            kind: .trailhead
+        )
     }
 }
 

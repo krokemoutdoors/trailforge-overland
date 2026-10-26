@@ -176,6 +176,96 @@ final class LocationTracker: NSObject, ObservableObject, CLLocationManagerDelega
     }
 }
 
+enum USStateLocator {
+    private struct Box {
+        var code: String
+        var minLat: Double
+        var maxLat: Double
+        var minLon: Double
+        var maxLon: Double
+        var area: Double { (maxLat - minLat) * (maxLon - minLon) }
+    }
+
+    private static let boxes: [Box] = [
+        Box(code: "AL", minLat: 30.22, maxLat: 35.01, minLon: -88.47, maxLon: -84.89),
+        Box(code: "AK", minLat: 51.20, maxLat: 71.40, minLon: -168.00, maxLon: -130.00),
+        Box(code: "AZ", minLat: 31.33, maxLat: 37.00, minLon: -114.82, maxLon: -109.04),
+        Box(code: "AR", minLat: 33.00, maxLat: 36.50, minLon: -94.62, maxLon: -89.64),
+        Box(code: "CA", minLat: 32.53, maxLat: 42.01, minLon: -124.48, maxLon: -114.13),
+        Box(code: "CO", minLat: 36.99, maxLat: 41.00, minLon: -109.06, maxLon: -102.04),
+        Box(code: "CT", minLat: 40.98, maxLat: 42.05, minLon: -73.73, maxLon: -71.79),
+        Box(code: "DE", minLat: 38.45, maxLat: 39.84, minLon: -75.79, maxLon: -75.05),
+        Box(code: "FL", minLat: 24.52, maxLat: 31.00, minLon: -87.63, maxLon: -80.03),
+        Box(code: "GA", minLat: 30.36, maxLat: 35.00, minLon: -85.61, maxLon: -80.84),
+        Box(code: "HI", minLat: 18.91, maxLat: 22.24, minLon: -160.25, maxLon: -154.81),
+        Box(code: "ID", minLat: 41.99, maxLat: 49.00, minLon: -117.24, maxLon: -111.04),
+        Box(code: "IL", minLat: 36.97, maxLat: 42.51, minLon: -91.51, maxLon: -87.50),
+        Box(code: "IN", minLat: 37.77, maxLat: 41.76, minLon: -88.10, maxLon: -84.78),
+        Box(code: "IA", minLat: 40.38, maxLat: 43.50, minLon: -96.64, maxLon: -90.14),
+        Box(code: "KS", minLat: 36.99, maxLat: 40.00, minLon: -102.05, maxLon: -94.59),
+        Box(code: "KY", minLat: 36.50, maxLat: 39.15, minLon: -89.57, maxLon: -81.96),
+        Box(code: "LA", minLat: 28.93, maxLat: 33.02, minLon: -94.04, maxLon: -88.82),
+        Box(code: "ME", minLat: 43.06, maxLat: 47.46, minLon: -71.08, maxLon: -66.95),
+        Box(code: "MD", minLat: 37.91, maxLat: 39.72, minLon: -79.49, maxLon: -75.05),
+        Box(code: "MA", minLat: 41.24, maxLat: 42.89, minLon: -73.51, maxLon: -69.93),
+        Box(code: "MI", minLat: 41.70, maxLat: 48.31, minLon: -90.42, maxLon: -82.41),
+        Box(code: "MN", minLat: 43.50, maxLat: 49.38, minLon: -97.24, maxLon: -89.49),
+        Box(code: "MS", minLat: 30.17, maxLat: 35.00, minLon: -91.66, maxLon: -88.10),
+        Box(code: "MO", minLat: 35.99, maxLat: 40.61, minLon: -95.77, maxLon: -89.10),
+        Box(code: "MT", minLat: 44.36, maxLat: 49.00, minLon: -116.05, maxLon: -104.04),
+        Box(code: "NE", minLat: 40.00, maxLat: 43.00, minLon: -104.05, maxLon: -95.31),
+        Box(code: "NV", minLat: 35.00, maxLat: 42.00, minLon: -120.01, maxLon: -114.04),
+        Box(code: "NH", minLat: 42.70, maxLat: 45.31, minLon: -72.56, maxLon: -70.70),
+        Box(code: "NJ", minLat: 38.93, maxLat: 41.36, minLon: -75.56, maxLon: -73.89),
+        Box(code: "NM", minLat: 31.33, maxLat: 37.00, minLon: -109.05, maxLon: -103.00),
+        Box(code: "NY", minLat: 40.50, maxLat: 45.02, minLon: -79.76, maxLon: -71.86),
+        Box(code: "NC", minLat: 33.84, maxLat: 36.59, minLon: -84.32, maxLon: -75.46),
+        Box(code: "ND", minLat: 45.94, maxLat: 49.00, minLon: -104.05, maxLon: -96.55),
+        Box(code: "OH", minLat: 38.40, maxLat: 41.98, minLon: -84.82, maxLon: -80.52),
+        Box(code: "OK", minLat: 33.62, maxLat: 37.00, minLon: -103.00, maxLon: -94.43),
+        Box(code: "OR", minLat: 41.99, maxLat: 46.29, minLon: -124.57, maxLon: -116.46),
+        Box(code: "PA", minLat: 39.72, maxLat: 42.27, minLon: -80.52, maxLon: -74.69),
+        Box(code: "RI", minLat: 41.15, maxLat: 42.02, minLon: -71.91, maxLon: -71.12),
+        Box(code: "SC", minLat: 32.05, maxLat: 35.22, minLon: -83.35, maxLon: -78.54),
+        Box(code: "SD", minLat: 42.48, maxLat: 45.95, minLon: -104.06, maxLon: -96.44),
+        Box(code: "TN", minLat: 34.98, maxLat: 36.68, minLon: -90.31, maxLon: -81.65),
+        Box(code: "TX", minLat: 25.84, maxLat: 36.50, minLon: -106.65, maxLon: -93.51),
+        Box(code: "UT", minLat: 36.99, maxLat: 42.00, minLon: -114.05, maxLon: -109.04),
+        Box(code: "VT", minLat: 42.73, maxLat: 45.02, minLon: -73.44, maxLon: -71.46),
+        Box(code: "VA", minLat: 36.54, maxLat: 39.47, minLon: -83.68, maxLon: -75.24),
+        Box(code: "WA", minLat: 45.54, maxLat: 49.00, minLon: -124.85, maxLon: -116.92),
+        Box(code: "WV", minLat: 37.20, maxLat: 40.64, minLon: -82.64, maxLon: -77.72),
+        Box(code: "WI", minLat: 42.49, maxLat: 47.08, minLon: -92.89, maxLon: -86.25),
+        Box(code: "WY", minLat: 40.99, maxLat: 45.01, minLon: -111.06, maxLon: -104.05)
+    ]
+
+    private static let names: [String: String] = [
+        "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+        "colorado": "CO", "connecticut": "CT", "delaware": "DE", "florida": "FL", "georgia": "GA",
+        "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
+        "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+        "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO",
+        "montana": "MT", "nebraska": "NE", "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ",
+        "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", "ohio": "OH",
+        "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+        "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT",
+        "virginia": "VA", "washington": "WA", "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY"
+    ]
+
+    static func code(latitude: Double, longitude: Double, tagged: String? = nil) -> String {
+        if let tagged {
+            let trimmed = tagged.trimmingCharacters(in: .whitespacesAndNewlines)
+            let upper = trimmed.uppercased()
+            if names.values.contains(upper) { return upper }
+            if let named = names[trimmed.lowercased()] { return named }
+        }
+        let matches = boxes.filter {
+            latitude >= $0.minLat && latitude <= $0.maxLat && longitude >= $0.minLon && longitude <= $0.maxLon
+        }
+        return matches.min(by: { $0.area < $1.area })?.code ?? "US"
+    }
+}
+
 extension LiveTelemetryService {
     func fetchTrailsInMapRegion(center: CLLocationCoordinate2D, radiusMeters: Int = 25000) async {
         isScanningTrails = true
@@ -207,7 +297,7 @@ extension LiveTelemetryService {
           way["highway"="track"]["4wd_only"="yes"](around:\(fourRadius),\(lat),\(lon));
           way["highway"="unclassified"]["surface"~"unpaved|gravel|dirt|sand|rock"](around:\(dirtRadius),\(lat),\(lon));
         );
-        out body geom 80;
+        out geom 80;
         """
         guard let url = URL(string: "https://overpass-api.de/api/interpreter") else { return [] }
         var request = URLRequest(url: url)
@@ -253,7 +343,7 @@ extension LiveTelemetryService {
             gateStatus: "CHECK",
             snotelSnowIn: 0,
             usgsFlowCfs: 0,
-            state: "US",
+            state: USStateLocator.code(latitude: mid.latitude, longitude: mid.longitude, tagged: tags["addr:state"] ?? tags["is_in:state"]),
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: coordinates,
@@ -318,7 +408,11 @@ extension LiveTelemetryService {
             gateStatus: "CHECK",
             snotelSnowIn: 0,
             usgsFlowCfs: 0,
-            state: "US",
+            state: USStateLocator.code(
+                latitude: mid.latitude,
+                longitude: mid.longitude,
+                tagged: firstString(in: attributes, keys: ["STATE", "STATE_CODE", "ADMIN_STATE"])
+            ),
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: sampled,
