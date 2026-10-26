@@ -1,4 +1,49 @@
 workflows:
+  ios-appstore-release:
+    name: TrailForge Overland — App Store Connect Release
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        BUNDLE_ID: "com.edwardshin.trailforge"
+        APPLE_TEAM_ID: "25VZT7485A"
+        XCODE_PROJECT: "ios-app/TrailForgeOverland.xcodeproj"
+        XCODE_SCHEME: "TrailForgeOverland"
+    scripts:
+      - name: Use committed Xcode project
+        script: |
+          if [ ! -f ios-app/TrailForgeOverland.xcodeproj/project.pbxproj ]; then
+            echo "Committed project.pbxproj is missing; generating with xcodegen"
+            if ! command -v xcodegen >/dev/null 2>&1; then
+              brew install xcodegen
+            fi
+            (cd ios-app && xcodegen generate)
+          else
+            echo "Using committed ios-app/TrailForgeOverland.xcodeproj; not running xcodegen"
+          fi
+          test -f "$XCODE_PROJECT/project.pbxproj"
+      - name: Initialize keychain & fetch signing files from App Store Connect API
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles --project "$XCODE_PROJECT"
+      - name: Build signed IPA for App Store / TestFlight
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+      - name: Publish IPA to App Store Connect / TestFlight
+        script: |
+          app-store-connect publish \
+            --path build/ios/ipa/*.ipa
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
   ios-simulator-verify:
     name: TrailForge Overland — Simulator verification
     max_build_duration: 60
@@ -13,11 +58,14 @@ workflows:
       - name: Use committed Xcode project
         script: |
           cd ios-app
-          if command -v xcodegen >/dev/null 2>&1; then
-            echo "xcodegen is installed; regenerating TrailForgeOverland.xcodeproj from project.yml"
+          if [ ! -f TrailForgeOverland.xcodeproj/project.pbxproj ]; then
+            echo "Committed project.pbxproj is missing; generating with xcodegen"
+            if ! command -v xcodegen >/dev/null 2>&1; then
+              brew install xcodegen
+            fi
             xcodegen generate
           else
-            echo "xcodegen is not installed; using the committed TrailForgeOverland.xcodeproj"
+            echo "Using committed TrailForgeOverland.xcodeproj; not running xcodegen"
           fi
           test -f "$XCODE_PROJECT/project.pbxproj"
           test -f "$XCODE_PROJECT/xcshareddata/xcschemes/$XCODE_SCHEME.xcscheme"
@@ -37,51 +85,3 @@ workflows:
     artifacts:
       - ios-app/build/DerivedData/**/Build/**/*.app
       - /tmp/xcodebuild_logs/*.log
-
-  ios-appstore-release:
-    name: TrailForge Overland — Cloud iOS Build & TestFlight Upload
-    max_build_duration: 60
-    instance_type: mac_mini_m2
-    # Create an App Store Connect API key in Codemagic named TrailForge_ASC
-    # after Apple Developer enrollment, then start this workflow.
-    integrations:
-      app_store_connect: TrailForge_ASC
-    environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.edwardshin.trailforge
-      vars:
-        BUNDLE_ID: "com.edwardshin.trailforge"
-        XCODE_PROJECT: "TrailForgeOverland.xcodeproj"
-        XCODE_SCHEME: "TrailForgeOverland"
-      xcode: latest
-    scripts:
-      - name: Use committed Xcode project
-        script: |
-          cd ios-app
-          if command -v xcodegen >/dev/null 2>&1; then
-            echo "xcodegen is installed; regenerating TrailForgeOverland.xcodeproj from project.yml"
-            xcodegen generate
-          else
-            echo "xcodegen is not installed; using the committed TrailForgeOverland.xcodeproj"
-          fi
-          test -f "$XCODE_PROJECT/project.pbxproj"
-          test -f "$XCODE_PROJECT/xcshareddata/xcschemes/$XCODE_SCHEME.xcscheme"
-      - name: Set up code signing settings on Xcode project
-        script: |
-          cd ios-app
-          xcode-project use-profiles
-      - name: Build .ipa for App Store & TestFlight
-        script: |
-          cd ios-app
-          xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME"
-    artifacts:
-      - ios-app/build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
-    publishing:
-      app_store_connect:
-        auth: integration
-        submit_to_testflight: true
-        submit_to_app_store: false

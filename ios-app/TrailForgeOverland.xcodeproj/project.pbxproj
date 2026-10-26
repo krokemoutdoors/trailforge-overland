@@ -135,6 +135,7 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					A10000000000000000000001 = {
+						DevelopmentTeam = 25VZT7485A;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -312,6 +313,7 @@
 			CODE_SIGN_IDENTITY = "iPhone Developer";
 			CODE_SIGN_STYLE = Automatic;
 			CURRENT_PROJECT_VERSION = 1;
+			DEVELOPMENT_TEAM = 25VZT7485A;
 			ENABLE_PREVIEWS = YES;
 			GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = Info.plist;
@@ -338,6 +340,7 @@
 			CODE_SIGN_IDENTITY = "iPhone Developer";
 			CODE_SIGN_STYLE = Automatic;
 			CURRENT_PROJECT_VERSION = 1;
+			DEVELOPMENT_TEAM = 25VZT7485A;
 			ENABLE_PREVIEWS = YES;
 			GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = Info.plist;
