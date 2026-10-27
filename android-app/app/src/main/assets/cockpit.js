@@ -101,9 +101,10 @@
     map3d: localStorage.getItem("tf-map-3d") === "1",
     map3dEnabled: localStorage.getItem("tf-map-3d") === "1",
     mapPitch: (function () {
+      const enabled = localStorage.getItem("tf-map-3d") === "1";
       const stored = Number(localStorage.getItem("tf-map-pitch") || 0);
-      const next = Math.max(0, Math.min(75, Number.isFinite(stored) ? stored : 0));
-      if (next !== stored) localStorage.setItem("tf-map-pitch", String(next));
+      const next = enabled ? Math.max(0, Math.min(75, Number.isFinite(stored) ? stored : 0)) : 0;
+      if (localStorage.getItem("tf-map-pitch") !== String(next)) localStorage.setItem("tf-map-pitch", String(next));
       return next;
     })(),
     plotClearedByUser: false,
@@ -172,6 +173,8 @@
   let scrubMarker;
   let toastTimer;
   let chromeTimer;
+  let pitchResizeTimer;
+  let pitchStageKey = "";
   const REPORTS = ["Open & Clear", "Mud/Snow", "Downed Tree", "Washout", "Gate Locked"];
   const REPORT_LABELS = {
     "Open & Clear": "✅ Open & Clear",
@@ -2706,6 +2709,7 @@
     clearTimeout(chromeTimer);
     chromeTimer = setTimeout(function () {
       if (map) map.invalidateSize();
+      refreshPitchForStage();
       paintElevation();
     }, 60);
   }
@@ -2922,6 +2926,14 @@
     };
   }
 
+  function refreshPitchForStage() {
+    const stage = document.getElementById("stage");
+    if (!stage) return;
+    const key = stage.clientWidth + "x" + stage.clientHeight;
+    if (key === pitchStageKey) return;
+    applyMapPitch(false);
+  }
+
   function applyMapPitch(live) {
     const el = document.getElementById("map");
     const stage = document.getElementById("stage");
@@ -2937,6 +2949,7 @@
       el.style.right = "";
       el.style.bottom = "";
       el.style.left = "";
+      if (stage) pitchStageKey = stage.clientWidth + "x" + stage.clientHeight;
       return;
     }
     el.style.top = (-visual.bleed) + "px";
@@ -2945,6 +2958,7 @@
     el.style.left = (-visual.bleedSide) + "px";
     el.style.transformOrigin = "50% " + (visual.originY * 100).toFixed(2) + "%";
     el.style.transform = "perspective(" + visual.perspective + "px) rotateX(" + visual.angle.toFixed(2) + "deg) scale(" + visual.scale.toFixed(4) + ")";
+    if (stage) pitchStageKey = stage.clientWidth + "x" + stage.clientHeight;
   }
 
   function mapContainerPoint(clientX, clientY) {
@@ -5781,8 +5795,13 @@
     scheduleTrailScan();
     refreshMvum(selected());
     refreshCommunity(false);
+    window.addEventListener("resize", function () {
+      clearTimeout(pitchResizeTimer);
+      pitchResizeTimer = setTimeout(refreshPitchForStage, 60);
+    });
     setTimeout(function () {
       map.invalidateSize();
+      refreshPitchForStage();
       if (state.route && !state.follow) frameRoute();
     }, 400);
     if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0 && location.host.indexOf("androidplatform") < 0 && navigator.userAgent.indexOf("TrailForgeOverland/") < 0) {
