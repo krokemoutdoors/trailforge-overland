@@ -143,6 +143,16 @@ struct MainCockpitView: View {
     @State private var downloadRunning = false
     @State private var offlineTier = "Route + USFS snapshot"
     @AppStorage("trailforge.offlineArea") private var offlineArea = "corridor"
+
+    /// Saved 100 and 250 sq mi choices, and any other unknown value, open as Current Map View.
+    private var resolvedOfflineArea: String {
+        switch offlineArea {
+        case "view", "sq30", "corridor":
+            return offlineArea
+        default:
+            return "view"
+        }
+    }
     @State private var screenCenter = CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352)
     @State private var visibleRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 37.9589, longitude: -107.7352),
@@ -347,7 +357,7 @@ struct MainCockpitView: View {
             hasher.combine(droppedPin.latitude)
             hasher.combine(droppedPin.longitude)
         }
-        hasher.combine(offlineArea)
+        hasher.combine(resolvedOfflineArea)
         if let box = liveOfflineBox() {
             hasher.combine(Int(box.minLat * 1000))
             hasher.combine(Int(box.maxLat * 1000))
@@ -2124,12 +2134,19 @@ struct MainCockpitView: View {
             }
             .padding(.top, 24)
             .padding(.leading, 8)
-            HStack {
+        }
+        .overlay(alignment: .topTrailing) {
+            VStack(spacing: 0) {
                 Spacer()
-                rightRail(showGloveRow)
+                    .frame(height: showGloveRow ? 88 : 136)
+                ScrollView(.vertical, showsIndicators: false) {
+                    rightRail(showGloveRow)
+                }
+                .scrollBounceBehavior(.basedOnSize)
             }
+            .frame(width: 52)
             .padding(.trailing, 5)
-            .padding(.top, 24)
+            .padding(.bottom, 8)
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
     }
@@ -2521,7 +2538,7 @@ struct MainCockpitView: View {
                     Button("Close") { showOffline = false }
                         .font(.caption.bold())
                 }
-                Text("Pan the map. A 30, 100, or 250 sq mi box stays centered on the screen. Current Map View uses the exact bounds on screen.")
+                Text("Pan the map. A 30 sq mi box stays centered on the screen. Current Map View uses the exact bounds on screen.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 Text("Saved on-device in TrailForge local storage (offline-ready, zero cell required)")
@@ -2532,7 +2549,7 @@ struct MainCockpitView: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundColor(.cyan)
                     .fixedSize(horizontal: false, vertical: true)
-                if offlineArea == "corridor" {
+                if resolvedOfflineArea == "corridor" {
                     Picker("Pack", selection: $offlineTier) {
                         Text("Route + USFS snapshot").tag("Route + USFS snapshot")
                         Text("Route + hazards").tag("Route + hazards")
@@ -2584,6 +2601,11 @@ struct MainCockpitView: View {
             .clipShape(RoundedRectangle(cornerRadius: 18))
             .padding()
         }
+        .onAppear {
+            if offlineArea != resolvedOfflineArea {
+                offlineArea = "view"
+            }
+        }
     }
 
     private var offlineAreaPicker: some View {
@@ -2597,8 +2619,8 @@ struct MainCockpitView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
-                    .background(offlineArea == choice.id ? Color.cyan : Color.white.opacity(0.12))
-                    .foregroundColor(offlineArea == choice.id ? .black : .white)
+                    .background(resolvedOfflineArea == choice.id ? Color.cyan : Color.white.opacity(0.12))
+                    .foregroundColor(resolvedOfflineArea == choice.id ? .black : .white)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
@@ -2609,18 +2631,16 @@ struct MainCockpitView: View {
         return [
             ("corridor", "5-Mi Route Corridor"),
             ("sq30", "30 sq mi Area"),
-            ("sq100", "100 sq mi Area"),
-            ("sq250", "250 sq mi Area"),
             ("view", "Current Screen View (~\(viewMiles) sq mi)")
         ]
     }
 
     private var offlineDownloadTitle: String {
         guard let box = liveOfflineBox() else { return "Download 5-Mile Corridor" }
-        if offlineArea == "view" {
+        if resolvedOfflineArea == "view" {
             return "Download Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
         }
-        return "Download \(offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : 30) sq mi Area"
+        return "Download 30 sq mi Area"
     }
 
     private var offlineEstimateLine: String {
@@ -2631,9 +2651,9 @@ struct MainCockpitView: View {
         let tiles = OfflineAreaMath.tileCount(for: box, zooms: zooms)
         let trails = trailsInside(box).count
         let mb = max(4, tiles * 18 / 1024)
-        let label = offlineArea == "view"
+        let label = resolvedOfflineArea == "view"
             ? "Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
-            : "\(offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : 30) sq mi Area"
+            : "30 sq mi Area"
         return "\(label) · ~\(tiles) tiles · \(trails) trails · ~\(mb) MB"
     }
 
@@ -3867,8 +3887,8 @@ struct MainCockpitView: View {
         downloadProgress = 0.2
         let satellite = basemap != .standard
         let miles = Int(box.squareMiles.rounded())
-        let preset = offlineArea == "sq100" ? 100 : offlineArea == "sq250" ? 250 : offlineArea == "sq30" ? 30 : miles
-        let label = offlineArea == "view" ? "Current Screen View (~\(miles) sq mi)" : "\(preset) sq mi Area"
+        let preset = resolvedOfflineArea == "sq30" ? 30 : miles
+        let label = resolvedOfflineArea == "view" ? "Current Screen View (~\(miles) sq mi)" : "\(preset) sq mi Area"
         let tier = (satellite ? "Satellite" : "Topo") + " + Trails"
         let spec = OfflineAreaDownload(
             box: box,
@@ -3891,13 +3911,9 @@ struct MainCockpitView: View {
 
     private func liveOfflineBox() -> OfflineAreaBox? {
         guard showOffline || downloadRunning else { return nil }
-        switch offlineArea {
+        switch resolvedOfflineArea {
         case "sq30":
             return .square(center: screenCenter, squareMiles: 30)
-        case "sq100":
-            return .square(center: screenCenter, squareMiles: 100)
-        case "sq250":
-            return .square(center: screenCenter, squareMiles: 250)
         case "view":
             return .visible(visibleRegion)
         default:
@@ -3906,7 +3922,7 @@ struct MainCockpitView: View {
     }
 
     private func offlineZooms(for box: OfflineAreaBox) -> [Int] {
-        if offlineArea == "sq30" || box.squareMiles <= 45 { return [11, 12, 13, 14, 15] }
+        if resolvedOfflineArea == "sq30" || box.squareMiles <= 45 { return [11, 12, 13, 14, 15] }
         return [11, 12, 13, 14]
     }
 

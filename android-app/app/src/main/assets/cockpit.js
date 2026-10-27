@@ -91,7 +91,12 @@
     reports: loadReports(),
     packs: loadPacks(),
     packKind: localStorage.getItem("tf-pack-kind") === "satellite" ? "satellite" : "topo",
-    packArea: localStorage.getItem("tf-pack-area") || "corridor",
+    packArea: (function () {
+      const saved = localStorage.getItem("tf-pack-area") || "corridor";
+      const area = saved === "sq30" || saved === "view" || saved === "corridor" ? saved : "view";
+      if (area !== saved) localStorage.setItem("tf-pack-area", area);
+      return area;
+    })(),
     packBusy: false,
     map3d: localStorage.getItem("tf-map-3d") === "1",
     mapPitch: Number(localStorage.getItem("tf-map-pitch") || 0),
@@ -841,7 +846,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.8 · build 20<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.9 · build 21<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2374,7 +2379,7 @@
     }
     if (act === "pack-area") {
       const id = button.dataset.id;
-      state.packArea = id === "sq30" || id === "sq100" || id === "sq250" || id === "view" ? id : "corridor";
+      state.packArea = id === "sq30" || id === "view" || id === "corridor" ? id : "view";
       localStorage.setItem("tf-pack-area", state.packArea);
       refreshAreaChrome();
       renderDrawer();
@@ -3916,18 +3921,18 @@
 
   function liveAreaBox() {
     if (!map || state.packArea === "corridor") return null;
-    if (state.packArea === "view") {
-      const box = currentViewBounds();
-      if (!box) return null;
-      box.sqMiles = boxSqMiles(box);
-      box.mode = "view";
+    if (state.packArea === "sq30") {
+      const sqMiles = 30;
+      const center = map.getCenter();
+      const box = squareBounds(center.lat, center.lng, sqMiles);
+      box.sqMiles = sqMiles;
+      box.mode = "sq30";
       return box;
     }
-    const sqMiles = state.packArea === "sq100" ? 100 : state.packArea === "sq250" ? 250 : 30;
-    const center = map.getCenter();
-    const box = squareBounds(center.lat, center.lng, sqMiles);
-    box.sqMiles = sqMiles;
-    box.mode = state.packArea;
+    const box = currentViewBounds();
+    if (!box) return null;
+    box.sqMiles = boxSqMiles(box);
+    box.mode = "view";
     return box;
   }
 

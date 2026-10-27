@@ -98,7 +98,13 @@
     #app[data-detent="full"]:not([data-dash="1"]) #stage { flex: 0 0 140px; min-height: 120px; }
     #app[data-detent="full"]:not([data-dash="1"]) #dock { flex: 1 1 auto; max-height: none; min-height: 0; }
     #app[data-detent="full"]:not([data-dash="1"]) #sheet { max-height: none; flex: 1 1 auto; min-height: 0; }
-    #rail { position: absolute; z-index: 560; right: 5px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 5px; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 12px; border: 1px solid var(--line); }
+    #rail { position: absolute; z-index: 560; right: 5px; top: 124px; display: flex; flex-direction: column; gap: 5px; max-height: calc(100% - 132px); overflow-y: auto; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 12px; border: 1px solid var(--line); }
+    #app[data-dash="1"] #rail { top: 86px; max-height: calc(100% - 98px); }
+    @media (orientation: landscape) {
+      #rail { top: 86px; max-height: calc(100% - 98px); }
+    }
+    #app[data-detent="full"]:not([data-dash="1"]) #rail,
+    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]) #rail { top: 8px; max-height: calc(100% - 16px); }
     #rail button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 16px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
     #rail button.rail-3d { font-size: 11px; letter-spacing: 0.02em; }
     #rail button.on { background: var(--cyan); color: #041018; }
@@ -347,13 +353,11 @@
         </section>
         <section id="offlineDrawer" data-panel="corridor" hidden>
           <div class="drawer-label">AREA SIZE</div>
-          <div class="sub">Pan the map. 30, 100, and 250 sq mi boxes stay centered on the screen. Current Map View downloads the exact bounds on screen.</div>
+          <div class="sub">Pan the map. A 30 sq mi box stays centered on the screen. Current Map View downloads the exact bounds on screen.</div>
           <div class="sub">Saved on-device in TrailForge local storage (offline-ready, zero cell required)</div>
           <div class="seg" id="packAreaSeg" style="margin-top:8px;flex-wrap:wrap">
             <button type="button" data-act="pack-area" data-id="corridor">5-Mi Route Corridor</button>
             <button type="button" data-act="pack-area" data-id="sq30">30 sq mi Area</button>
-            <button type="button" data-act="pack-area" data-id="sq100">100 sq mi Area</button>
-            <button type="button" data-act="pack-area" data-id="sq250">250 sq mi Area</button>
             <button type="button" data-act="pack-area" data-id="view">Current Map View</button>
           </div>
           <div class="sub" id="packEstimate"></div>
