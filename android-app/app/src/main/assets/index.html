@@ -64,9 +64,9 @@
     .hud-read b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; font-weight: 800; }
     .hud-read span, .legend, .clin-pill { font-size: 10px; color: #c5d5e4; letter-spacing: 0.04em; }
     .hud-read .phone-gps { min-width: 0; align-self: center; background: transparent; color: #3ddc84; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; }
-    .legend { left: 8px; bottom: 102px; display: flex; flex-wrap: wrap; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; max-width: calc(100% - 62px); }
+    .legend { left: 8px; bottom: 102px; display: flex; flex-wrap: wrap; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; max-width: calc(100% - 70px); }
     .legend [hidden] { display: none !important; }
-    .coords { left: 8px; right: 54px; bottom: 40px; display: grid; gap: 4px; }
+    .coords { left: 8px; right: 62px; bottom: 40px; display: grid; gap: 4px; }
     .coords .line { display: flex; align-items: baseline; gap: 6px; width: 100%; margin: 0; border: 0; border-radius: 10px; background: rgba(7, 16, 24, 0.84); backdrop-filter: blur(8px); padding: 5px 8px; text-align: left; color: #e8f1f8; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; }
     .coords .k { flex: 0 0 auto; color: #7dd3fc; font-size: 10px; letter-spacing: 0.08em; }
     .coords b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
@@ -102,10 +102,12 @@
     #mapChrome { position: absolute; z-index: 580; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; }
     #mapChrome button { width: 40px; height: 40px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.94); color: #102033; font-size: 13px; font-weight: 800; padding: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28); display: grid; place-items: center; }
     #mapChrome button.on { background: var(--cyan); color: #041018; }
-    #compassArrow { display: block; transform-origin: 50% 50%; }
-    #rail { position: absolute; z-index: 560; right: 5px; top: 124px; display: flex; flex-direction: column; gap: 5px; max-height: calc(100% - 132px); overflow-y: auto; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 12px; border: 1px solid var(--line); }
-    #app[data-dash="1"] #rail { top: 108px; max-height: calc(100% - 116px); }
+    #compassArrow, #locateArrow { display: block; transform-origin: 50% 50%; }
+    #app[data-dash="1"] #locateBtn { display: none; }
+    #rail { position: absolute; z-index: 560; right: 5px; top: 170px; box-sizing: border-box; width: 46px; display: flex; flex-direction: column; gap: 5px; max-height: calc(100% - 178px); overflow-y: auto; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 13px; border: 1px solid var(--line); }
+    #app[data-dash="1"] #rail { top: 108px; width: 48px; max-height: calc(100% - 116px); }
     @media (orientation: landscape) {
+      #locateBtn { display: none; }
       #rail { top: 108px; max-height: calc(100% - 116px); }
       #app[data-dash="1"] #dashHud .tl { top: 92px; }
       #app[data-dash="1"] .leaflet-control-attribution { margin-bottom: 58px !important; max-width: min(42vw, 280px) !important; }
@@ -115,9 +117,10 @@
     #app[data-detent="full"]:not([data-dash="1"]) .legend,
     #app[data-detent="full"]:not([data-dash="1"]) .coords { display: none; }
     #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]):not([data-detent="full"]) #rail { top: 108px; max-height: calc(100% - 116px); }
-    #rail button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 16px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+    #rail button { width: 38px; height: 38px; min-width: 38px; min-height: 38px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 18px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+    #rail svg { width: 19px; height: 19px; }
     #rail button.on { background: var(--cyan); color: #041018; }
-    #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 50px; width: min(340px, calc(100% - 62px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
+    #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 58px; width: min(340px, calc(100% - 70px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
     #layerDrawer[hidden] { display: none; }
     .drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
     .drawer-head button { border: 0; background: transparent; color: white; font-size: 16px; }
@@ -323,6 +326,9 @@
       </div>
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span><span data-mask-key="blm"><i style="background:#f5e642"></i>BLM</span><span data-mask-key="usfs"><i style="background:#14915a"></i>USFS</span><span data-mask-key="state"><i style="background:#38bdf8"></i>STATE</span><span data-mask-key="slope"><i style="background:#3ddc84"></i>SLOPE</span><span data-mask-key="hazards"><i style="background:#ff4d4d"></i>FIRE</span><span data-mask-key="starlink"><i style="background:#3ecbff"></i>CELL</span></div>
       <nav id="mapChrome" aria-label="Map direction and 3D">
+        <button type="button" id="locateBtn" data-act="recenter" title="Center on my GPS" aria-label="Navigation arrow, center on my GPS">
+          <svg id="locateArrow" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2.2 L19.2 20.2 L12 16.1 L4.8 20.2 Z" fill="#007AFF"/></svg>
+        </button>
         <button type="button" id="compassBtn" data-act="compass-north" title="North" aria-label="Point north">
           <svg id="compassArrow" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2.5 L16.2 14.2 L12 11.4 L7.8 14.2 Z" fill="#e23b3b"/><path d="M12 21.5 L7.8 9.8 L12 12.6 L16.2 9.8 Z" fill="#8ea6bb"/></svg>
         </button>
