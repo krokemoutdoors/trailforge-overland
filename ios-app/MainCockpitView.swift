@@ -2157,7 +2157,7 @@ struct MainCockpitView: View {
 
     private func mapStage(showGloveRow: Bool) -> some View {
         ZStack {
-            routeMap
+            routeMap(showsUserLocationButton: !showGloveRow)
             if nightVision {
                 Color.black.opacity(0.28)
                     .allowsHitTesting(false)
@@ -2208,13 +2208,13 @@ struct MainCockpitView: View {
             if detent != .full || showGloveRow {
                 VStack(spacing: 0) {
                     Spacer()
-                        .frame(height: showGloveRow ? 88 : 136)
+                        .frame(height: showGloveRow ? 88 : 148)
                     ScrollView(.vertical, showsIndicators: false) {
                         rightRail(showGloveRow)
                     }
                     .scrollBounceBehavior(.basedOnSize)
                 }
-                .frame(width: 52)
+                .frame(width: 56)
                 .padding(.trailing, 5)
                 .padding(.bottom, 8)
             }
@@ -2222,7 +2222,7 @@ struct MainCockpitView: View {
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
     }
 
-    private var routeMap: some View {
+    private func routeMap(showsUserLocationButton: Bool) -> some View {
         StableRouteMap(
             cameraPosition: $cameraPosition,
             sceneToken: mapSceneToken,
@@ -2286,6 +2286,7 @@ struct MainCockpitView: View {
             onFingerPitch: { pitch, active in
                 handleFingerPitch(pitch, active: active)
             },
+            showsUserLocationButton: showsUserLocationButton,
             onSelectMarker: { id in
                 guard let marker = savedMarkers.first(where: { $0.id == id }) else { return }
                 if plotMode {
@@ -2331,9 +2332,10 @@ struct MainCockpitView: View {
             .accessibilityLabel("Night vision")
         }
         .padding(4)
+        .frame(width: 48)
         .background(Color.black.opacity(0.84))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.15), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 
     private var topCluster: some View {
@@ -3532,8 +3534,8 @@ struct MainCockpitView: View {
     private func railButton(_ system: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.subheadline.bold())
-                .frame(width: 34, height: 34)
+                .font(.system(size: 17, weight: .bold))
+                .frame(width: 40, height: 40)
                 .background(active ? Color.cyan : Color.black.opacity(0.78))
                 .foregroundColor(active ? .black : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -4152,6 +4154,7 @@ private struct StableRouteMap: View, Equatable {
     var fingerPitchEnabled: Bool = false
     var horizonAssist: Double = 0
     var onFingerPitch: (Double, Bool) -> Void = { _, _ in }
+    var showsUserLocationButton: Bool = false
     var onSelectMarker: (UUID) -> Void
     var onDeletePlotPoint: (Int) -> Void
 
@@ -4163,6 +4166,7 @@ private struct StableRouteMap: View, Equatable {
             && lhs.routingActive == rhs.routingActive
             && lhs.basemap == rhs.basemap
             && lhs.flatBasemap == rhs.flatBasemap
+            && lhs.showsUserLocationButton == rhs.showsUserLocationButton
             && lhs.fingerPitchEnabled == rhs.fingerPitchEnabled
             && Int(lhs.fingerPitch.rounded()) == Int(rhs.fingerPitch.rounded())
             && Int(lhs.horizonAssist.rounded()) == Int(rhs.horizonAssist.rounded())
@@ -4382,6 +4386,9 @@ private struct StableRouteMap: View, Equatable {
         .mapStyle(basemapStyle)
         .id(basemap.rawValue + (flatBasemap ? "-flat" : ""))
         .mapControls {
+            if showsUserLocationButton {
+                MapUserLocationButton()
+            }
             MapCompass()
             MapPitchToggle()
             MapScaleView()

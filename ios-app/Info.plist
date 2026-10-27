@@ -19,7 +19,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>25</string>
+	<string>26</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>TrailForge records a 5-second voice note when you drop a hazard pin.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
