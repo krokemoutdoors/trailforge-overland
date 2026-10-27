@@ -12,7 +12,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var mapTemplate: CPMapTemplate?
     private var navigationSession: CPNavigationSession?
     private var mapController: CarPlayMapController?
-    private var recordButton: CPBarButton?
 
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
@@ -60,14 +59,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let camps = CPBarButton(title: "<3° Camps") { [weak self] _ in
             self?.showCamps()
         }
-        let record = CPBarButton(title: TrailRouteRecorder.shared.isRecording ? "Stop Rec" : "Record") { [weak self] _ in
-            TrailRouteRecorder.shared.toggleFromRail()
-            self?.configureChrome(mapTemplate)
-            self?.mapController?.refresh()
-        }
-        recordButton = record
         mapTemplate.leadingNavigationBarButtons = [trails, camps]
-        mapTemplate.trailingNavigationBarButtons = [record]
+        mapTemplate.trailingNavigationBarButtons = []
 
         let recenter = CPMapButton { [weak self] _ in
             self?.mapController?.recenter()
@@ -244,9 +237,7 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         let altitude = PhoneSensorHub.shared.altitudeFt
         speedLabel.text = "  \(speed) MPH  "
         elevationLabel.text = "  \(altitude) FT  "
-        if TrailRouteRecorder.shared.isRecording {
-            showLine(TrailRouteRecorder.shared.activePoints.map(\.coordinate))
-        }
+        showLine([])
     }
 
     deinit {
