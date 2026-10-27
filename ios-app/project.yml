@@ -13,7 +13,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.edwardshin.trailforge
         PRODUCT_NAME: TrailForgeOverland
         DEVELOPMENT_TEAM: 25VZT7485A
-        # Build 25. Remove trail recording. Color land-mask controls to match the map.
+        # Build 25 TestFlight retrigger. Versions stay 1.0 / 25.
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "25"
         GENERATE_INFOPLIST_FILE: NO
