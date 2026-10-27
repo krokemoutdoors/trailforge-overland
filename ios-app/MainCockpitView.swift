@@ -2134,12 +2134,19 @@ struct MainCockpitView: View {
             }
             .padding(.top, 24)
             .padding(.leading, 8)
-            HStack {
+        }
+        .overlay(alignment: .topTrailing) {
+            VStack(spacing: 0) {
                 Spacer()
-                rightRail(showGloveRow)
+                    .frame(height: showGloveRow ? 88 : 136)
+                ScrollView(.vertical, showsIndicators: false) {
+                    rightRail(showGloveRow)
+                }
+                .scrollBounceBehavior(.basedOnSize)
             }
+            .frame(width: 52)
             .padding(.trailing, 5)
-            .padding(.top, 24)
+            .padding(.bottom, 8)
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
     }
