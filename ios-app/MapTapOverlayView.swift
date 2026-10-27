@@ -8,9 +8,13 @@ import UIKit
 struct MapTapOverlayView: UIViewRepresentable {
     var proxy: MapProxy
     var onLongPress: (CLLocationCoordinate2D) -> Void
+    var pitchEnabled: Bool = false
+    var pitch: Double = 0
+    var horizonAssist: Double = 0
+    var onPitch: (Double, Bool) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onLongPress: onLongPress)
+        Coordinator(onLongPress: onLongPress, onPitch: onPitch)
     }
 
     func makeUIView(context: Context) -> MapPressInstaller {
@@ -25,18 +29,35 @@ struct MapTapOverlayView: UIViewRepresentable {
     func updateUIView(_ uiView: MapPressInstaller, context: Context) {
         context.coordinator.proxy = proxy
         context.coordinator.onLongPress = onLongPress
+        context.coordinator.onPitch = onPitch
+        context.coordinator.pitchEnabled = pitchEnabled
+        context.coordinator.pitch = pitch
         context.coordinator.installer = uiView
         uiView.coordinator = context.coordinator
+        uiView.horizonAssist = horizonAssist
         uiView.installIfNeeded()
+        uiView.applyHorizonAssist()
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var proxy: MapProxy?
         var onLongPress: (CLLocationCoordinate2D) -> Void
+        var onPitch: (Double, Bool) -> Void
+        var pitchEnabled = false
+        var pitch: Double = 0
         weak var installer: MapPressInstaller?
+        private var panStartPitch: Double = 0
+        private var panStartSpan: CGFloat = -1
+        private var panPitching = false
+        private var panBlocked = false
+        private var panLastPitch: Double = 0
 
-        init(onLongPress: @escaping (CLLocationCoordinate2D) -> Void) {
+        init(
+            onLongPress: @escaping (CLLocationCoordinate2D) -> Void,
+            onPitch: @escaping (Double, Bool) -> Void
+        ) {
             self.onLongPress = onLongPress
+            self.onPitch = onPitch
         }
 
         @objc func pressed(_ gesture: UILongPressGestureRecognizer) {
@@ -54,26 +75,75 @@ struct MapTapOverlayView: UIViewRepresentable {
             }
         }
 
+        @objc func pitched(_ gesture: UIPanGestureRecognizer) {
+            let ended = gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed
+            if ended {
+                if panPitching {
+                    onPitch(panLastPitch, false)
+                }
+                panPitching = false
+                panBlocked = false
+                panStartSpan = -1
+                return
+            }
+            guard pitchEnabled, gesture.numberOfTouches == 2, let view = gesture.view else { return }
+            if panBlocked { return }
+            let first = gesture.location(ofTouch: 0, in: view)
+            let second = gesture.location(ofTouch: 1, in: view)
+            let span = hypot(first.x - second.x, first.y - second.y)
+            if gesture.state == .began || panStartSpan < 0 {
+                panStartSpan = span
+                panStartPitch = pitch
+                panLastPitch = pitch
+                panPitching = false
+            }
+            // A widening span is a pinch. Leave zoom and rotate to MapKit.
+            if abs(span - panStartSpan) > 22 {
+                if panPitching {
+                    onPitch(panLastPitch, false)
+                }
+                panPitching = false
+                panBlocked = true
+                return
+            }
+            let dy = gesture.translation(in: view).y
+            if !panPitching, abs(dy) < 8 { return }
+            panPitching = true
+            let next = min(90, max(0, panStartPitch - Double(dy) * 0.28))
+            panLastPitch = next
+            onPitch(next, true)
+        }
+
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            gestureRecognizer.numberOfTouches <= 1
+            if gestureRecognizer is UIPanGestureRecognizer { return true }
+            return gestureRecognizer.numberOfTouches <= 1
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            !(touch.view is UIControl)
+            var node: UIView? = touch.view
+            while let view = node {
+                if view is UIControl { return false }
+                node = view.superview
+            }
+            return true
         }
 
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            gestureRecognizer.numberOfTouches <= 1
+            if gestureRecognizer is UIPanGestureRecognizer { return true }
+            return gestureRecognizer.numberOfTouches <= 1
         }
     }
 }
 
 final class MapPressInstaller: UIView {
     weak var coordinator: MapTapOverlayView.Coordinator?
+    var horizonAssist: Double = 0
     private var recognizer: UILongPressGestureRecognizer?
+    private var panRecognizer: UIPanGestureRecognizer?
+    private weak var assistedCanvas: UIView?
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -83,11 +153,17 @@ final class MapPressInstaller: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         installIfNeeded()
+        applyHorizonAssist()
     }
 
     func installIfNeeded() {
         guard let coordinator else { return }
         guard let host = pressHost() else { return }
+        installPress(on: host, coordinator: coordinator)
+        installPitchPan(on: host, coordinator: coordinator)
+    }
+
+    private func installPress(on host: UIView, coordinator: MapTapOverlayView.Coordinator) {
         if let recognizer, recognizer.view === host { return }
         if let recognizer {
             recognizer.view?.removeGestureRecognizer(recognizer)
@@ -103,6 +179,56 @@ final class MapPressInstaller: UIView {
         press.delegate = coordinator
         host.addGestureRecognizer(press)
         recognizer = press
+    }
+
+    private func installPitchPan(on host: UIView, coordinator: MapTapOverlayView.Coordinator) {
+        if let panRecognizer, panRecognizer.view === host { return }
+        if let panRecognizer {
+            panRecognizer.view?.removeGestureRecognizer(panRecognizer)
+            self.panRecognizer = nil
+        }
+        let pan = UIPanGestureRecognizer(target: coordinator, action: #selector(MapTapOverlayView.Coordinator.pitched(_:)))
+        pan.minimumNumberOfTouches = 2
+        pan.maximumNumberOfTouches = 2
+        pan.cancelsTouchesInView = false
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
+        pan.delegate = coordinator
+        host.addGestureRecognizer(pan)
+        panRecognizer = pan
+    }
+
+    /// MapKit's own two-finger pitch stops near 65–75°. The extra degrees up to 90
+    /// tilt only the map canvas, leaving the compass and pitch toggle in place.
+    func applyHorizonAssist() {
+        guard let map = Self.findMap(startingAt: self) else { return }
+        let canvas = mapCanvas(in: map) ?? map
+        let extra = max(0, min(horizonAssist, 30))
+        if canvas !== assistedCanvas {
+            assistedCanvas?.layer.transform = CATransform3DIdentity
+            assistedCanvas = canvas
+        }
+        if extra < 1.5 {
+            canvas.layer.transform = CATransform3DIdentity
+            return
+        }
+        var transform = CATransform3DIdentity
+        transform.m34 = -1.0 / 850
+        transform = CATransform3DRotate(transform, CGFloat(extra) * .pi / 180, 1, 0, 0)
+        canvas.layer.transform = transform
+    }
+
+    private func mapCanvas(in map: MKMapView) -> UIView? {
+        let candidates = map.subviews.filter { view in
+            let name = String(describing: type(of: view))
+            if view is UIControl { return false }
+            let blocked = ["Compass", "Pitch", "Scale", "Attribution", "UserLocation", "Label"]
+            if blocked.contains(where: { name.contains($0) }) { return false }
+            return view.bounds.width > 120 && view.bounds.height > 120
+        }
+        return candidates.max { lhs, rhs in
+            lhs.bounds.width * lhs.bounds.height < rhs.bounds.width * rhs.bounds.height
+        }
     }
 
     func touchStartsOnControl(_ gesture: UILongPressGestureRecognizer) -> Bool {

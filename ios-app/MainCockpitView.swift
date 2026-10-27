@@ -172,6 +172,9 @@ struct MainCockpitView: View {
     @State private var thermalSaver = false
     @AppStorage("trailforge.map3D") private var is3DMapsEnabled = true
     @State private var cameraPitch: Double = 45
+    @State private var reportedMapPitch: Double = 0
+    @State private var pitchCeiling: Double = 0
+    @State private var pitchGestureActive = false
     @State private var lastCameraHeading: Double = 0
     @State private var lastMapCamera: MapCamera?
     @State private var lastCameraNote = Date.distantPast
@@ -328,11 +331,17 @@ struct MainCockpitView: View {
         hasher.combine(Int(campSlopeOpacity * 20))
         hasher.combine(Int(hazardOverlayOpacity * 20))
         hasher.combine(Int(starlinkOverlayOpacity * 20))
-        hasher.combine(plotPoints.map { String(format: "%.4f,%.4f", $0.latitude, $0.longitude) }.joined(separator: "|"))
+        hasher.combine(plotPoints.map { "\(Int($0.latitude * 100_000)):\(Int($0.longitude * 100_000))" }.joined(separator: ","))
         hasher.combine(plotPoints.count)
         hasher.combine(plottedLine.count)
         hasher.combine(plotSegmentRoutes.count)
         hasher.combine(plotSegmentRoutes.values.reduce(0) { $0 + $1.count })
+        if let first = plottedLine.first, let last = plottedLine.last {
+            hasher.combine(Int(first.latitude * 100_000))
+            hasher.combine(Int(first.longitude * 100_000))
+            hasher.combine(Int(last.latitude * 100_000))
+            hasher.combine(Int(last.longitude * 100_000))
+        }
         hasher.combine(straightSpur)
         hasher.combine(nextSegmentFreehand)
         hasher.combine(segmentFreehand.map { $0 ? "1" : "0" }.joined())
@@ -414,7 +423,7 @@ struct MainCockpitView: View {
         if freehand { return [start, end] }
         let key = plotSegmentKey(start, end)
         if let cached = plotSegmentRoutes[key], cached.count >= 2 { return cached }
-        return []
+        return [start, end]
     }
 
     private var mapHazards: [MapHazard] {
@@ -1734,8 +1743,14 @@ struct MainCockpitView: View {
         ))
     }
 
+    private var horizonAssist: Double {
+        let gap = cameraPitch - reportedMapPitch
+        guard is3DMapsEnabled, cameraPitch > 58, gap > 3 else { return 0 }
+        return min(gap, 30)
+    }
+
     private func applyCameraPitch(_ pitch: Double) {
-        let clamped = min(max(pitch, 0), 70)
+        let clamped = min(max(pitch, 0), 90)
         cameraPitch = clamped
         is3DMapsEnabled = clamped > 1
         let center = lastMapCamera?.centerCoordinate ?? visibleRegion.center
@@ -1748,26 +1763,32 @@ struct MainCockpitView: View {
         )))
     }
 
-    private func toggle3DMaps() {
-        if is3DMapsEnabled && cameraPitch > 1 {
-            applyCameraPitch(0)
-        } else {
-            applyCameraPitch(55)
-        }
+    private func handleFingerPitch(_ pitch: Double, active: Bool) {
+        pitchGestureActive = active
+        applyCameraPitch(pitch)
     }
 
     private func noteMapCamera(_ camera: MapCamera) {
         let now = Date()
-        let pitchChanged = abs(camera.pitch - cameraPitch) > 2
+        let reported = min(max(camera.pitch, 0), 90)
+        reportedMapPitch = reported
+        if reported > pitchCeiling { pitchCeiling = reported }
+        let pitchChanged = abs(reported - cameraPitch) > 2
         let headingChanged = abs(camera.heading - lastCameraHeading) > 8
         guard pitchChanged || headingChanged || now.timeIntervalSince(lastCameraNote) > 0.45 else { return }
         lastCameraNote = now
         lastMapCamera = camera
         lastCameraHeading = camera.heading
+        // Two-finger tilt owns the requested pitch. MapKit also stops native
+        // pitch near 65–75°, so a higher 90° request must stay put.
+        if pitchGestureActive { return }
+        let stuckAtCeiling = cameraPitch > reported + 3 && reported >= 50 && reported >= pitchCeiling - 2
+        if stuckAtCeiling { return }
         if pitchChanged {
-            cameraPitch = camera.pitch
-            if camera.pitch > 8 { is3DMapsEnabled = true }
-            if camera.pitch < 1 { is3DMapsEnabled = false }
+            cameraPitch = reported
+            if reported + 4 < pitchCeiling { pitchCeiling = reported }
+            if reported > 8 { is3DMapsEnabled = true }
+            if reported < 1 { is3DMapsEnabled = false }
         }
     }
 
@@ -2190,6 +2211,10 @@ struct MainCockpitView: View {
                 trackScreen(region)
             },
             onSpot: { spot in
+                if plotMode {
+                    addPlotPoint(spot.coordinate)
+                    return
+                }
                 Task { await beginRoute(to: spot, previewOnly: spot.kind == .pad) }
             },
             onInspect: { coordinate in
@@ -2203,12 +2228,21 @@ struct MainCockpitView: View {
             onMapCamera: { camera in
                 noteMapCamera(camera)
             },
+            fingerPitch: cameraPitch,
+            fingerPitchEnabled: is3DMapsEnabled && cameraPitch > 0.5,
+            horizonAssist: horizonAssist,
+            onFingerPitch: { pitch, active in
+                handleFingerPitch(pitch, active: active)
+            },
             onSelectMarker: { id in
-                if let marker = savedMarkers.first(where: { $0.id == id }) {
-                    editingMarker = marker
-                    pinName = marker.name
-                    pinCategory = marker.category
+                guard let marker = savedMarkers.first(where: { $0.id == id }) else { return }
+                if plotMode {
+                    addPlotPoint(marker.coordinate)
+                    return
                 }
+                editingMarker = marker
+                pinName = marker.name
+                pinCategory = marker.category
             },
             onDeletePlotPoint: { index in
                 removePlotPoint(at: index)
@@ -2223,10 +2257,6 @@ struct MainCockpitView: View {
                 showLayers = true
             }
             .accessibilityLabel("Map layers")
-            railButton("view.3d", active: is3DMapsEnabled && cameraPitch > 1) {
-                toggle3DMaps()
-            }
-            .accessibilityLabel(is3DMapsEnabled && cameraPitch > 1 ? "Switch to top-down map" : "Tilt map to 3D")
             railButton("point.topleft.down.curvedto.point.bottomright.up", active: plotMode) {
                 togglePlotter()
             }
@@ -2492,6 +2522,7 @@ struct MainCockpitView: View {
                         terrainPitchButton("0°", pitch: 0)
                         terrainPitchButton("45°", pitch: 45)
                         terrainPitchButton("60°", pitch: 60)
+                        terrainPitchButton("90°", pitch: 90)
                     }
                     opacitySlider("USFS & BLM Legal Trail Corridors", value: $trailCorridorOpacity)
                     opacitySlider("<3° LIDAR Flat Camp Slope Shading", value: $campSlopeOpacity)
@@ -3064,6 +3095,14 @@ struct MainCockpitView: View {
             Text(nextSegmentFreehand ? "The next segment is a freehand wash or lakebed bridge." : "The next segment snaps to the selected trail when one is close.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
+            if savedMarkers.count >= 2 {
+                Button("Connect Saved Waypoints") {
+                    connectSavedWaypoints()
+                }
+                .font(.caption.bold())
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+            }
             Text(String(format: "%.1f mi • %d waypoints • %@", customRouteMiles, plotPoints.count, fit.verdict.rawValue))
                 .font(.caption.bold())
                 .foregroundColor(fit.verdict == .noGo ? .red : (fit.verdict == .caution ? .orange : .green))
@@ -3222,6 +3261,11 @@ struct MainCockpitView: View {
                     .foregroundColor(.white)
                 Spacer()
                 if savedMarkers.count >= 2 {
+                    Button("Connect Saved Waypoints") {
+                        connectSavedWaypoints()
+                    }
+                    .font(.caption2.bold())
+                    .foregroundColor(.orange)
                     Button("Delete All") { deleteAllMarkers() }
                         .font(.caption2.bold())
                         .foregroundColor(.red)
@@ -3235,9 +3279,13 @@ struct MainCockpitView: View {
             ForEach(savedMarkers) { marker in
                 HStack(alignment: .center, spacing: 8) {
                     Button {
-                        editingMarker = marker
-                        pinName = marker.name
-                        pinCategory = marker.category
+                        if plotMode {
+                            addPlotPoint(marker.coordinate)
+                        } else {
+                            editingMarker = marker
+                            pinName = marker.name
+                            pinCategory = marker.category
+                        }
                     } label: {
                         HStack {
                             Text(markerSymbol(marker.category))
@@ -3711,9 +3759,34 @@ struct MainCockpitView: View {
 
     private func togglePlotter() {
         plotMode.toggle()
-        if plotMode, detent == .peek {
-            detent = .half
+        if plotMode {
+            if detent == .peek { detent = .half }
+            if plotPoints.count < 2, savedMarkers.count >= 2 {
+                connectSavedWaypoints()
+            }
         }
+    }
+
+    private func savedWaypointCoordinates() -> [CLLocationCoordinate2D] {
+        let region = visibleRegion
+        let latLimit = max(region.span.latitudeDelta * 0.65, 0.02)
+        let lonLimit = max(region.span.longitudeDelta * 0.65, 0.02)
+        let near = savedMarkers.filter { marker in
+            abs(marker.latitude - region.center.latitude) <= latLimit
+                && abs(marker.longitude - region.center.longitude) <= lonLimit
+        }
+        let chosen = near.count >= 2 ? near : savedMarkers
+        return chosen.sorted { $0.createdAt < $1.createdAt }.map(\.coordinate)
+    }
+
+    private func connectSavedWaypoints() {
+        let coordinates = savedWaypointCoordinates()
+        guard coordinates.count >= 2 else { return }
+        plotMode = true
+        if detent == .peek { detent = .half }
+        plotPoints = coordinates
+        segmentFreehand = Array(repeating: nextSegmentFreehand, count: max(0, coordinates.count - 1))
+        refreshPlotRoutes()
     }
 
     private func addPlotPoint(_ coordinate: CLLocationCoordinate2D) {
@@ -3778,9 +3851,7 @@ struct MainCockpitView: View {
                     cache[key] = existing
                     continue
                 }
-                if slice.count >= 2 {
-                    cache[key] = slice
-                }
+                cache[key] = slice.count >= 2 ? slice : [start, end]
                 pending.append((key, start, end))
             }
         }
@@ -4181,6 +4252,10 @@ private struct StableRouteMap: View, Equatable {
     var onInspect: (CLLocationCoordinate2D) -> Void
     var onLongPress: (CLLocationCoordinate2D) -> Void
     var onMapCamera: (MapCamera) -> Void = { _ in }
+    var fingerPitch: Double = 0
+    var fingerPitchEnabled: Bool = false
+    var horizonAssist: Double = 0
+    var onFingerPitch: (Double, Bool) -> Void = { _, _ in }
     var onSelectMarker: (UUID) -> Void
     var onDeletePlotPoint: (Int) -> Void
 
@@ -4192,6 +4267,9 @@ private struct StableRouteMap: View, Equatable {
             && lhs.routingActive == rhs.routingActive
             && lhs.basemap == rhs.basemap
             && lhs.flatBasemap == rhs.flatBasemap
+            && lhs.fingerPitchEnabled == rhs.fingerPitchEnabled
+            && Int(lhs.fingerPitch.rounded()) == Int(rhs.fingerPitch.rounded())
+            && Int(lhs.horizonAssist.rounded()) == Int(rhs.horizonAssist.rounded())
     }
 
     var body: some View {
@@ -4204,7 +4282,14 @@ private struct StableRouteMap: View, Equatable {
                     }
                 )
                 .overlay {
-                    MapTapOverlayView(proxy: proxy, onLongPress: onLongPress)
+                    MapTapOverlayView(
+                        proxy: proxy,
+                        onLongPress: onLongPress,
+                        pitchEnabled: fingerPitchEnabled,
+                        pitch: fingerPitch,
+                        horizonAssist: horizonAssist,
+                        onPitch: onFingerPitch
+                    )
                 }
         }
     }
@@ -4243,7 +4328,10 @@ private struct StableRouteMap: View, Equatable {
             }
             if plotLine.count >= 2 {
                 MapPolyline(coordinates: plotLine)
-                    .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [7, 5]))
+                    .stroke(
+                        Color(red: 0.984, green: 0.749, blue: 0.141),
+                        style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round)
+                    )
             }
             if recordedLine.count >= 2 {
                 MapPolyline(coordinates: recordedLine)

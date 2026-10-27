@@ -98,15 +98,18 @@
     #app[data-detent="full"]:not([data-dash="1"]) #stage { flex: 0 0 140px; min-height: 120px; }
     #app[data-detent="full"]:not([data-dash="1"]) #dock { flex: 1 1 auto; max-height: none; min-height: 0; }
     #app[data-detent="full"]:not([data-dash="1"]) #sheet { max-height: none; flex: 1 1 auto; min-height: 0; }
+    #mapChrome { position: absolute; z-index: 580; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; }
+    #mapChrome button { width: 40px; height: 40px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.94); color: #102033; font-size: 13px; font-weight: 800; padding: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28); display: grid; place-items: center; }
+    #mapChrome button.on { background: var(--cyan); color: #041018; }
+    #compassArrow { display: block; transform-origin: 50% 50%; }
     #rail { position: absolute; z-index: 560; right: 5px; top: 124px; display: flex; flex-direction: column; gap: 5px; max-height: calc(100% - 132px); overflow-y: auto; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 12px; border: 1px solid var(--line); }
-    #app[data-dash="1"] #rail { top: 86px; max-height: calc(100% - 98px); }
+    #app[data-dash="1"] #rail { top: 108px; max-height: calc(100% - 116px); }
     @media (orientation: landscape) {
-      #rail { top: 86px; max-height: calc(100% - 98px); }
+      #rail { top: 108px; max-height: calc(100% - 116px); }
     }
     #app[data-detent="full"]:not([data-dash="1"]) #rail,
-    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]) #rail { top: 8px; max-height: calc(100% - 16px); }
+    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]) #rail { top: 108px; max-height: calc(100% - 116px); }
     #rail button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 16px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
-    #rail button.rail-3d { font-size: 11px; letter-spacing: 0.02em; }
     #rail button.on { background: var(--cyan); color: #041018; }
     #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 50px; width: min(340px, calc(100% - 62px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
     #layerDrawer[hidden] { display: none; }
@@ -305,9 +308,14 @@
         <button type="button" class="line" id="targetRead" data-act="copy-target" aria-label="Copy target coordinates"><span class="k">TARGET:</span><b>—</b></button>
       </div>
       <div class="legend"><span><i class="g"></i>FITS YOUR RIG</span><span><i class="o"></i>CAUTION</span><span><i class="r"></i>NO-GO</span></div>
+      <nav id="mapChrome" aria-label="Map direction and 3D">
+        <button type="button" id="compassBtn" data-act="compass-north" title="North" aria-label="Point north">
+          <svg id="compassArrow" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2.5 L16.2 14.2 L12 11.4 L7.8 14.2 Z" fill="#e23b3b"/><path d="M12 21.5 L7.8 9.8 L12 12.6 L16.2 9.8 Z" fill="#8ea6bb"/></svg>
+        </button>
+        <button type="button" id="tiltBtn" data-act="toggle-3d" title="3D terrain and tilt" aria-label="Toggle 3D map">3D</button>
+      </nav>
       <nav id="rail" aria-label="Map tools">
         <button type="button" data-act="layers" title="Layers &amp; Opacity Drawer" aria-label="Layers and Opacity Drawer">▦</button>
-        <button type="button" class="rail-3d" data-act="toggle-3d" title="3D terrain and tilt" aria-label="Toggle 3D map">3D</button>
         <button type="button" data-act="plot" title="Custom Route Plotter" aria-label="Custom Route Plotter">✎</button>
         <button type="button" data-act="corridor" title="5-Mile Corridor Offline Download" aria-label="5-Mile Corridor Offline Download">↓</button>
         <button type="button" data-act="hazard" title="Drop Hazard Pin" aria-label="Drop Hazard Pin">📸</button>
@@ -336,8 +344,9 @@
           <div class="drawer-label">3D TERRAIN &amp; TILT</div>
           <div class="seg" id="pitchSeg">
             <button type="button" data-act="map-pitch" data-id="0">2D 0°</button>
-            <button type="button" data-act="map-pitch" data-id="40">3D 40°</button>
-            <button type="button" data-act="map-pitch" data-id="55">3D 55°</button>
+            <button type="button" data-act="map-pitch" data-id="45">3D 45°</button>
+            <button type="button" data-act="map-pitch" data-id="60">3D 60°</button>
+            <button type="button" data-act="map-pitch" data-id="90">3D 90°</button>
           </div>
           <div class="drawer-label">BASEMAP</div>
           <div class="seg" id="basemapSeg">
@@ -380,6 +389,7 @@
           <div class="route-stats" style="padding-left:0;padding-right:0"><div><b id="plotCount">0 points</b><span>plotted</span></div><div><b id="plotFit">—</b><span>rig-fit</span></div></div>
           <div id="plotWaypointList"></div>
           <div class="actions">
+            <button type="button" id="connectMarkers" data-act="connect-markers" hidden>Connect Saved Waypoints</button>
             <button type="button" class="primary" data-act="export-gpx">Export GPX</button>
             <button type="button" data-act="import-gpx">Import GPX</button>
             <button type="button" data-act="undo-plot">Undo Last Waypoint</button>
