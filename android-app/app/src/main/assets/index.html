@@ -51,7 +51,6 @@
     .step { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 4px 0; color: #d5e4f0; }
     .step.on { color: white; font-weight: 700; }
     #stage { flex: 1 1 auto; min-height: 180px; position: relative; overflow: hidden; background: #0c1b27; }
-    #stage.map-horizon { background: linear-gradient(180deg, #8fd0ff 0%, #e7f4ff 18%, #c5d8ea 34%, #8d7348 48%, #1c140e 68%, #0c1b27 100%); }
     #map { position: absolute; inset: 0; background: #0c1b27; transform-origin: 50% 65%; transition: transform 0.25s ease; }
     #map.map-tilt-live { transition: none; }
     .hillshade-tiles { mix-blend-mode: multiply; }
@@ -347,12 +346,10 @@
       <aside id="layerDrawer" hidden>
         <div class="drawer-head"><b id="drawerTitle">Layers &amp; Opacity</b><button type="button" data-act="close-drawer" aria-label="Close drawer">✕</button></div>
         <section data-panel="layers">
-          <div class="drawer-label">3D TERRAIN &amp; TILT</div>
+          <div class="drawer-label">3D MODE</div>
           <div class="seg" id="pitchSeg">
-            <button type="button" data-act="map-pitch" data-id="0">2D 0°</button>
-            <button type="button" data-act="map-pitch" data-id="45">3D 45°</button>
-            <button type="button" data-act="map-pitch" data-id="60">3D 60°</button>
-            <button type="button" data-act="map-pitch" data-id="90">3D 90°</button>
+            <button type="button" data-act="map-3d" data-id="off">Off</button>
+            <button type="button" data-act="map-3d" data-id="on">On</button>
           </div>
           <div class="drawer-label">BASEMAP</div>
           <div class="seg" id="basemapSeg">
