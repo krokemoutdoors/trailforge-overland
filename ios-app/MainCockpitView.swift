@@ -84,7 +84,6 @@ struct MainCockpitView: View {
     @EnvironmentObject var storeKit: TrailForgeStoreKitManager
     @StateObject private var telemetry = LiveTelemetryService()
     @ObservedObject private var locationTracker = LocationTracker.shared
-    @ObservedObject private var trailRecorder = TrailRouteRecorder.shared
 
     @State private var mode: CockpitMode = .drive
     @State private var selectedTrailID: String = "imogene"
@@ -165,6 +164,9 @@ struct MainCockpitView: View {
     @AppStorage("trailforge.dashMode") private var dashMode = "auto"
     @AppStorage("trailforge.basemap") private var basemapRaw = BasemapChoice.hybrid.rawValue
     @AppStorage("trailforge.trailOpacity") private var trailCorridorOpacity = 1.0
+    @AppStorage("trailforge.blmOpacity") private var blmMaskOpacity = 0.70
+    @AppStorage("trailforge.usfsOpacity") private var usfsMaskOpacity = 0.70
+    @AppStorage("trailforge.stateOpacity") private var stateMaskOpacity = 0.70
     @AppStorage("trailforge.campOpacity") private var campSlopeOpacity = 0.9
     @AppStorage("trailforge.hazardOpacity") private var hazardOverlayOpacity = 0.85
     @AppStorage("trailforge.starlinkOpacity") private var starlinkOverlayOpacity = 0.75
@@ -330,6 +332,9 @@ struct MainCockpitView: View {
         hasher.combine(plotMode)
         hasher.combine(basemapRaw)
         hasher.combine(Int(trailCorridorOpacity * 20))
+        hasher.combine(Int(blmMaskOpacity * 20))
+        hasher.combine(Int(usfsMaskOpacity * 20))
+        hasher.combine(Int(stateMaskOpacity * 20))
         hasher.combine(Int(campSlopeOpacity * 20))
         hasher.combine(Int(hazardOverlayOpacity * 20))
         hasher.combine(Int(starlinkOverlayOpacity * 20))
@@ -360,9 +365,6 @@ struct MainCockpitView: View {
             hasher.combine(searchedPlace.latitude)
             hasher.combine(searchedPlace.longitude)
         }
-        hasher.combine(trailRecorder.activePoints.count)
-        hasher.combine(trailRecorder.displayedRouteID?.uuidString)
-        hasher.combine(trailRecorder.isRecording)
         hasher.combine(savedMarkers.map { "\($0.id.uuidString):\($0.name):\($0.category)" }.joined(separator: ","))
         if let droppedPin {
             hasher.combine(droppedPin.latitude)
@@ -860,7 +862,6 @@ struct MainCockpitView: View {
                 plotterCard
             }
             if includeFieldCards {
-                trailRecorderCard
                 savedMarkersCard
             }
             HStack(spacing: 8) {
@@ -2240,6 +2241,9 @@ struct MainCockpitView: View {
             basemap: effectiveBasemap,
             flatBasemap: heatLimited,
             trailOpacity: trailCorridorOpacity,
+            blmOpacity: blmMaskOpacity,
+            usfsOpacity: usfsMaskOpacity,
+            stateOpacity: stateMaskOpacity,
             campSlopeOpacity: campSlopeOpacity,
             hazardOpacity: hazardOverlayOpacity,
             starlinkOpacity: starlinkOverlayOpacity,
@@ -2247,7 +2251,6 @@ struct MainCockpitView: View {
             searchedPlace: searchedPlace,
             plotLine: plottedLine,
             plotMarkers: plotPoints,
-            recordedLine: breadcrumbLine,
             savedMarkers: savedMarkers,
             droppedPin: droppedPin?.coordinate,
             scrub: scrubCoordinate,
@@ -2322,10 +2325,6 @@ struct MainCockpitView: View {
                 showHazardSheet = true
             }
             .accessibilityLabel("Drop hazard pin")
-            railButton(trailRecorder.isRecording ? "stop.circle.fill" : "record.circle", active: trailRecorder.isRecording) {
-                trailRecorder.toggleFromRail()
-            }
-            .accessibilityLabel(showGloveRow ? "Record trail route, in dash" : "Record trail route")
             railButton("moon.fill", active: nightVision) {
                 nightVision.toggle()
             }
@@ -2348,18 +2347,6 @@ struct MainCockpitView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .background(Color.black.opacity(0.72))
-                    .foregroundColor(.white)
-                    .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            Button {
-                trailRecorder.toggleFromRail()
-            } label: {
-                Text(trailRecorder.isRecording ? "Stop" : "Record")
-                    .font(.caption.bold())
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(trailRecorder.isRecording ? Color.red : Color.black.opacity(0.72))
                     .foregroundColor(.white)
                     .clipShape(Capsule())
             }
@@ -2438,7 +2425,6 @@ struct MainCockpitView: View {
                     } else {
                         fitBanner
                     }
-                    trailRecorderCard
                     savedMarkersCard
                     cockpitModeBody(includeFieldCards: false)
                 }
@@ -2580,10 +2566,13 @@ struct MainCockpitView: View {
                         Text("On").tag(true)
                     }
                     .pickerStyle(.segmented)
-                    opacitySlider("USFS & BLM Legal Trail Corridors", value: $trailCorridorOpacity)
-                    opacitySlider("<3° LIDAR Flat Camp Slope Shading", value: $campSlopeOpacity)
-                    opacitySlider("NIFC Wildfire Perimeters & USGS Hazards", value: $hazardOverlayOpacity)
-                    opacitySlider("Starlink Clear-Sky & Cell Coverage Mask", value: $starlinkOverlayOpacity)
+                    fitLineSlider
+                    maskSlider("BLM Public Land", color: LandMask.blm, value: $blmMaskOpacity)
+                    maskSlider("USFS National Forest", color: LandMask.usfs, value: $usfsMaskOpacity)
+                    maskSlider("State Trust Land", color: LandMask.stateTrust, value: $stateMaskOpacity)
+                    maskSlider("<3° Slope Shading", color: LandMask.slopeFlat, extra: [LandMask.slopeMid, LandMask.slopeSteep], value: $campSlopeOpacity)
+                    maskSlider("Wildfires & Hazards", color: LandMask.slopeSteep, extra: [LandMask.slopeMid], value: $hazardOverlayOpacity)
+                    maskSlider("Cell & Starlink Sky", color: LandMask.cell, value: $starlinkOverlayOpacity)
                     Toggle("🌡️ Thermal Saver", isOn: $thermalSaver)
                         .font(.caption.bold())
                     Toggle("🌙 Night Vision", isOn: $nightVision)
@@ -3210,94 +3199,40 @@ struct MainCockpitView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    private func opacitySlider(_ title: String, value: Binding<Double>) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
+    private var fitLineSlider: some View {
+        maskSlider("Rig-Fit Trail Lines", color: LandMask.slopeFlat, extra: [LandMask.slopeMid, LandMask.slopeSteep], value: $trailCorridorOpacity, fill: false)
+    }
+
+    private func maskSlider(_ title: String, color: Color, extra: [Color] = [], value: Binding<Double>, fill: Bool = true) -> some View {
+        let active = value.wrappedValue > 0.02 && fill
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(color)
+                    .frame(width: 14, height: 14)
+                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.black.opacity(0.35), lineWidth: 1))
+                ForEach(Array(extra.enumerated()), id: \.offset) { _, swatch in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(swatch)
+                        .frame(width: 14, height: 14)
+                        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.black.opacity(0.35), lineWidth: 1))
+                }
                 Text(title)
                     .font(.caption.bold())
                     .lineLimit(2)
+                    .foregroundColor(active ? Color(red: 0.06, green: 0.12, blue: 0.04) : .white)
                 Spacer()
                 Text("\(Int((value.wrappedValue * 100).rounded()))%")
                     .font(.caption.monospacedDigit().bold())
-                    .foregroundColor(.cyan)
+                    .foregroundColor(active ? Color(red: 0.06, green: 0.12, blue: 0.04) : color)
             }
             Slider(value: value, in: 0...1)
-                .tint(.cyan)
+                .tint(color)
         }
-    }
-
-    private var breadcrumbLine: [CLLocationCoordinate2D] {
-        if trailRecorder.isRecording || !trailRecorder.activePoints.isEmpty {
-            return trailRecorder.activePoints.map(\.coordinate)
-        }
-        if let id = trailRecorder.displayedRouteID,
-           let route = trailRecorder.saved.first(where: { $0.id == id }) {
-            return route.coordinates
-        }
-        return []
-    }
-
-    private var trailRecorderCard: some View {
-        let _ = trailRecorder.elapsedTick
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Trail Route Recorder")
-                .font(.caption.bold())
-                .foregroundColor(.white)
-            TextField("Route name", text: $trailRecorder.draftName)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                statPill("Distance", String(format: "%.2f mi", trailRecorder.liveDistanceMiles))
-                statPill("Elapsed", mmss(trailRecorder.elapsedSeconds))
-                statPill("Elev Gain", "+\(trailRecorder.liveElevationGainFt) ft")
-                statPill("Points", "\(trailRecorder.activePoints.count)")
-            }
-            HStack {
-                if trailRecorder.isRecording {
-                    Button(trailRecorder.isPaused ? "Resume" : "Pause") { trailRecorder.pauseOrResume() }
-                        .font(.caption.bold())
-                        .buttonStyle(.bordered)
-                    Button("Stop & Save Route") { trailRecorder.stopAndSave() }
-                        .font(.caption.bold())
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                } else {
-                    Button("Start Recording") { trailRecorder.start() }
-                        .font(.caption.bold())
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
-                }
-            }
-            ForEach(trailRecorder.saved) { route in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(route.name)
-                        .font(.caption.bold())
-                        .foregroundColor(.white)
-                    Text(String(format: "%.2f mi · %@ · +%d ft · %d pts", route.distanceMiles, mmss(route.durationSeconds), route.elevationGainFt, route.points.count))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    HStack {
-                        Button("Show / Navigate") { showRecordedRoute(route) }
-                            .font(.caption2.bold())
-                        ShareLink(item: trailRecorder.gpxURL(for: route), preview: SharePreview(route.name)) {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                                .font(.caption2.bold())
-                        }
-                        Button("Delete") { trailRecorder.delete(route.id) }
-                            .font(.caption2.bold())
-                            .foregroundColor(.red)
-                    }
-                }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(red: 0.93, green: 0.11, blue: 0.36).opacity(0.7), lineWidth: 1))
+        .padding(8)
+        .background(active ? color : color.opacity(0.18))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(color, lineWidth: 1.5))
     }
 
     private var savedMarkersCard: some View {
@@ -3565,107 +3500,6 @@ struct MainCockpitView: View {
         savedMarkers = []
         CockpitStore.saveSavedMarkers(savedMarkers)
         editingMarker = nil
-    }
-
-    private func showRecordedRoute(_ route: RecordedTrailRoute) {
-        guard route.points.count >= 2, let end = route.points.last else { return }
-        trailRecorder.displayedRouteID = route.id
-        let coords = route.coordinates
-        let spot = CampSpot(
-            id: "rec-\(route.id.uuidString)",
-            trailID: activeTrail.id,
-            name: route.name,
-            lat: end.latitude,
-            lon: end.longitude,
-            slopeDeg: 0,
-            starlinkPct: 0,
-            kind: .trailhead
-        )
-        let distance = max(route.distanceMiles * 1609.344, 1)
-        let option = NavOption(
-            id: 0,
-            title: "Recorded trail",
-            expectedTravelTime: max(60, distance / 8),
-            distanceMeters: distance,
-            road: coords,
-            steps: recordedSteps(coords, title: route.name)
-        )
-        activeRoute = ActiveCampRoute(
-            destination: spot,
-            options: [option],
-            selectedIndex: 0,
-            spur: [],
-            originWasGPS: locationTracker.userCoordinate != nil
-        )
-        routeStartedFromGPS = true
-        activeStepIndex = 0
-        announcedApproachStep = nil
-        announcedTurnStep = nil
-        announcedArrival = false
-        followRoute = true
-        frame(optionRoute(option, spot: spot))
-        startFollow()
-    }
-
-    private func optionRoute(_ option: NavOption, spot: CampSpot) -> ActiveCampRoute {
-        ActiveCampRoute(destination: spot, options: [option], selectedIndex: 0, spur: [], originWasGPS: true)
-    }
-
-    private func recordedSteps(_ coords: [CLLocationCoordinate2D], title: String) -> [NavStep] {
-        guard coords.count >= 2 else {
-            return [NavStep(id: 0, instruction: "Follow \(title)", distanceMeters: 0, systemImage: "point.topleft.down.to.point.bottomright.curvepath", maneuver: coords.last)]
-        }
-        var steps: [NavStep] = []
-        var legStart = 0
-        var previousBearing = bearing(from: coords[0], to: coords[1])
-        for index in 1..<coords.count {
-            let nextBearing = index + 1 < coords.count ? bearing(from: coords[index], to: coords[index + 1]) : previousBearing
-            let delta = signedTurn(from: previousBearing, to: nextBearing)
-            let atEnd = index == coords.count - 1
-            if abs(delta) > 40 || atEnd {
-                let meters = polylineMeters(Array(coords[legStart...index]))
-                let instruction: String
-                let symbol: String
-                if atEnd && abs(delta) <= 40 {
-                    instruction = "Arrive at \(title)"
-                    symbol = "flag.checkered"
-                } else if delta > 20 {
-                    instruction = "Turn right along \(title)"
-                    symbol = "arrow.turn.up.right"
-                } else if delta < -20 {
-                    instruction = "Turn left along \(title)"
-                    symbol = "arrow.turn.up.left"
-                } else {
-                    instruction = "Continue on \(title)"
-                    symbol = "arrow.up"
-                }
-                steps.append(NavStep(id: steps.count, instruction: instruction, distanceMeters: meters, systemImage: symbol, maneuver: coords[index]))
-                legStart = index
-                previousBearing = nextBearing
-            }
-        }
-        if steps.isEmpty {
-            steps.append(NavStep(id: 0, instruction: "Follow \(title)", distanceMeters: polylineMeters(coords), systemImage: "point.topleft.down.to.point.bottomright.curvepath", maneuver: coords.last))
-        }
-        return steps
-    }
-
-    private func bearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
-        let lat1 = from.latitude * .pi / 180
-        let lat2 = to.latitude * .pi / 180
-        let dLon = (to.longitude - from.longitude) * .pi / 180
-        let y = sin(dLon) * cos(lat2)
-        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
-        return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
-    }
-
-    private func signedTurn(from: Double, to: Double) -> Double {
-        (to - from + 540).truncatingRemainder(dividingBy: 360) - 180
-    }
-
-    private func mmss(_ seconds: TimeInterval) -> String {
-        let total = max(0, Int(seconds.rounded()))
-        return String(format: "%02d:%02d", total / 60, total % 60)
     }
 
     private func markerSymbol(_ category: String) -> String {
@@ -4265,6 +4099,16 @@ private enum PlaceLookup {
     ]
 }
 
+enum LandMask {
+    static let blm = Color(red: 245.0 / 255, green: 230.0 / 255, blue: 66.0 / 255)
+    static let usfs = Color(red: 20.0 / 255, green: 145.0 / 255, blue: 90.0 / 255)
+    static let stateTrust = Color(red: 56.0 / 255, green: 189.0 / 255, blue: 248.0 / 255)
+    static let slopeFlat = Color(red: 61.0 / 255, green: 220.0 / 255, blue: 132.0 / 255)
+    static let slopeMid = Color(red: 255.0 / 255, green: 159.0 / 255, blue: 26.0 / 255)
+    static let slopeSteep = Color(red: 255.0 / 255, green: 77.0 / 255, blue: 77.0 / 255)
+    static let cell = Color(red: 62.0 / 255, green: 203.0 / 255, blue: 255.0 / 255)
+}
+
 private struct StableRouteMap: View, Equatable {
     @Binding var cameraPosition: MapCameraPosition
     var sceneToken: Int
@@ -4283,6 +4127,9 @@ private struct StableRouteMap: View, Equatable {
     var basemap: BasemapChoice
     var flatBasemap: Bool
     var trailOpacity: Double
+    var blmOpacity: Double
+    var usfsOpacity: Double
+    var stateOpacity: Double
     var campSlopeOpacity: Double
     var hazardOpacity: Double
     var starlinkOpacity: Double
@@ -4290,7 +4137,6 @@ private struct StableRouteMap: View, Equatable {
     var searchedPlace: PlaceHit?
     var plotLine: [CLLocationCoordinate2D]
     var plotMarkers: [CLLocationCoordinate2D]
-    var recordedLine: [CLLocationCoordinate2D]
     var savedMarkers: [SavedMarker]
     var droppedPin: CLLocationCoordinate2D?
     var scrub: CLLocationCoordinate2D?
@@ -4320,6 +4166,30 @@ private struct StableRouteMap: View, Equatable {
             && lhs.fingerPitchEnabled == rhs.fingerPitchEnabled
             && Int(lhs.fingerPitch.rounded()) == Int(rhs.fingerPitch.rounded())
             && Int(lhs.horizonAssist.rounded()) == Int(rhs.horizonAssist.rounded())
+    }
+
+    @MapContentBuilder
+    private var corridorMasks: some MapContent {
+        ForEach(trails) { trail in
+            if trail.coordinates.count >= 2, let tint = corridorTint(trail) {
+                MapPolyline(coordinates: trail.coordinates)
+                    .stroke(tint.color.opacity(tint.fade * 0.5), style: StrokeStyle(lineWidth: 14, lineCap: .round, lineJoin: .round))
+            }
+        }
+    }
+
+    private func corridorTint(_ trail: OverlandTrail) -> (color: Color, fade: Double)? {
+        let agency = trail.agency.lowercased()
+        if agency.contains("blm") || agency.contains("bureau of land") {
+            return blmOpacity > 0.02 ? (LandMask.blm, blmOpacity) : nil
+        }
+        if agency.contains("state trust") || agency.contains("dnr") || agency.contains("state forest") {
+            return stateOpacity > 0.02 ? (LandMask.stateTrust, stateOpacity) : nil
+        }
+        if trail.isBDR || agency.contains("usfs") || agency.contains("forest service") || agency.contains("national forest") {
+            return usfsOpacity > 0.02 ? (LandMask.usfs, usfsOpacity) : nil
+        }
+        return nil
     }
 
     var body: some View {
@@ -4359,16 +4229,17 @@ private struct StableRouteMap: View, Equatable {
     private var mapBody: some View {
         Map(position: $cameraPosition, interactionModes: .all) {
             UserAnnotation()
+            corridorMasks
             if campSlopeOpacity > 0.02 {
                 ForEach(Array(camps.prefix(12))) { spot in
                     MapCircle(center: spot.coordinate, radius: 140)
-                        .foregroundStyle(Color.green.opacity(0.28 * campSlopeOpacity))
+                        .foregroundStyle(LandMask.slopeFlat.opacity(0.28 * campSlopeOpacity))
                 }
             }
             if starlinkOpacity > 0.02 {
                 ForEach(Array(camps.prefix(12))) { spot in
                     MapCircle(center: spot.coordinate, radius: 220)
-                        .foregroundStyle(Color.cyan.opacity(0.22 * starlinkOpacity * Double(spot.starlinkPct) / 100))
+                        .foregroundStyle(LandMask.cell.opacity(0.22 * starlinkOpacity * Double(spot.starlinkPct) / 100))
                 }
             }
             if hazardOpacity > 0.02 {
@@ -4394,10 +4265,6 @@ private struct StableRouteMap: View, Equatable {
                         Color(red: 0.984, green: 0.749, blue: 0.141),
                         style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round)
                     )
-            }
-            if recordedLine.count >= 2 {
-                MapPolyline(coordinates: recordedLine)
-                    .stroke(Color(red: 0.93, green: 0.11, blue: 0.36), style: StrokeStyle(lineWidth: 5, lineCap: .round))
             }
             ForEach(savedOfflineRings.indices, id: \.self) { index in
                 MapPolyline(coordinates: savedOfflineRings[index])
@@ -4545,12 +4412,12 @@ private struct StableRouteMap: View, Equatable {
     private func hazardOverlay(_ hazard: MapHazard) -> some MapContent {
         if hazard.coordinates.count >= 4 {
             MapPolygon(coordinates: hazard.coordinates)
-                .foregroundStyle(Color.red.opacity(0.18 * hazardOpacity))
+                .foregroundStyle(LandMask.slopeSteep.opacity(0.18 * hazardOpacity))
             MapPolyline(coordinates: hazard.coordinates)
-                .stroke(Color.red.opacity(hazardOpacity), lineWidth: 1.5)
+                .stroke(LandMask.slopeSteep.opacity(hazardOpacity), lineWidth: 1.5)
         } else {
             MapCircle(center: hazard.point, radius: hazard.radiusMeters)
-                .foregroundStyle(Color.orange.opacity(0.28 * hazardOpacity))
+                .foregroundStyle(LandMask.slopeMid.opacity(0.28 * hazardOpacity))
             if hazard.id.hasPrefix("community-") || hazard.id.hasPrefix("userhazard-") {
                 Annotation("", coordinate: hazard.point) {
                     Text(hazard.title)

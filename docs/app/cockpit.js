@@ -147,6 +147,7 @@
   let routeLayer;
   let corridorLayer;
   let slopeLayer;
+  let starlinkLayer;
   let hazardLayer;
   let plotLayer;
   const plotRouteCache = {};
@@ -783,7 +784,7 @@
       return '<div class="place-card"><button type="button" class="row" data-act="place-route" data-id="' + esc(place.id) + '"><span class="meta"><b>' + esc(place.name) + "</b><small>" + esc(place.address || "") + esc(away) + '</small></span></button><div class="actions"><button type="button" data-act="place-show" data-id="' + esc(place.id) + '">Show on Map</button><button type="button" class="primary" data-act="place-route" data-id="' + esc(place.id) + '">Route Here</button></div></div>';
     }).join("");
     const places = (state.placeBusy || placeRows) ? '<div class="status">Places &amp; Addresses</div>' + (state.placeBusy ? '<div class="status">Searching addresses and stores…</div>' : "") + placeRows : "";
-    return recorderHtml() + savedMarkersHtml() + plotWaypointsHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + "</div>" + telemetry + convoy;
+    return savedMarkersHtml() + plotWaypointsHtml() + '<div class="search-row"><input class="search" id="search" placeholder="Search trails, state, address, or store" value="' + esc(state.query) + '" /><button type="button" class="search-go" data-act="search-place">Search</button></div>' + places + '<div class="chips">' + chips + '</div><button type="button" class="menu-btn" id="trailMenu" data-act="menu">' + esc(countLabel) + '</button><div class="menu' + (state.menuOpen ? " open" : "") + '" id="trailList">' + rows + '</div><div class="pills">' + pills + '</div><div class="status" id="scanStatus">' + esc(state.scanning ? "Scanning USA 4x4 trails…" : state.scanStatus) + "</div>" + telemetry + convoy;
   }
 
   function profileHtml(trail) {
@@ -856,7 +857,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.2 · build 24<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.3 · build 25<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -938,11 +939,6 @@
     const alt = state.fix && state.fix.altitudeM != null ? Math.round(state.fix.altitudeM * 3.280839895).toLocaleString("en-US") : "—";
     const speedRead = document.getElementById("speedRead");
     if (speedRead) speedRead.textContent = state.fix ? String(speed) : "—";
-    const recordBtn = document.querySelector('#rail [data-act="record-toggle"]');
-    if (recordBtn) {
-      recordBtn.classList.toggle("on", state.recording);
-      recordBtn.textContent = state.recording ? "⏹" : "⏺";
-    }
     const altRead = document.getElementById("altRead");
     if (altRead) altRead.textContent = alt;
     const gpsText = state.fix ? formatPair(state.fix) : null;
@@ -2645,14 +2641,22 @@
 
   function syncSmaTiles() {
     if (!map || !smaLayer) return;
-    const fade = Math.max(0, Math.min(100, Number(state.opacity.corridors) || 0)) / 100;
+    const fade = Math.max(0, Math.min(100, Number(state.opacity.blm) || 0)) / 100;
     toggleTile(smaLayer, fade > 0, fade || 0);
   }
 
   function loadOpacity() {
-    const base = { corridors: 70, slope: 55, hazards: 80 };
-    try { return Object.assign(base, JSON.parse(localStorage.getItem("tf-opacity") || "{}")); }
-    catch (error) { return base; }
+    const base = { blm: 70, usfs: 70, state: 70, slope: 55, hazards: 80, starlink: 75 };
+    try {
+      const saved = JSON.parse(localStorage.getItem("tf-opacity") || "{}");
+      const merged = Object.assign(base, saved && typeof saved === "object" ? saved : {});
+      if (saved && saved.corridors != null && saved.blm == null) {
+        merged.blm = saved.corridors;
+        merged.usfs = saved.corridors;
+        merged.state = saved.corridors;
+      }
+      return merged;
+    } catch (error) { return base; }
   }
 
   function loadDropped() {
@@ -2803,7 +2807,17 @@
     }
     const connectBtn = document.getElementById("connectMarkers");
     if (connectBtn) connectBtn.hidden = state.savedMarkers.length < 2;
+    syncMaskChrome();
     syncAreaPreview();
+  }
+
+  function syncMaskChrome() {
+    document.querySelectorAll("label.mask").forEach(function (row) {
+      row.classList.toggle("on", Number(state.opacity[row.dataset.mask]) > 0);
+    });
+    document.querySelectorAll("[data-mask-key]").forEach(function (item) {
+      item.hidden = !(Number(state.opacity[item.dataset.maskKey]) > 0);
+    });
   }
 
   function setOverlay(name, value) {
@@ -2813,7 +2827,8 @@
     const read = document.querySelector('[data-read="' + name + '"]');
     if (read) read.textContent = state.opacity[name] + "%";
     syncOverlays();
-    if (name === "corridors") syncSmaTiles();
+    if (name === "blm") syncSmaTiles();
+    syncMaskChrome();
   }
 
   function toggleTile(layer, on, opacity) {
@@ -3082,30 +3097,38 @@
     toggleTile(hillshadeLayer, relief, 0.34);
   }
 
-  function isCorridor(trail) {
-    if (trail.bdr) return true;
-    return /usfs|forest service|national forest|\bblm\b|bureau of land|\bdnr\b|state trust|state forest/i.test(String(trail.agency || ""));
+  function maskKind(trail) {
+    const agency = String(trail.agency || "");
+    if (/blm|bureau of land/i.test(agency)) return "blm";
+    if (/state trust|\bdnr\b|state forest/i.test(agency)) return "state";
+    if (trail.bdr || /usfs|forest service|national forest/i.test(agency)) return "usfs";
+    return "";
   }
 
   function syncOverlays() {
-    if (!map || !corridorLayer || !slopeLayer || !hazardLayer) return;
+    if (!map || !corridorLayer || !slopeLayer || !hazardLayer || !starlinkLayer) return;
     corridorLayer.clearLayers();
     slopeLayer.clearLayers();
     hazardLayer.clearLayers();
-    const corridorFade = Math.max(0, Math.min(100, Number(state.opacity.corridors) || 0)) / 100;
-    if (corridorFade > 0) {
-      drawableTrails().forEach(function (trail) {
-        if (!isCorridor(trail) || !trail.coordinates || trail.coordinates.length < 2) return;
-        const color = /blm|bureau of land/i.test(trail.agency || "") ? "#f5e642" : "#14915a";
-        L.polyline(trail.coordinates, {
-          color: color,
-          weight: 16,
-          opacity: corridorFade * 0.45,
-          lineCap: "round",
-          lineJoin: "round"
-        }).addTo(corridorLayer);
-      });
-    }
+    starlinkLayer.clearLayers();
+    const fades = {
+      blm: Math.max(0, Math.min(100, Number(state.opacity.blm) || 0)) / 100,
+      usfs: Math.max(0, Math.min(100, Number(state.opacity.usfs) || 0)) / 100,
+      state: Math.max(0, Math.min(100, Number(state.opacity.state) || 0)) / 100
+    };
+    const maskColor = { blm: "#f5e642", usfs: "#14915a", state: "#38bdf8" };
+    drawableTrails().forEach(function (trail) {
+      const kind = maskKind(trail);
+      if (!kind || fades[kind] <= 0 || !trail.coordinates || trail.coordinates.length < 2) return;
+      L.polyline(trail.coordinates, {
+        color: maskColor[kind],
+        weight: 16,
+        opacity: fades[kind] * 0.45,
+        lineCap: "round",
+        lineJoin: "round",
+        interactive: false
+      }).addTo(corridorLayer);
+    });
     const slopeFade = Math.max(0, Math.min(100, Number(state.opacity.slope) || 0)) / 100;
     const trail = selected();
     if (slopeFade > 0 && trail) {
@@ -3122,7 +3145,7 @@
       }
     }
     const hazardFade = Math.max(0, Math.min(100, Number(state.opacity.hazards) || 0)) / 100;
-    if (hazardFade <= 0) return;
+    if (hazardFade > 0) {
     state.fires.forEach(function (fire) {
       if (!Number.isFinite(fire.lat) || !Number.isFinite(fire.lon) || Math.abs(fire.lat) > 90) return;
       const icon = L.divIcon({ className: "hazard-pin", html: "<span>🔥 " + esc(fire.name) + "</span>", iconAnchor: [12, 12] });
@@ -3132,6 +3155,29 @@
       if (!Number.isFinite(gauge.lat) || !Number.isFinite(gauge.lon)) return;
       const icon = L.divIcon({ className: "hazard-pin", html: "<span>💧 " + Math.round(gauge.cfs) + " cfs</span>", iconAnchor: [12, 12] });
       L.marker([gauge.lat, gauge.lon], { icon: icon, opacity: hazardFade, zIndexOffset: 300 }).addTo(hazardLayer);
+    });
+    }
+    const starlinkFade = Math.max(0, Math.min(100, Number(state.opacity.starlink) || 0)) / 100;
+    if (starlinkFade <= 0) return;
+    let drawn = 0;
+    drawableTrails().some(function (trail) {
+      const spots = spotsFor(trail);
+      for (let index = 0; index < spots.length; index += 1) {
+        const spot = spots[index];
+        if (spot.slope >= 3) continue;
+        L.circle([spot.lat, spot.lon], {
+          radius: 220,
+          color: "#3ecbff",
+          weight: 1,
+          opacity: starlinkFade * 0.85,
+          fillColor: "#3ecbff",
+          fillOpacity: starlinkFade * 0.22 * (Number(spot.starlink) || 0) / 100,
+          interactive: false
+        }).addTo(starlinkLayer);
+        drawn += 1;
+        if (drawn >= 24) return true;
+      }
+      return false;
     });
   }
 
@@ -5080,14 +5126,7 @@
   }
 
   function recorderHtml() {
-    const live = pointsStats(state.recordPoints);
-    const controls = state.recording
-      ? '<button type="button" data-act="record-pause">' + (state.recordPaused ? "Resume" : "Pause") + '</button><button type="button" class="end" data-act="record-save">Stop &amp; Save Route</button>'
-      : '<button type="button" class="primary" data-act="record-start">Start Recording</button>';
-    const rows = state.recordedRoutes.map(function (route) {
-      return '<div class="pack"><b>' + esc(route.name) + '</b><small>' + Number(route.distanceMiles).toFixed(2) + " mi · " + mmss(route.durationSeconds) + " · +" + route.elevationGainFt + ' ft</small><div class="actions"><button type="button" data-act="record-view" data-id="' + esc(route.id) + '">Show / Navigate</button><button type="button" data-act="record-share" data-id="' + esc(route.id) + '">Share GPX</button><button type="button" class="end" data-act="record-delete" data-id="' + esc(route.id) + '">Delete</button></div></div>';
-    }).join("");
-    return '<div class="record-card"><div class="profile-top"><b>Trail Route Recorder</b><span>PHONE GPS</span></div><input class="name" id="recordName" placeholder="Route name" value="' + esc(state.recordName) + '" /><div class="route-stats"><div><b id="recDistance">' + live.miles.toFixed(2) + '</b><span>Distance mi</span></div><div><b id="recDuration">' + mmss(recordElapsed()) + '</b><span>Elapsed</span></div><div><b id="recGain">+' + live.gain + '</b><span>Elev Gain ft</span></div><div><b id="recPoints">' + live.points + '</b><span>Points</span></div></div><div class="actions">' + controls + "</div>" + rows + "</div>";
+    return "";
   }
 
   function savedMarkersHtml() {
@@ -5271,14 +5310,6 @@
   function drawRecorded() {
     if (!recordLayer) return;
     recordLayer.clearLayers();
-    const live = state.recordPoints.map(function (point) { return [point.lat, point.lon]; });
-    if (live.length >= 2) {
-      L.polyline(live, { color: "#ff2d55", weight: 5, opacity: 0.95 }).addTo(recordLayer);
-    }
-    const shown = state.recordedRoutes.find(function (route) { return route.id === state.shownRecordId; });
-    if (shown && shown.points && shown.points.length >= 2 && !state.recording) {
-      L.polyline(shown.points.map(function (point) { return [point.lat, point.lon]; }), { color: "#ff2d55", weight: 5, opacity: 0.9 }).addTo(recordLayer);
-    }
   }
 
   function drawSavedMarkers() {
@@ -5642,6 +5673,7 @@
     offlineLayer.addTo(map);
     corridorLayer = L.layerGroup().addTo(map);
     slopeLayer = L.layerGroup().addTo(map);
+    starlinkLayer = L.layerGroup().addTo(map);
     trailLayer = L.layerGroup().addTo(map);
     campLayer = L.layerGroup().addTo(map);
     routeLayer = L.layerGroup().addTo(map);
