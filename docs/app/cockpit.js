@@ -846,7 +846,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.5.9 · build 21<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.0 · build 22<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -1053,8 +1053,8 @@
             html: "<span>⛺ " + spot.slope.toFixed(1) + "°</span>",
             iconAnchor: [28, 12]
           });
-          L.marker([spot.lat, spot.lon], { icon: icon, zIndexOffset: 400 }).on("click", function (event) {
-            if (state.plotting) { onMapClick(event); return; }
+          L.marker([spot.lat, spot.lon], { icon: icon, zIndexOffset: 400 }).on("click", function () {
+            if (state.plotting) { connectPlotWaypoint(spot.lat, spot.lon); return; }
             beginRoute(spot, true, spot.kind === "pad");
           }).addTo(campLayer);
         });
@@ -1062,8 +1062,8 @@
       const head = trailhead(trail);
       if (selectedTrail || view.contains([head.lat, head.lon])) {
         const flag = L.divIcon({ className: "flag-pin", html: "<span>⚑</span>", iconAnchor: [12, 12] });
-        L.marker([head.lat, head.lon], { icon: flag, zIndexOffset: 450 }).on("click", function (event) {
-          if (state.plotting) { onMapClick(event); return; }
+        L.marker([head.lat, head.lon], { icon: flag, zIndexOffset: 450 }).on("click", function () {
+          if (state.plotting) { connectPlotWaypoint(head.lat, head.lon); return; }
           beginRoute(head);
         }).addTo(campLayer);
       }
@@ -1981,6 +1981,7 @@
     state.pitch += (pitch - state.pitch) * 0.22;
     state.roll += (roll - state.roll) * 0.22;
     if (data.heading != null && Number.isFinite(Number(data.heading))) state.compass = Number(data.heading);
+    syncNavArrow();
     updateHud();
     if (state.fix && !(state.fix.speedMps > 1.2) && state.compass != null) {
       state.fix.heading = state.compass;
@@ -2336,9 +2337,27 @@
     if (act === "plot") {
       state.plotting = !state.plotting;
       state.drawer = state.plotting ? "plot" : (state.drawer === "plot" ? null : state.drawer);
-      if (state.plotting) toast("Tap the map to plot a route");
+      if (state.plotting && state.plot.length < 2 && state.savedMarkers.length >= 2 && seedPlotFromMarkers()) {
+        drawPlot();
+        toast("Connected " + state.plot.length + " saved waypoints");
+      } else if (state.plotting) {
+        toast("Tap the map to plot a route");
+      } else {
+        drawPlot();
+      }
+      drawSavedMarkers();
       renderDrawer();
       applyChrome();
+      return;
+    }
+    if (act === "connect-markers") {
+      connectSavedWaypoints();
+      return;
+    }
+    if (act === "compass-north") {
+      const arrow = document.getElementById("compassArrow");
+      if (arrow) arrow.style.transform = "rotate(0deg)";
+      toast("North");
       return;
     }
     if (act === "corridor" || act === "download-corridor") {
@@ -2350,12 +2369,12 @@
     }
     if (act === "close-drawer") { state.drawer = null; renderDrawer(); applyChrome(); syncAreaPreview(); return; }
     if (act === "toggle-3d") {
-      setMapPitch(state.mapPitch > 1 ? 0 : 55);
+      setMapPitch(state.mapPitch > 1 ? 0 : 60);
       return;
     }
     if (act === "map-pitch") {
       const pitch = Number(button.dataset.id);
-      setMapPitch(pitch === 40 || pitch === 55 ? pitch : 0);
+      setMapPitch(Number.isFinite(pitch) ? pitch : 0);
       return;
     }
     if (act === "basemap") {
@@ -2756,8 +2775,13 @@
     drawer.querySelectorAll("[data-act=map-pitch]").forEach(function (button) {
       button.classList.toggle("on", Math.round(Number(button.dataset.id)) === Math.round(state.mapPitch));
     });
-    const tiltBtn = document.querySelector('#rail [data-act="toggle-3d"]');
-    if (tiltBtn) tiltBtn.classList.toggle("on", !!(state.map3d && state.mapPitch > 1));
+    const tiltBtn = document.getElementById("tiltBtn");
+    if (tiltBtn) {
+      tiltBtn.classList.toggle("on", !!(state.map3d && state.mapPitch > 1));
+      tiltBtn.textContent = state.map3d && state.mapPitch > 1 ? Math.round(state.mapPitch) + "°" : "3D";
+    }
+    const connectBtn = document.getElementById("connectMarkers");
+    if (connectBtn) connectBtn.hidden = state.savedMarkers.length < 2;
     syncAreaPreview();
   }
 
@@ -2791,7 +2815,7 @@
   }
 
   function setMapPitch(pitch, live) {
-    const next = Math.max(0, Math.min(60, Number(pitch) || 0));
+    const next = Math.max(0, Math.min(90, Number(pitch) || 0));
     const wasRelief = state.map3d && state.mapPitch > 1;
     state.mapPitch = next;
     state.map3d = next > 1;
@@ -2800,25 +2824,34 @@
     applyMapPitch(!!live);
     if (!live || wasRelief !== state.map3d) applyBasemap();
     if (live) {
-      const tiltBtn = document.querySelector('#rail [data-act="toggle-3d"]');
-      if (tiltBtn) tiltBtn.classList.toggle("on", state.map3d);
+      const tiltBtn = document.getElementById("tiltBtn");
+      if (tiltBtn) {
+        tiltBtn.classList.toggle("on", state.map3d);
+        tiltBtn.textContent = state.map3d && next > 1 ? Math.round(next) + "°" : "3D";
+      }
       return;
     }
     renderDrawer();
   }
 
+  function pitchVisual(userDeg) {
+    const user = Math.max(0, Math.min(90, Number(userDeg) || 0));
+    const angle = 64 * Math.sin((user / 90) * Math.PI / 2);
+    const scale = 1 + user * 0.0042;
+    return { user: user, angle: angle, scale: scale };
+  }
+
   function applyMapPitch(live) {
     const el = document.getElementById("map");
     if (!el) return;
-    const pitch = state.map3d ? Math.max(0, Math.min(60, Number(state.mapPitch) || 0)) : 0;
-    el.classList.toggle("map-tilted", pitch > 0.5);
-    el.classList.toggle("map-tilt-live", !!live && pitch > 0.5);
-    if (pitch <= 0.5) {
+    const visual = state.map3d ? pitchVisual(state.mapPitch) : pitchVisual(0);
+    el.classList.toggle("map-tilted", visual.user > 0.5);
+    el.classList.toggle("map-tilt-live", !!live && visual.user > 0.5);
+    if (visual.user <= 0.5) {
       el.style.transform = "";
       return;
     }
-    const scale = (1 + pitch * 0.0045).toFixed(4);
-    el.style.transform = "perspective(1100px) rotateX(" + pitch.toFixed(1) + "deg) scale(" + scale + ")";
+    el.style.transform = "perspective(1100px) rotateX(" + visual.angle.toFixed(2) + "deg) scale(" + visual.scale.toFixed(4) + ")";
   }
 
   function mapContainerPoint(clientX, clientY) {
@@ -2830,10 +2863,10 @@
     const top = parentRect.top + mapEl.offsetTop;
     const width = mapEl.offsetWidth || mapEl.clientWidth || 1;
     const height = mapEl.offsetHeight || mapEl.clientHeight || 1;
-    const pitch = state.map3d ? Math.max(0, Math.min(60, Number(state.mapPitch) || 0)) : 0;
-    if (pitch <= 0.5) return L.point(clientX - left, clientY - top);
-    const scale = 1 + pitch * 0.0045;
-    const rad = pitch * Math.PI / 180;
+    const visual = state.map3d ? pitchVisual(state.mapPitch) : pitchVisual(0);
+    if (visual.user <= 0.5) return L.point(clientX - left, clientY - top);
+    const scale = visual.scale;
+    const rad = visual.angle * Math.PI / 180;
     const distance = 1100;
     const screenX = clientX - (left + width * 0.5);
     const screenY = clientY - (top + height * 0.65);
@@ -2886,7 +2919,7 @@
       if (!pitching && Math.abs(dy) < 6) return;
       pitching = true;
       if (map.dragging) map.dragging.disable();
-      setMapPitch(Math.max(0, Math.min(60, (state.mapPitch || 0) - dy * 0.28)), true);
+      setMapPitch(Math.max(0, Math.min(90, (state.mapPitch || 0) - dy * 0.28)), true);
     });
     function endPitch(event) {
       pointers.delete(event.pointerId);
@@ -3690,7 +3723,7 @@
     if (plotRouteCache[key] && plotRouteCache[key].length >= 2 && roadLooksDrivable(plotRouteCache[key], prev)) return plotRouteCache[key];
     fetchPlotRoad(prev, next, key);
     if (slice.length >= 2) return slice.map(function (point) { return [point.lat, point.lon]; });
-    return [];
+    return [[Number(prev.lat), Number(prev.lon)], [Number(next.lat), Number(next.lon)]];
   }
 
   function fullPlotPolyline() {
@@ -3723,21 +3756,74 @@
   function drawPlot() {
     if (!plotLayer) return;
     plotLayer.clearLayers();
-    const fit = state.plot.length ? plotFit() : null;
     for (let index = 1; index < state.plot.length; index += 1) {
       const prev = state.plot[index - 1];
       const next = state.plot[index];
       const free = prev.mode === "freehand" || next.mode === "freehand";
       const line = resolvePlotSegment(prev, next);
-      if (!line || line.length < 2) continue;
-      L.polyline(line, { color: "#071428", weight: 5, opacity: 0.95, dashArray: free ? "6 8" : null }).addTo(plotLayer);
-      L.polyline(line, { color: fit ? fitColor(fit.verdict) : "#38bdf8", weight: 3.2, opacity: 1, dashArray: free ? "6 8" : null }).addTo(plotLayer);
+      const drawn = line && line.length >= 2 ? line : [[Number(prev.lat), Number(prev.lon)], [Number(next.lat), Number(next.lon)]];
+      L.polyline(drawn, { color: "#3a2a08", weight: 7, opacity: 0.9, lineCap: "round", lineJoin: "round", dashArray: free ? "6 8" : null }).addTo(plotLayer);
+      L.polyline(drawn, { color: "#fbbf24", weight: 4.5, opacity: 1, lineCap: "round", lineJoin: "round", dashArray: free ? "6 8" : null }).addTo(plotLayer);
     }
     state.plot.forEach(function (point, index) {
       const icon = L.divIcon({ className: "flag-pin", html: "<span>" + (index + 1) + "</span>", iconAnchor: [12, 12] });
       const popup = "<b>Waypoint " + (index + 1) + "</b><div>" + esc(formatPair(point) || "") + '</div><button type="button" class="end" data-act="del-waypoint" data-idx="' + index + '">🗑️ Delete Waypoint</button>';
       L.marker([point.lat, point.lon], { icon: icon, zIndexOffset: 640 }).bindPopup(popup).addTo(plotLayer);
     });
+  }
+
+  function syncNavArrow() {
+    const arrow = document.getElementById("compassArrow");
+    if (!arrow) return;
+    const heading = state.compass == null || !Number.isFinite(Number(state.compass)) ? 0 : Number(state.compass);
+    arrow.style.transform = "rotate(" + ((-heading % 360) + 360) % 360 + "deg)";
+  }
+
+  function markersForPlot() {
+    const markers = state.savedMarkers.slice();
+    if (!map || markers.length < 2) return markers;
+    const bounds = map.getBounds().pad(0.15);
+    const near = markers.filter(function (marker) {
+      return bounds.contains([marker.lat, marker.lon]);
+    });
+    return near.length >= 2 ? near : markers;
+  }
+
+  function seedPlotFromMarkers() {
+    const markers = markersForPlot();
+    if (markers.length < 2) return false;
+    const ordered = markers.slice().sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
+    const mode = state.plotMode === "freehand" ? "freehand" : "snap";
+    state.plot = ordered.map(function (marker) {
+      return { lat: marker.lat, lon: marker.lon, snapped: false, trailId: null, mode: mode, name: marker.name };
+    });
+    return true;
+  }
+
+  function connectSavedWaypoints() {
+    state.plotting = true;
+    state.drawer = "plot";
+    if (!seedPlotFromMarkers()) {
+      toast("Save at least two waypoints");
+      renderDrawer();
+      applyChrome();
+      return;
+    }
+    drawPlot();
+    renderDrawer();
+    applyChrome();
+    renderSheet();
+    toast("Connected " + state.plot.length + " saved waypoints");
+  }
+
+  function connectPlotWaypoint(lat, lon) {
+    if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) return;
+    const mode = state.plotMode === "freehand" ? "freehand" : "snap";
+    state.plot.push({ lat: Number(lat), lon: Number(lon), snapped: false, trailId: null, mode: mode });
+    drawPlot();
+    renderDrawer();
+    renderSheet();
+    toast("Connected waypoint to plotted route");
   }
 
   function onMapClick(event) {
@@ -4891,7 +4977,7 @@
     const rows = state.savedMarkers.map(function (marker) {
       return '<div class="place-card"><button type="button" class="row" data-act="marker-open" data-id="' + esc(marker.id) + '"><span class="meta"><b>' + esc(marker.name) + "</b><small>" + esc(marker.category) + " · " + esc(formatPair(marker) || "") + '</small></span></button><div class="actions"><button type="button" class="end" data-act="del-marker" data-id="' + esc(marker.id) + '">🗑️ Delete Waypoint</button></div></div>';
     }).join("");
-    const clear = state.savedMarkers.length >= 2 ? '<div class="actions"><button type="button" class="end" data-act="clear-markers">Delete All</button></div>' : "";
+    const clear = state.savedMarkers.length >= 2 ? '<div class="actions"><button type="button" data-act="connect-markers">Connect Saved Waypoints</button><button type="button" class="end" data-act="clear-markers">Delete All</button></div>' : "";
     return '<div class="marker-list"><b>Saved Markers / Waypoints</b>' + clear + '<div class="sub">Tap and hold the map to drop a pin.</div>' + (rows || '<div class="sub">No saved markers yet.</div>') + "</div>";
   }
 
@@ -5091,7 +5177,13 @@
     state.savedMarkers.forEach(function (marker) {
       const icon = L.divIcon({ className: "flag-pin", html: "<span>📍 " + esc(marker.name) + "</span>", iconAnchor: [14, 12] });
       const popup = "<b>" + esc(marker.name) + "</b><div>" + esc(marker.category) + " · " + esc(formatPair(marker) || "") + '</div><div class="actions"><button type="button" data-act="marker-open" data-id="' + esc(marker.id) + '">Open</button><button type="button" class="end" data-act="del-marker" data-id="' + esc(marker.id) + '">🗑️ Delete Waypoint</button></div>';
-      L.marker([marker.lat, marker.lon], { icon: icon, zIndexOffset: 760 }).bindPopup(popup).addTo(markerLayer);
+      const pin = L.marker([marker.lat, marker.lon], { icon: icon, zIndexOffset: 760 });
+      if (state.plotting) {
+        pin.on("click", function () { connectPlotWaypoint(marker.lat, marker.lon); });
+      } else {
+        pin.bindPopup(popup);
+      }
+      pin.addTo(markerLayer);
     });
   }
 
@@ -5280,6 +5372,10 @@
   function openMarker(id) {
     const marker = markerById(id);
     if (!marker) return;
+    if (state.plotting) {
+      connectPlotWaypoint(marker.lat, marker.lon);
+      return;
+    }
     state.activeMarkerId = id;
     const sheet = document.getElementById("markerSheet");
     if (!sheet) return;
