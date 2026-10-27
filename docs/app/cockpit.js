@@ -2849,9 +2849,35 @@
   function pitchVisual(userDeg) {
     const user = Math.max(0, Math.min(90, Number(userDeg) || 0));
     const angle = user <= 60 ? user : 60 + (user - 60) * (28.5 / 30);
-    const scale = 1 + user * 0.006 + (user > 60 ? Math.pow((user - 60) / 30, 1.35) * 5.4 : 0);
-    const originY = user >= 75 ? 0.78 : 0.65;
-    return { user: user, angle: angle, scale: scale, originY: originY, perspective: 1100 };
+    const stage = document.getElementById("stage");
+    const height = Math.max(180, stage ? stage.clientHeight : 520);
+    const tilt = user <= 60 ? 0 : (user - 60) / 30;
+    const originFrac = 0.66 - tilt * 0.34;
+    const perspective = Math.round(1400 + tilt * 250);
+    const rad = angle * Math.PI / 180;
+    const cosine = Math.cos(rad);
+    const sine = Math.sin(rad);
+    const originStage = originFrac * height;
+    const fill = user <= 60 ? height * 0.98 : height + 28;
+    const offset = Math.max(24, fill - originStage);
+    const yScaled = offset * perspective / (offset * sine + cosine * perspective);
+    const localBottom = Math.max(40, height - originStage);
+    const scale = user < 1 ? 1 : Math.max(1, yScaled / localBottom);
+    const bleed = Math.round(20 + user * 0.9);
+    const bleedBottom = Math.round(user > 60 ? 10 : bleed * 1.5);
+    const bleedSide = Math.round(bleed * (1 + tilt * 1.4));
+    const elementHeight = height + bleed + bleedBottom;
+    const originY = (originStage + bleed) / elementHeight;
+    return {
+      user: user,
+      angle: angle,
+      scale: scale,
+      originY: originY,
+      perspective: perspective,
+      bleed: bleed,
+      bleedBottom: bleedBottom,
+      bleedSide: bleedSide
+    };
   }
 
   function applyMapPitch(live) {
@@ -2871,12 +2897,11 @@
       el.style.left = "";
       return;
     }
-    const bleed = Math.round(12 + visual.user * 0.55);
-    el.style.top = (-bleed) + "px";
-    el.style.right = (-bleed) + "px";
-    el.style.bottom = (-Math.round(bleed * 1.7)) + "px";
-    el.style.left = (-bleed) + "px";
-    el.style.transformOrigin = "50% " + Math.round(visual.originY * 100) + "%";
+    el.style.top = (-visual.bleed) + "px";
+    el.style.right = (-visual.bleedSide) + "px";
+    el.style.bottom = (-visual.bleedBottom) + "px";
+    el.style.left = (-visual.bleedSide) + "px";
+    el.style.transformOrigin = "50% " + (visual.originY * 100).toFixed(2) + "%";
     el.style.transform = "perspective(" + visual.perspective + "px) rotateX(" + visual.angle.toFixed(2) + "deg) scale(" + visual.scale.toFixed(4) + ")";
   }
 
