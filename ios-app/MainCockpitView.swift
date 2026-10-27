@@ -171,7 +171,7 @@ struct MainCockpitView: View {
     @AppStorage("trailforge.nightVision") private var nightVision = false
     @State private var thermalSaver = false
     @AppStorage("trailforge.map3D") private var is3DMapsEnabled = true
-    @State private var cameraPitch: Double = 45
+    @State private var cameraPitch: Double = 0
     @State private var reportedMapPitch: Double = 0
     @State private var pitchCeiling: Double = 0
     @State private var pitchGestureActive = false
@@ -389,7 +389,7 @@ struct MainCockpitView: View {
 
     private var activePitch: Double {
         guard is3DMapsEnabled else { return 0 }
-        return cameraPitch > 1 ? cameraPitch : 55
+        return min(75, max(0, cameraPitch))
     }
 
     private var effectiveBasemap: BasemapChoice {
@@ -529,7 +529,7 @@ struct MainCockpitView: View {
                 convoy.start()
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
                 if is3DMapsEnabled {
-                    applyCameraPitch(cameraPitch > 1 ? cameraPitch : 45)
+                    applyCameraPitch(cameraPitch, keepMode: true)
                 }
             }
             .onChange(of: locationTracker.hasCenteredOnUserOnce) { _, centered in
@@ -1763,16 +1763,19 @@ struct MainCockpitView: View {
     }
 
     private var horizonAssist: Double {
-        let gap = max(0, cameraPitch - reportedMapPitch)
-        guard userOwnsPitch, gap > 2, reportedMapPitch >= 8 else { return 0 }
-        return gap
+        guard is3DMapsEnabled, userOwnsPitch else { return 0 }
+        let gap = cameraPitch - reportedMapPitch
+        guard gap > 1, reportedMapPitch >= 8 else { return 0 }
+        return min(gap, 15)
     }
 
-    private func applyCameraPitch(_ pitch: Double) {
-        let clamped = min(max(pitch, 0), 90)
+    private func applyCameraPitch(_ pitch: Double, keepMode: Bool = false) {
+        let clamped = min(max(pitch, 0), 75)
         cameraPitch = clamped
-        userOwnsPitch = true
-        is3DMapsEnabled = clamped > 1
+        if !keepMode {
+            is3DMapsEnabled = clamped >= 5
+            userOwnsPitch = is3DMapsEnabled && clamped > reportedMapPitch + 2
+        }
         let center = lastMapCamera?.centerCoordinate ?? visibleRegion.center
         let distance = lastMapCamera?.distance ?? cameraDistance(for: visibleRegion)
         pushCamera(.camera(MapCamera(
@@ -1783,38 +1786,49 @@ struct MainCockpitView: View {
         )))
     }
 
+    private func set3DMode(_ enabled: Bool) {
+        is3DMapsEnabled = enabled
+        userOwnsPitch = false
+        if enabled {
+            applyCameraPitch(cameraPitch >= 5 ? min(cameraPitch, 75) : 0, keepMode: true)
+        } else {
+            applyCameraPitch(0, keepMode: true)
+        }
+    }
+
     private func handleFingerPitch(_ pitch: Double, active: Bool) {
+        guard is3DMapsEnabled else { return }
         pitchGestureActive = active
-        applyCameraPitch(pitch)
+        userOwnsPitch = true
+        applyCameraPitch(min(75, max(5, pitch)), keepMode: true)
     }
 
     private func noteMapCamera(_ camera: MapCamera) {
         let now = Date()
-        let reported = min(max(camera.pitch, 0), 90)
+        let reported = min(max(camera.pitch, 0), 75)
+        let previousReported = reportedMapPitch
         reportedMapPitch = reported
         if reported > pitchCeiling { pitchCeiling = reported }
         let headingChanged = abs(camera.heading - lastCameraHeading) > 2
-        guard pitchGestureActive || headingChanged || now.timeIntervalSince(lastCameraNote) > 0.45 else { return }
-        lastCameraNote = now
-        lastMapCamera = camera
-        lastCameraHeading = camera.heading
-    }
-
-    private func cycleMapTilt() {
-        let next: Double = cameraPitch < 30 ? 60 : (cameraPitch < 75 ? 90 : 0)
-        applyCameraPitch(next)
-    }
-
-    private func pointMapNorth() {
-        lastCameraHeading = 0
-        let center = lastMapCamera?.centerCoordinate ?? visibleRegion.center
-        let distance = lastMapCamera?.distance ?? cameraDistance(for: visibleRegion)
-        pushCamera(.camera(MapCamera(
-            centerCoordinate: center,
-            distance: distance,
-            heading: 0,
-            pitch: min(max(cameraPitch, 0), 90)
-        )))
+        if pitchGestureActive || headingChanged || now.timeIntervalSince(lastCameraNote) > 0.45 {
+            lastCameraNote = now
+            lastMapCamera = camera
+            lastCameraHeading = camera.heading
+        }
+        if pitchGestureActive { return }
+        let nativeFlattened = reported < 1 && (previousReported > 8 || cameraPitch > 8)
+        if nativeFlattened {
+            is3DMapsEnabled = false
+            userOwnsPitch = false
+            cameraPitch = 0
+            return
+        }
+        if userOwnsPitch && cameraPitch > reported + 2 { return }
+        if reported > 1 {
+            is3DMapsEnabled = true
+            userOwnsPitch = false
+            cameraPitch = reported
+        }
     }
 
     private func leaveFullDetent() {
@@ -2142,19 +2156,6 @@ struct MainCockpitView: View {
 
     private func mapStage(showGloveRow: Bool) -> some View {
         ZStack {
-            if cameraPitch > 25 {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.56, green: 0.82, blue: 1.0),
-                        Color(red: 0.91, green: 0.96, blue: 1.0),
-                        Color(red: 0.55, green: 0.45, blue: 0.28),
-                        Color(red: 0.05, green: 0.11, blue: 0.15)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .allowsHitTesting(false)
-            }
             routeMap
             if nightVision {
                 Color.black.opacity(0.28)
@@ -2201,37 +2202,6 @@ struct MainCockpitView: View {
             }
             .padding(.top, 24)
             .padding(.leading, 8)
-        }
-        .overlay(alignment: .topTrailing) {
-            VStack(spacing: 6) {
-                Button {
-                    pointMapNorth()
-                } label: {
-                    Image(systemName: "location.north.fill")
-                        .font(.body.bold())
-                        .rotationEffect(.degrees(-lastCameraHeading))
-                        .frame(width: 40, height: 40)
-                        .background(Color.white.opacity(0.94))
-                        .foregroundColor(Color(red: 0.06, green: 0.13, blue: 0.2))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Compass, point north")
-                Button {
-                    cycleMapTilt()
-                } label: {
-                    Text(cameraPitch > 1 ? "\(Int(cameraPitch.rounded()))°" : "3D")
-                        .font(.caption.bold())
-                        .frame(width: 40, height: 40)
-                        .background(cameraPitch > 1 ? Color.cyan : Color.white.opacity(0.94))
-                        .foregroundColor(cameraPitch > 1 ? Color.black : Color(red: 0.06, green: 0.13, blue: 0.2))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(cameraPitch > 1 ? "Map tilt \(Int(cameraPitch.rounded())) degrees" : "3D tilt")
-            }
-            .padding(.top, 8)
-            .padding(.trailing, 8)
         }
         .overlay(alignment: .topTrailing) {
             if detent != .full || showGloveRow {
@@ -2308,7 +2278,7 @@ struct MainCockpitView: View {
                 noteMapCamera(camera)
             },
             fingerPitch: cameraPitch,
-            fingerPitchEnabled: true,
+            fingerPitchEnabled: is3DMapsEnabled,
             horizonAssist: horizonAssist,
             onFingerPitch: { pitch, active in
                 handleFingerPitch(pitch, active: active)
@@ -2600,14 +2570,16 @@ struct MainCockpitView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    Text("3D Terrain & Tilt")
+                    Text("3D Mode")
                         .font(.caption.bold())
-                    HStack(spacing: 8) {
-                        terrainPitchButton("0°", pitch: 0)
-                        terrainPitchButton("45°", pitch: 45)
-                        terrainPitchButton("60°", pitch: 60)
-                        terrainPitchButton("90°", pitch: 90)
+                    Picker("3D Mode", selection: Binding(
+                        get: { is3DMapsEnabled },
+                        set: { set3DMode($0) }
+                    )) {
+                        Text("Off").tag(false)
+                        Text("On").tag(true)
                     }
+                    .pickerStyle(.segmented)
                     opacitySlider("USFS & BLM Legal Trail Corridors", value: $trailCorridorOpacity)
                     opacitySlider("<3° LIDAR Flat Camp Slope Shading", value: $campSlopeOpacity)
                     opacitySlider("NIFC Wildfire Perimeters & USGS Hazards", value: $hazardOverlayOpacity)
@@ -2770,16 +2742,6 @@ struct MainCockpitView: View {
             ? "Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
             : "30 sq mi Area"
         return "\(label) · ~\(tiles) tiles · \(trails) trails · ~\(mb) MB"
-    }
-
-    private func terrainPitchButton(_ title: String, pitch: Double) -> some View {
-        let selected = abs(cameraPitch - pitch) < 6
-        return Button(title) {
-            applyCameraPitch(pitch)
-        }
-        .font(.caption.bold())
-        .buttonStyle(.borderedProminent)
-        .tint(selected ? .cyan : .gray)
     }
 
     private var savedOfflineRings: [[CLLocationCoordinate2D]] {
@@ -4383,7 +4345,7 @@ private struct StableRouteMap: View, Equatable {
     }
 
     private var tiltedMap: some View {
-        let extra = min(max(horizonAssist, 0), 36)
+        let extra = min(max(horizonAssist, 0), 15)
         return mapBody
             .rotation3DEffect(
                 .degrees(extra),
@@ -4553,7 +4515,6 @@ private struct StableRouteMap: View, Equatable {
         .mapStyle(basemapStyle)
         .id(basemap.rawValue + (flatBasemap ? "-flat" : ""))
         .mapControls {
-            MapUserLocationButton()
             MapCompass()
             MapPitchToggle()
             MapScaleView()

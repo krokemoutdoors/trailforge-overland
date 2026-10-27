@@ -106,7 +106,7 @@ struct MapTapOverlayView: UIViewRepresentable {
             let dy = gesture.translation(in: view).y
             if !panPitching, abs(dy) < 8 { return }
             panPitching = true
-            let next = min(90, max(0, panStartPitch - Double(dy) * 0.28))
+            let next = min(75, max(5, panStartPitch - Double(dy) * 0.28))
             panLastPitch = next
             onPitch(next, true)
         }

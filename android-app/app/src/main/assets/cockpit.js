@@ -99,7 +99,13 @@
     })(),
     packBusy: false,
     map3d: localStorage.getItem("tf-map-3d") === "1",
-    mapPitch: Number(localStorage.getItem("tf-map-pitch") || 0),
+    map3dEnabled: localStorage.getItem("tf-map-3d") === "1",
+    mapPitch: (function () {
+      const stored = Number(localStorage.getItem("tf-map-pitch") || 0);
+      const next = Math.max(0, Math.min(75, Number.isFinite(stored) ? stored : 0));
+      if (next !== stored) localStorage.setItem("tf-map-pitch", String(next));
+      return next;
+    })(),
     plotClearedByUser: false,
     scrubIndex: null,
     scrubTrailId: null,
@@ -847,7 +853,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.1 · build 23<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.2 · build 24<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2373,14 +2379,11 @@
     }
     if (act === "close-drawer") { state.drawer = null; renderDrawer(); applyChrome(); syncAreaPreview(); return; }
     if (act === "toggle-3d") {
-      const pitch = state.mapPitch || 0;
-      const next = pitch < 30 ? 60 : pitch < 75 ? 90 : 0;
-      setMapPitch(next);
+      set3DMode(!state.map3dEnabled);
       return;
     }
-    if (act === "map-pitch") {
-      const pitch = Number(button.dataset.id);
-      setMapPitch(Number.isFinite(pitch) ? pitch : 0);
+    if (act === "map-3d") {
+      set3DMode(button.dataset.id === "on");
       return;
     }
     if (act === "basemap") {
@@ -2784,13 +2787,15 @@
     if (plotBtn) plotBtn.classList.toggle("on", state.plotting);
     if (layerBtn) layerBtn.classList.toggle("on", state.drawer === "layers");
     if (corridorBtn) corridorBtn.classList.toggle("on", state.drawer === "corridor" || state.packBusy);
-    drawer.querySelectorAll("[data-act=map-pitch]").forEach(function (button) {
-      button.classList.toggle("on", Math.round(Number(button.dataset.id)) === Math.round(state.mapPitch));
+    drawer.querySelectorAll("[data-act=map-3d]").forEach(function (button) {
+      const enabled = !!state.map3dEnabled;
+      button.classList.toggle("on", button.dataset.id === "on" ? enabled : !enabled);
     });
     const tiltBtn = document.getElementById("tiltBtn");
     if (tiltBtn) {
-      tiltBtn.classList.toggle("on", !!(state.map3d && state.mapPitch > 1));
-      tiltBtn.textContent = state.map3d && state.mapPitch > 1 ? Math.round(state.mapPitch) + "°" : "3D";
+      tiltBtn.classList.remove("on");
+      tiltBtn.textContent = state.map3dEnabled ? "2D" : "3D";
+      tiltBtn.setAttribute("aria-label", state.map3dEnabled ? "Switch to 2D map" : "Switch to 3D map");
     }
     const connectBtn = document.getElementById("connectMarkers");
     if (connectBtn) connectBtn.hidden = state.savedMarkers.length < 2;
@@ -2826,57 +2831,94 @@
     return false;
   }
 
-  function setMapPitch(pitch, live) {
-    const next = Math.max(0, Math.min(90, Number(pitch) || 0));
-    const wasRelief = state.map3d && state.mapPitch > 1;
-    state.mapPitch = next;
-    state.map3d = next > 1;
-    localStorage.setItem("tf-map-pitch", String(next));
-    localStorage.setItem("tf-map-3d", state.map3d ? "1" : "0");
-    applyMapPitch(!!live);
-    if (!live || wasRelief !== state.map3d) applyBasemap();
-    if (live) {
-      const tiltBtn = document.getElementById("tiltBtn");
-      if (tiltBtn) {
-        tiltBtn.classList.toggle("on", state.map3d);
-        tiltBtn.textContent = state.map3d && next > 1 ? Math.round(next) + "°" : "3D";
-      }
-      return;
+  function set3DMode(enabled) {
+    const on = !!enabled;
+    state.map3dEnabled = on;
+    state.map3d = on;
+    localStorage.setItem("tf-map-3d", on ? "1" : "0");
+    if (!on) {
+      state.mapPitch = 0;
+      localStorage.setItem("tf-map-pitch", "0");
     }
+    applyMapPitch(false);
+    applyBasemap();
     renderDrawer();
   }
 
+  function setMapPitch(pitch, live) {
+    const next = Math.max(0, Math.min(75, Number(pitch) || 0));
+    const wasRelief = state.map3d && state.mapPitch > 1;
+    state.mapPitch = next;
+    localStorage.setItem("tf-map-pitch", String(next));
+    applyMapPitch(!!live);
+    const relief = !!(state.map3d && next > 1);
+    if (!live || wasRelief !== relief) applyBasemap();
+    if (live) return;
+    renderDrawer();
+  }
+
+  const pitchFitCache = { key: "", value: null };
+
   function pitchVisual(userDeg) {
-    const user = Math.max(0, Math.min(90, Number(userDeg) || 0));
-    const angle = user <= 60 ? user : 60 + (user - 60) * (28.5 / 30);
+    const user = Math.max(0, Math.min(75, Number(userDeg) || 0));
+    const angle = user;
+    const scale = 1 + (angle / 75) * 0.42;
+    const perspective = 1100;
+    if (angle < 1) {
+      return { user: user, angle: 0, scale: 1, originY: 0.65, perspective: perspective, bleed: 0, bleedBottom: 0, bleedSide: 0 };
+    }
     const stage = document.getElementById("stage");
-    const height = Math.max(180, stage ? stage.clientHeight : 520);
-    const tilt = user <= 60 ? 0 : (user - 60) / 30;
-    const originFrac = 0.66 - tilt * 0.34;
-    const perspective = Math.round(1400 + tilt * 250);
-    const rad = angle * Math.PI / 180;
-    const cosine = Math.cos(rad);
-    const sine = Math.sin(rad);
-    const originStage = originFrac * height;
-    const fill = user <= 60 ? height * 0.98 : height + 28;
-    const offset = Math.max(24, fill - originStage);
-    const yScaled = offset * perspective / (offset * sine + cosine * perspective);
-    const localBottom = Math.max(40, height - originStage);
-    const scale = user < 1 ? 1 : Math.max(1, yScaled / localBottom);
-    const bleed = Math.round(20 + user * 0.9);
-    const bleedBottom = Math.round(user > 60 ? 10 : bleed * 1.5);
-    const bleedSide = Math.round(bleed * (1 + tilt * 1.4));
-    const elementHeight = height + bleed + bleedBottom;
-    const originY = (originStage + bleed) / elementHeight;
+    const height = Math.max(180, stage ? stage.clientHeight : 480);
+    const width = Math.max(200, stage ? stage.clientWidth : 390);
+    const key = angle.toFixed(1) + "|" + height + "|" + width;
+    if (pitchFitCache.key !== key) {
+      pitchFitCache.key = key;
+      pitchFitCache.value = fitPitchPlane(angle, scale, perspective, width, height);
+    }
     return {
       user: user,
       angle: angle,
       scale: scale,
-      originY: originY,
+      originY: pitchFitCache.value.originY,
       perspective: perspective,
+      bleed: pitchFitCache.value.bleed,
+      bleedBottom: pitchFitCache.value.bleedBottom,
+      bleedSide: pitchFitCache.value.bleedSide
+    };
+  }
+
+  function fitPitchPlane(angle, scale, perspective, width, height) {
+    const rad = angle * Math.PI / 180;
+    const cosine = Math.cos(rad);
+    const sine = Math.sin(rad);
+    let originStageY = (perspective * cosine - Math.max(200, perspective * cosine * 0.78)) / sine;
+    originStageY = Math.max(12, Math.min(height * 0.42, originStageY));
+    if (perspective * cosine - originStageY * sine < 160) {
+      originStageY = Math.max(12, (perspective * cosine - 160) / sine);
+    }
+    function localAt(screenX, screenY) {
+      const denom = perspective * cosine + screenY * sine;
+      return {
+        localX: (screenX * perspective * cosine) / (scale * denom),
+        localY: (screenY * perspective) / (scale * denom)
+      };
+    }
+    const margin = 8;
+    const yTop = localAt(0, -originStageY).localY;
+    const yBot = localAt(0, height - originStageY).localY;
+    let bleed = Math.max(0, Math.ceil(-yTop - originStageY + margin));
+    const bleedBottom = Math.max(0, Math.ceil(yBot - (height - originStageY) + margin));
+    for (let step = 0; step <= 8; step += 1) {
+      const screenY = (height * step) / 8 - originStageY;
+      const sample = localAt(width / 2, screenY);
+      bleed = Math.max(bleed, Math.ceil(Math.abs(sample.localX) - width / 2 + margin));
+    }
+    const elementHeight = height + bleed + bleedBottom;
+    return {
+      originY: (originStageY + bleed) / elementHeight,
       bleed: bleed,
       bleedBottom: bleedBottom,
-      bleedSide: bleedSide
+      bleedSide: bleed
     };
   }
 
@@ -2887,7 +2929,7 @@
     const visual = state.map3d ? pitchVisual(state.mapPitch) : pitchVisual(0);
     el.classList.toggle("map-tilted", visual.user > 0.5);
     el.classList.toggle("map-tilt-live", !!live && visual.user > 0.5);
-    if (stage) stage.classList.toggle("map-horizon", visual.user > 25);
+    if (stage) stage.classList.remove("map-horizon");
     if (visual.user <= 0.5) {
       el.style.transform = "";
       el.style.transformOrigin = "";
@@ -2974,6 +3016,7 @@
       const two = pointers.size >= 2;
       const shiftDrag = pointers.size === 1 && event.shiftKey;
       if (!two && !shiftDrag) return;
+      if (!state.map3dEnabled) return;
       const nextSpan = spanNow();
       if (two && !pitching && span && Math.abs(nextSpan - span) > 45) {
         releaseMapGestures();
@@ -2987,7 +3030,7 @@
       if (map.dragging) map.dragging.disable();
       if (map.touchZoom) map.touchZoom.disable();
       const dy = avgY - prevAvgY;
-      setMapPitch(Math.max(0, Math.min(90, (state.mapPitch || 0) - dy * 0.28)), true);
+      setMapPitch(Math.max(0, Math.min(75, (state.mapPitch || 0) - dy * 0.28)), true);
     });
     function endPitch(event) {
       pointers.delete(event.pointerId);
