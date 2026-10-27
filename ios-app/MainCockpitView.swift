@@ -175,6 +175,8 @@ struct MainCockpitView: View {
     @State private var reportedMapPitch: Double = 0
     @State private var pitchCeiling: Double = 0
     @State private var pitchGestureActive = false
+    @State private var userOwnsPitch = false
+    @State private var plotClearedByUser = false
     @State private var lastCameraHeading: Double = 0
     @State private var lastMapCamera: MapCamera?
     @State private var lastCameraNote = Date.distantPast
@@ -511,8 +513,8 @@ struct MainCockpitView: View {
 
     private var cockpitWithLifecycle: some View {
         cockpitCanvas
-            .onChange(of: mode) { _, _ in
-                if detent == .peek { detent = .half }
+            .onChange(of: mode) { _, newMode in
+                if detent == .peek || (newMode == .rig && detent == .full) { detent = .half }
             }
             .onAppear {
                 motionManager.startUpdates()
@@ -679,6 +681,9 @@ struct MainCockpitView: View {
 
     private func navigationBanner(_ route: ActiveCampRoute) -> some View {
         let cue = nextCue(route)
+        let remaining = (liveRemainingMiles ?? (route.selected.distanceMeters / 1609.344)) * 1609.344
+        let seconds = liveRemainingSeconds ?? route.selected.expectedTravelTime
+        let eta = Date().addingTimeInterval(seconds)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: cue.icon)
@@ -737,10 +742,24 @@ struct MainCockpitView: View {
                 }
                 .frame(maxHeight: 140)
             }
+            HStack(spacing: 8) {
+                Text(formatDistance(remaining))
+                Text("•")
+                Text(formatDuration(seconds))
+                Text(eta, style: .time)
+                Spacer(minLength: 4)
+                Button("End Route") { endRoute() }
+                    .font(.caption.bold())
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+            }
+            .font(.caption.bold())
+            .foregroundColor(.cyan)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(Color(red: 0.04, green: 0.12, blue: 0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func routeCard(_ route: ActiveCampRoute) -> some View {
@@ -1744,14 +1763,15 @@ struct MainCockpitView: View {
     }
 
     private var horizonAssist: Double {
-        let gap = cameraPitch - reportedMapPitch
-        guard is3DMapsEnabled, cameraPitch > 58, gap > 3 else { return 0 }
-        return min(gap, 30)
+        let gap = max(0, cameraPitch - reportedMapPitch)
+        guard userOwnsPitch, gap > 2, reportedMapPitch >= 8 else { return 0 }
+        return gap
     }
 
     private func applyCameraPitch(_ pitch: Double) {
         let clamped = min(max(pitch, 0), 90)
         cameraPitch = clamped
+        userOwnsPitch = true
         is3DMapsEnabled = clamped > 1
         let center = lastMapCamera?.centerCoordinate ?? visibleRegion.center
         let distance = lastMapCamera?.distance ?? cameraDistance(for: visibleRegion)
@@ -1773,23 +1793,32 @@ struct MainCockpitView: View {
         let reported = min(max(camera.pitch, 0), 90)
         reportedMapPitch = reported
         if reported > pitchCeiling { pitchCeiling = reported }
-        let pitchChanged = abs(reported - cameraPitch) > 2
-        let headingChanged = abs(camera.heading - lastCameraHeading) > 8
-        guard pitchChanged || headingChanged || now.timeIntervalSince(lastCameraNote) > 0.45 else { return }
+        let headingChanged = abs(camera.heading - lastCameraHeading) > 2
+        guard pitchGestureActive || headingChanged || now.timeIntervalSince(lastCameraNote) > 0.45 else { return }
         lastCameraNote = now
         lastMapCamera = camera
         lastCameraHeading = camera.heading
-        // Two-finger tilt owns the requested pitch. MapKit also stops native
-        // pitch near 65–75°, so a higher 90° request must stay put.
-        if pitchGestureActive { return }
-        let stuckAtCeiling = cameraPitch > reported + 3 && reported >= 50 && reported >= pitchCeiling - 2
-        if stuckAtCeiling { return }
-        if pitchChanged {
-            cameraPitch = reported
-            if reported + 4 < pitchCeiling { pitchCeiling = reported }
-            if reported > 8 { is3DMapsEnabled = true }
-            if reported < 1 { is3DMapsEnabled = false }
-        }
+    }
+
+    private func cycleMapTilt() {
+        let next: Double = cameraPitch < 30 ? 60 : (cameraPitch < 75 ? 90 : 0)
+        applyCameraPitch(next)
+    }
+
+    private func pointMapNorth() {
+        lastCameraHeading = 0
+        let center = lastMapCamera?.centerCoordinate ?? visibleRegion.center
+        let distance = lastMapCamera?.distance ?? cameraDistance(for: visibleRegion)
+        pushCamera(.camera(MapCamera(
+            centerCoordinate: center,
+            distance: distance,
+            heading: 0,
+            pitch: min(max(cameraPitch, 0), 90)
+        )))
+    }
+
+    private func leaveFullDetent() {
+        if detent == .full { detent = .half }
     }
 
     private func handleCameraEnd(_ region: MKCoordinateRegion) {
@@ -2113,6 +2142,19 @@ struct MainCockpitView: View {
 
     private func mapStage(showGloveRow: Bool) -> some View {
         ZStack {
+            if cameraPitch > 25 {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.56, green: 0.82, blue: 1.0),
+                        Color(red: 0.91, green: 0.96, blue: 1.0),
+                        Color(red: 0.55, green: 0.45, blue: 0.28),
+                        Color(red: 0.05, green: 0.11, blue: 0.15)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            }
             routeMap
             if nightVision {
                 Color.black.opacity(0.28)
@@ -2131,6 +2173,10 @@ struct MainCockpitView: View {
                     .allowsHitTesting(false)
             }
             VStack(spacing: 8) {
+                if let route = activeRoute, followRoute {
+                    navigationBanner(route)
+                        .padding(.trailing, 56)
+                }
                 topCluster
                 if plotMode {
                     Text(nextSegmentFreehand ? "Plotter • next segment is freehand" : "Plotter • next segment snaps to the trail")
@@ -2157,17 +2203,50 @@ struct MainCockpitView: View {
             .padding(.leading, 8)
         }
         .overlay(alignment: .topTrailing) {
-            VStack(spacing: 0) {
-                Spacer()
-                    .frame(height: showGloveRow ? 88 : 136)
-                ScrollView(.vertical, showsIndicators: false) {
-                    rightRail(showGloveRow)
+            VStack(spacing: 6) {
+                Button {
+                    pointMapNorth()
+                } label: {
+                    Image(systemName: "location.north.fill")
+                        .font(.body.bold())
+                        .rotationEffect(.degrees(-lastCameraHeading))
+                        .frame(width: 40, height: 40)
+                        .background(Color.white.opacity(0.94))
+                        .foregroundColor(Color(red: 0.06, green: 0.13, blue: 0.2))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-                .scrollBounceBehavior(.basedOnSize)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Compass, point north")
+                Button {
+                    cycleMapTilt()
+                } label: {
+                    Text(cameraPitch > 1 ? "\(Int(cameraPitch.rounded()))°" : "3D")
+                        .font(.caption.bold())
+                        .frame(width: 40, height: 40)
+                        .background(cameraPitch > 1 ? Color.cyan : Color.white.opacity(0.94))
+                        .foregroundColor(cameraPitch > 1 ? Color.black : Color(red: 0.06, green: 0.13, blue: 0.2))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(cameraPitch > 1 ? "Map tilt \(Int(cameraPitch.rounded())) degrees" : "3D tilt")
             }
-            .frame(width: 52)
-            .padding(.trailing, 5)
-            .padding(.bottom, 8)
+            .padding(.top, 8)
+            .padding(.trailing, 8)
+        }
+        .overlay(alignment: .topTrailing) {
+            if detent != .full || showGloveRow {
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(height: showGloveRow ? 88 : 136)
+                    ScrollView(.vertical, showsIndicators: false) {
+                        rightRail(showGloveRow)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                }
+                .frame(width: 52)
+                .padding(.trailing, 5)
+                .padding(.bottom, 8)
+            }
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
     }
@@ -2229,7 +2308,7 @@ struct MainCockpitView: View {
                 noteMapCamera(camera)
             },
             fingerPitch: cameraPitch,
-            fingerPitchEnabled: is3DMapsEnabled && cameraPitch > 0.5,
+            fingerPitchEnabled: true,
             horizonAssist: horizonAssist,
             onFingerPitch: { pitch, active in
                 handleFingerPitch(pitch, active: active)
@@ -2240,6 +2319,7 @@ struct MainCockpitView: View {
                     addPlotPoint(marker.coordinate)
                     return
                 }
+                leaveFullDetent()
                 editingMarker = marker
                 pinName = marker.name
                 pinCategory = marker.category
@@ -2254,6 +2334,7 @@ struct MainCockpitView: View {
     private func rightRail(_ showGloveRow: Bool) -> some View {
         VStack(spacing: 5) {
             railButton("square.3.layers.3d.down.right", active: showLayers) {
+                leaveFullDetent()
                 showLayers = true
             }
             .accessibilityLabel("Map layers")
@@ -2262,10 +2343,12 @@ struct MainCockpitView: View {
             }
             .accessibilityLabel("Custom route plotter")
             railButton("arrow.down.circle.fill", active: showOffline) {
+                leaveFullDetent()
                 showOffline = true
             }
             .accessibilityLabel("Download 5-mile corridor")
             railButton("camera.fill", active: showHazardSheet) {
+                leaveFullDetent()
                 showHazardSheet = true
             }
             .accessibilityLabel("Drop hazard pin")
@@ -2287,6 +2370,7 @@ struct MainCockpitView: View {
     private var topCluster: some View {
         HStack(spacing: 6) {
             Button {
+                leaveFullDetent()
                 showOffline = true
             } label: {
                 Text("Offline")
@@ -3070,6 +3154,7 @@ struct MainCockpitView: View {
                     Button("Delete All Waypoints") {
                         plotPoints = []
                         segmentFreehand = []
+                        plotClearedByUser = true
                         refreshPlotRoutes()
                     }
                     .font(.caption2.bold())
@@ -3282,6 +3367,7 @@ struct MainCockpitView: View {
                         if plotMode {
                             addPlotPoint(marker.coordinate)
                         } else {
+                            leaveFullDetent()
                             editingMarker = marker
                             pinName = marker.name
                             pinCategory = marker.category
@@ -3444,6 +3530,7 @@ struct MainCockpitView: View {
         lastMapLongPress = now
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let pin = DroppedPinTarget(id: UUID(), latitude: coordinate.latitude, longitude: coordinate.longitude)
+        leaveFullDetent()
         droppedPin = pin
         pinCategory = "Waypoint"
         pinName = "Saved Pin \(savedMarkers.count + 1)"
@@ -3492,6 +3579,7 @@ struct MainCockpitView: View {
             createdAt: Date()
         )
         savedMarkers.insert(marker, at: 0)
+        plotClearedByUser = false
         CockpitStore.saveSavedMarkers(savedMarkers)
         droppedPin = nil
     }
@@ -3760,30 +3848,30 @@ struct MainCockpitView: View {
     private func togglePlotter() {
         plotMode.toggle()
         if plotMode {
+            leaveFullDetent()
             if detent == .peek { detent = .half }
-            if plotPoints.count < 2, savedMarkers.count >= 2 {
+            if !plotClearedByUser, plotPoints.count < 2, savedWaypointCoordinates().count >= 2 {
                 connectSavedWaypoints()
             }
         }
     }
 
     private func savedWaypointCoordinates() -> [CLLocationCoordinate2D] {
-        let region = visibleRegion
-        let latLimit = max(region.span.latitudeDelta * 0.65, 0.02)
-        let lonLimit = max(region.span.longitudeDelta * 0.65, 0.02)
+        let center = visibleRegion.center
+        let limit = 50 * 1609.344
         let near = savedMarkers.filter { marker in
-            abs(marker.latitude - region.center.latitude) <= latLimit
-                && abs(marker.longitude - region.center.longitude) <= lonLimit
+            meters(from: center, to: marker.coordinate) <= limit
         }
-        let chosen = near.count >= 2 ? near : savedMarkers
-        return chosen.sorted { $0.createdAt < $1.createdAt }.map(\.coordinate)
+        return near.sorted { $0.createdAt < $1.createdAt }.map(\.coordinate)
     }
 
     private func connectSavedWaypoints() {
+        plotClearedByUser = false
         let coordinates = savedWaypointCoordinates()
-        guard coordinates.count >= 2 else { return }
         plotMode = true
+        leaveFullDetent()
         if detent == .peek { detent = .half }
+        guard coordinates.count >= 2 else { return }
         plotPoints = coordinates
         segmentFreehand = Array(repeating: nextSegmentFreehand, count: max(0, coordinates.count - 1))
         refreshPlotRoutes()
@@ -4274,7 +4362,7 @@ private struct StableRouteMap: View, Equatable {
 
     var body: some View {
         MapReader { proxy in
-            mapBody
+            tiltedMap
                 .simultaneousGesture(
                     SpatialTapGesture().onEnded { value in
                         guard plotMode, let coordinate = proxy.convert(value.location, from: .local) else { return }
@@ -4292,6 +4380,18 @@ private struct StableRouteMap: View, Equatable {
                     )
                 }
         }
+    }
+
+    private var tiltedMap: some View {
+        let extra = min(max(horizonAssist, 0), 36)
+        return mapBody
+            .rotation3DEffect(
+                .degrees(extra),
+                axis: (x: 1, y: 0, z: 0),
+                anchor: .bottom,
+                perspective: 0.42
+            )
+            .scaleEffect(1 + CGFloat(extra) / 48, anchor: .bottom)
     }
 
     private var mapBody: some View {

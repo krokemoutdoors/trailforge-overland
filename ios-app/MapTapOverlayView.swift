@@ -97,12 +97,9 @@ struct MapTapOverlayView: UIViewRepresentable {
                 panLastPitch = pitch
                 panPitching = false
             }
-            // A widening span is a pinch. Leave zoom and rotate to MapKit.
-            if abs(span - panStartSpan) > 22 {
-                if panPitching {
-                    onPitch(panLastPitch, false)
-                }
-                panPitching = false
+            // A widening span is a pinch. Leave zoom and rotate to MapKit
+            // until the vertical drag has already locked in as pitch.
+            if !panPitching && abs(span - panStartSpan) > 45 {
                 panBlocked = true
                 return
             }
@@ -198,24 +195,15 @@ final class MapPressInstaller: UIView {
         panRecognizer = pan
     }
 
-    /// MapKit's own two-finger pitch stops near 65–75°. The extra degrees up to 90
-    /// tilt only the map canvas, leaving the compass and pitch toggle in place.
+    /// Supplemental tilt is a SwiftUI rotation on the Map. Clear any UIKit
+    /// plane transform so the two effects are not stacked.
     func applyHorizonAssist() {
+        if horizonAssist > 90 { return }
+        assistedCanvas?.layer.transform = CATransform3DIdentity
+        assistedCanvas = nil
         guard let map = Self.findMap(startingAt: self) else { return }
         let canvas = mapCanvas(in: map) ?? map
-        let extra = max(0, min(horizonAssist, 30))
-        if canvas !== assistedCanvas {
-            assistedCanvas?.layer.transform = CATransform3DIdentity
-            assistedCanvas = canvas
-        }
-        if extra < 1.5 {
-            canvas.layer.transform = CATransform3DIdentity
-            return
-        }
-        var transform = CATransform3DIdentity
-        transform.m34 = -1.0 / 850
-        transform = CATransform3DRotate(transform, CGFloat(extra) * .pi / 180, 1, 0, 0)
-        canvas.layer.transform = transform
+        canvas.layer.transform = CATransform3DIdentity
     }
 
     private func mapCanvas(in map: MKMapView) -> UIView? {

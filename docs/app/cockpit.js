@@ -100,6 +100,7 @@
     packBusy: false,
     map3d: localStorage.getItem("tf-map-3d") === "1",
     mapPitch: Number(localStorage.getItem("tf-map-pitch") || 0),
+    plotClearedByUser: false,
     scrubIndex: null,
     scrubTrailId: null,
     plotMode: localStorage.getItem("tf-plot-mode") === "freehand" ? "freehand" : "snap",
@@ -846,7 +847,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.0 · build 22<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.1 · build 23<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2216,7 +2217,7 @@
     }
     if (act === "mode") {
       state.mode = button.dataset.mode;
-      if (state.detent === "peek") {
+      if (state.detent === "peek" || (button.dataset.mode === "rig" && state.detent === "full")) {
         state.detent = "split";
         localStorage.setItem("tf-detent", "split");
       }
@@ -2330,6 +2331,7 @@
     }
     if (act === "layers") {
       state.drawer = state.drawer === "layers" ? null : "layers";
+      if (state.drawer) leaveFullDetent();
       renderDrawer();
       applyChrome();
       return;
@@ -2337,7 +2339,8 @@
     if (act === "plot") {
       state.plotting = !state.plotting;
       state.drawer = state.plotting ? "plot" : (state.drawer === "plot" ? null : state.drawer);
-      if (state.plotting && state.plot.length < 2 && state.savedMarkers.length >= 2 && seedPlotFromMarkers()) {
+      if (state.plotting) leaveFullDetent();
+      if (state.plotting && !state.plotClearedByUser && state.plot.length < 2 && seedPlotFromMarkers()) {
         drawPlot();
         toast("Connected " + state.plot.length + " saved waypoints");
       } else if (state.plotting) {
@@ -2362,6 +2365,7 @@
     }
     if (act === "corridor" || act === "download-corridor") {
       state.drawer = "corridor";
+      leaveFullDetent();
       renderDrawer();
       applyChrome();
       downloadCorridor();
@@ -2369,7 +2373,9 @@
     }
     if (act === "close-drawer") { state.drawer = null; renderDrawer(); applyChrome(); syncAreaPreview(); return; }
     if (act === "toggle-3d") {
-      setMapPitch(state.mapPitch > 1 ? 0 : 60);
+      const pitch = state.mapPitch || 0;
+      const next = pitch < 30 ? 60 : pitch < 75 ? 90 : 0;
+      setMapPitch(next);
       return;
     }
     if (act === "map-pitch") {
@@ -2446,6 +2452,7 @@
     }
     if (act === "clear-plot") {
       state.plot = [];
+      state.plotClearedByUser = true;
       drawPlot();
       renderSheet();
       renderDrawer();
@@ -2707,6 +2714,11 @@
     applyChrome();
   }
 
+  function leaveFullDetent() {
+    if (dashOn()) return;
+    if (state.detent === "full") setDetent("split");
+  }
+
   function renderDrawer() {
     const drawer = document.getElementById("layerDrawer");
     if (!drawer) return;
@@ -2836,22 +2848,36 @@
 
   function pitchVisual(userDeg) {
     const user = Math.max(0, Math.min(90, Number(userDeg) || 0));
-    const angle = 64 * Math.sin((user / 90) * Math.PI / 2);
-    const scale = 1 + user * 0.0042;
-    return { user: user, angle: angle, scale: scale };
+    const angle = user <= 60 ? user : 60 + (user - 60) * (28.5 / 30);
+    const scale = 1 + user * 0.006 + (user > 60 ? Math.pow((user - 60) / 30, 1.35) * 5.4 : 0);
+    const originY = user >= 75 ? 0.78 : 0.65;
+    return { user: user, angle: angle, scale: scale, originY: originY, perspective: 1100 };
   }
 
   function applyMapPitch(live) {
     const el = document.getElementById("map");
+    const stage = document.getElementById("stage");
     if (!el) return;
     const visual = state.map3d ? pitchVisual(state.mapPitch) : pitchVisual(0);
     el.classList.toggle("map-tilted", visual.user > 0.5);
     el.classList.toggle("map-tilt-live", !!live && visual.user > 0.5);
+    if (stage) stage.classList.toggle("map-horizon", visual.user > 25);
     if (visual.user <= 0.5) {
       el.style.transform = "";
+      el.style.transformOrigin = "";
+      el.style.top = "";
+      el.style.right = "";
+      el.style.bottom = "";
+      el.style.left = "";
       return;
     }
-    el.style.transform = "perspective(1100px) rotateX(" + visual.angle.toFixed(2) + "deg) scale(" + visual.scale.toFixed(4) + ")";
+    const bleed = Math.round(12 + visual.user * 0.55);
+    el.style.top = (-bleed) + "px";
+    el.style.right = (-bleed) + "px";
+    el.style.bottom = (-Math.round(bleed * 1.7)) + "px";
+    el.style.left = (-bleed) + "px";
+    el.style.transformOrigin = "50% " + Math.round(visual.originY * 100) + "%";
+    el.style.transform = "perspective(" + visual.perspective + "px) rotateX(" + visual.angle.toFixed(2) + "deg) scale(" + visual.scale.toFixed(4) + ")";
   }
 
   function mapContainerPoint(clientX, clientY) {
@@ -2867,15 +2893,17 @@
     if (visual.user <= 0.5) return L.point(clientX - left, clientY - top);
     const scale = visual.scale;
     const rad = visual.angle * Math.PI / 180;
-    const distance = 1100;
-    const screenX = clientX - (left + width * 0.5);
-    const screenY = clientY - (top + height * 0.65);
+    const distance = visual.perspective;
     const cosine = Math.cos(rad);
     const sine = Math.sin(rad);
-    const denom = cosine + (screenY * sine) / distance;
-    const scaledY = Math.abs(denom) < 1e-6 ? screenY : screenY / denom;
-    const scaledX = screenX * (1 - (scaledY * sine) / distance);
-    return L.point(width * 0.5 + scaledX / scale, height * 0.65 + scaledY / scale);
+    const screenX = clientX - (left + width * 0.5);
+    const screenY = clientY - (top + height * visual.originY);
+    const denom = distance * cosine + screenY * sine;
+    const localY = Math.abs(denom) < 1e-4 ? screenY / scale : (screenY * distance) / (scale * denom);
+    const unperspY = localY * scale;
+    const unperspZ = unperspY * sine;
+    const localX = (screenX * (distance - unperspZ)) / (scale * distance);
+    return L.point(width * 0.5 + localX, height * visual.originY + localY);
   }
 
   function installPitchGesture() {
@@ -2897,28 +2925,43 @@
       if (pts.length < 2) return 0;
       return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
     }
+    function averageY(list, key) {
+      if (!list.length) return 0;
+      let sum = 0;
+      for (let index = 0; index < list.length; index += 1) sum += list[index][key];
+      return sum / list.length;
+    }
+    function releaseMapGestures() {
+      if (map && map.dragging) map.dragging.enable();
+      if (map && map.touchZoom) map.touchZoom.enable();
+    }
     container.addEventListener("pointerdown", function (event) {
-      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startY: event.clientY });
       span = spanNow();
       pitching = false;
     });
     container.addEventListener("pointermove", function (event) {
       if (!pointers.has(event.pointerId)) return;
-      const prev = pointers.get(event.pointerId);
-      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const before = Array.from(pointers.values());
+      const prevAvgY = averageY(before, "y");
+      const current = pointers.get(event.pointerId);
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startY: current.startY });
       const two = pointers.size >= 2;
       const shiftDrag = pointers.size === 1 && event.shiftKey;
       if (!two && !shiftDrag) return;
       const nextSpan = spanNow();
-      if (two && span && Math.abs(nextSpan - span) > 22) {
-        pitching = false;
-        if (map.dragging) map.dragging.enable();
+      if (two && !pitching && span && Math.abs(nextSpan - span) > 45) {
+        releaseMapGestures();
         return;
       }
-      const dy = event.clientY - prev.y;
-      if (!pitching && Math.abs(dy) < 6) return;
+      const active = Array.from(pointers.values());
+      const avgY = averageY(active, "y");
+      const avgStartY = averageY(active, "startY");
+      if (!pitching && Math.abs(avgY - avgStartY) < 6) return;
       pitching = true;
       if (map.dragging) map.dragging.disable();
+      if (map.touchZoom) map.touchZoom.disable();
+      const dy = avgY - prevAvgY;
       setMapPitch(Math.max(0, Math.min(90, (state.mapPitch || 0) - dy * 0.28)), true);
     });
     function endPitch(event) {
@@ -2926,7 +2969,7 @@
       if (pointers.size >= 2) return;
       if (pitching) setMapPitch(state.mapPitch, false);
       pitching = false;
-      if (map && map.dragging) map.dragging.enable();
+      releaseMapGestures();
     }
     container.addEventListener("pointerup", endPitch);
     container.addEventListener("pointercancel", endPitch);
@@ -3781,12 +3824,13 @@
 
   function markersForPlot() {
     const markers = state.savedMarkers.slice();
-    if (!map || markers.length < 2) return markers;
-    const bounds = map.getBounds().pad(0.15);
-    const near = markers.filter(function (marker) {
-      return bounds.contains([marker.lat, marker.lon]);
+    if (!map || markers.length < 2) return [];
+    const center = map.getCenter();
+    const origin = { lat: center.lat, lon: center.lng };
+    const limit = 50 * 1609.344;
+    return markers.filter(function (marker) {
+      return meters(origin, marker) <= limit;
     });
-    return near.length >= 2 ? near : markers;
   }
 
   function seedPlotFromMarkers() {
@@ -3801,10 +3845,12 @@
   }
 
   function connectSavedWaypoints() {
+    state.plotClearedByUser = false;
     state.plotting = true;
     state.drawer = "plot";
+    leaveFullDetent();
     if (!seedPlotFromMarkers()) {
-      toast("Save at least two waypoints");
+      toast("Save at least two waypoints within 50 miles");
       renderDrawer();
       applyChrome();
       return;
@@ -4549,6 +4595,7 @@
   function openHazardSheet() {
     const sheet = document.getElementById("hazardSheet");
     if (!sheet) return;
+    leaveFullDetent();
     sheet.hidden = false;
     const where = document.getElementById("hazardWhere");
     if (where) {
@@ -4718,18 +4765,6 @@
     return text;
   }
 
-  function downloadText(text, filename, type) {
-    const blob = new Blob([text], { type: type || "application/octet-stream" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
-  }
-
   function paintQr(text) {
     const canvas = document.getElementById("qrCanvas");
     if (!canvas || typeof qrcode !== "function") return;
@@ -4764,7 +4799,7 @@
     if (points.length < 2 && !state.dropped.length && !sharedPins) { toast("Select a trail or plot a route first"); return; }
     const name = state.plot.length >= 2 ? "Custom route" : corridorLabel(trail || { name: "TrailForge trip" });
     const xml = gpxXml(name, points.length ? points : [{ lat: state.fix ? state.fix.lat : 0, lon: state.fix ? state.fix.lon : 0 }], collectWaypoints(trail));
-    downloadText(xml, "TrailForge-trip.gpx", "application/gpx+xml");
+    downloadText("TrailForge-trip.gpx", xml, "application/gpx+xml");
     const compact = tripCompact(name, points.length ? points : collectWaypoints(trail));
     paintQr(compact);
     const code = document.getElementById("tripCode");
@@ -5196,9 +5231,7 @@
       if (event && event.originalEvent && event.originalEvent.preventDefault) event.originalEvent.preventDefault();
       const source = event && event.originalEvent;
       if (source && source.clientX != null) {
-        const point = mapContainerPoint(source.clientX, source.clientY);
-        const ll = map.containerPointToLatLng(point);
-        dropPinAt(ll.lat, ll.lng);
+        startHold(source.clientX, source.clientY);
         return;
       }
       if (event && event.latlng) dropPinAt(event.latlng.lat, event.latlng.lng);
@@ -5206,15 +5239,19 @@
     function ignoredTarget(target) {
       return !!(target && target.closest && target.closest("button, input, a, .leaflet-marker-icon, .leaflet-interactive"));
     }
+    function startHold(clientX, clientY) {
+      if (!map) return;
+      const point = mapContainerPoint(clientX, clientY);
+      const ll = map.containerPointToLatLng(point);
+      dropPinAt(ll.lat, ll.lng);
+    }
     function arm(clientX, clientY, target) {
       if (ignoredTarget(target)) return;
       clearPress();
       start = { x: clientX, y: clientY };
       timer = setTimeout(function () {
-        if (!start || !map) return;
-        const point = mapContainerPoint(start.x, start.y);
-        const ll = map.containerPointToLatLng(point);
-        dropPinAt(ll.lat, ll.lng);
+        if (!start) return;
+        startHold(start.x, start.y);
         start = null;
       }, 450);
     }
@@ -5274,6 +5311,7 @@
   function openPinSheet() {
     const sheet = document.getElementById("pinSheet");
     if (!sheet || !state.droppedPin) return;
+    leaveFullDetent();
     sheet.hidden = false;
     document.getElementById("pinCoord").textContent = formatPair(state.droppedPin) || "";
     document.getElementById("pinPlace").textContent = state.droppedPin.place || "";
@@ -5357,6 +5395,7 @@
       createdAt: Date.now()
     };
     state.savedMarkers.unshift(marker);
+    state.plotClearedByUser = false;
     saveSavedMarkers();
     state.droppedPin = null;
     closePinSheet();
@@ -5379,6 +5418,7 @@
     state.activeMarkerId = id;
     const sheet = document.getElementById("markerSheet");
     if (!sheet) return;
+    leaveFullDetent();
     sheet.hidden = false;
     document.getElementById("markerTitle").textContent = marker.category || "Saved Marker";
     document.getElementById("markerCoord").textContent = formatPair(marker) || "";
