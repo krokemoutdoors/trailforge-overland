@@ -50,7 +50,8 @@
     .steps { max-height: 150px; overflow: auto; padding: 0 12px 10px; }
     .step { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 4px 0; color: #d5e4f0; }
     .step.on { color: white; font-weight: 700; }
-    #stage { flex: 1 1 auto; min-height: 180px; position: relative; }
+    #stage { flex: 1 1 auto; min-height: 180px; position: relative; overflow: hidden; background: #0c1b27; }
+    #stage.map-horizon { background: linear-gradient(180deg, #8fd0ff 0%, #e7f4ff 18%, #c5d8ea 34%, #8d7348 48%, #1c140e 68%, #0c1b27 100%); }
     #map { position: absolute; inset: 0; background: #0c1b27; transform-origin: 50% 65%; transition: transform 0.25s ease; }
     #map.map-tilt-live { transition: none; }
     .hillshade-tiles { mix-blend-mode: multiply; }
@@ -65,7 +66,7 @@
     .hud-read span, .legend, .clin-pill { font-size: 10px; color: #c5d5e4; letter-spacing: 0.04em; }
     .hud-read .phone-gps { min-width: 0; align-self: center; background: transparent; color: #3ddc84; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; }
     .legend { left: 8px; bottom: 102px; display: flex; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; }
-    .coords { left: 8px; right: 8px; bottom: 40px; display: grid; gap: 4px; }
+    .coords { left: 8px; right: 54px; bottom: 40px; display: grid; gap: 4px; }
     .coords .line { display: flex; align-items: baseline; gap: 6px; width: 100%; margin: 0; border: 0; border-radius: 10px; background: rgba(7, 16, 24, 0.84); backdrop-filter: blur(8px); padding: 5px 8px; text-align: left; color: #e8f1f8; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; }
     .coords .k { flex: 0 0 auto; color: #7dd3fc; font-size: 10px; letter-spacing: 0.08em; }
     .coords b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
@@ -106,9 +107,14 @@
     #app[data-dash="1"] #rail { top: 108px; max-height: calc(100% - 116px); }
     @media (orientation: landscape) {
       #rail { top: 108px; max-height: calc(100% - 116px); }
+      #app[data-dash="1"] #dashHud .tl { top: 92px; }
+      #app[data-dash="1"] .leaflet-control-attribution { margin-bottom: 58px !important; max-width: min(42vw, 280px) !important; }
+      #app[data-dash="1"] #dashTarget { bottom: 54px; }
     }
     #app[data-detent="full"]:not([data-dash="1"]) #rail,
-    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]) #rail { top: 108px; max-height: calc(100% - 116px); }
+    #app[data-detent="full"]:not([data-dash="1"]) .legend,
+    #app[data-detent="full"]:not([data-dash="1"]) .coords { display: none; }
+    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]):not([data-detent="full"]) #rail { top: 108px; max-height: calc(100% - 116px); }
     #rail button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 16px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
     #rail button.on { background: var(--cyan); color: #041018; }
     #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 50px; width: min(340px, calc(100% - 62px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }

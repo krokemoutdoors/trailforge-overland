@@ -186,20 +186,6 @@ final class CommunityReportSyncService: ObservableObject {
             acceptedHazards.formUnion(pendingOutboundHazards.intersection(remoteHazardIDs))
         }
 
-        if !pendingOutboundReports.isEmpty || !pendingOutboundHazards.isEmpty {
-            let payload = outboundFeed()
-            for url in [Self.publishedFeed, Self.liveRelay] {
-                if await pushFeed(payload, to: url) {
-                    acceptedReports.formUnion(pendingOutboundReports)
-                    acceptedHazards.formUnion(pendingOutboundHazards)
-                    publishedReportIDs.formUnion(acceptedReports)
-                    publishedHazardIDs.formUnion(acceptedHazards)
-                    sawFeed = true
-                    break
-                }
-            }
-        }
-
         if sawFeed {
             lastRemoteAccepted = true
         }
@@ -329,22 +315,6 @@ final class CommunityReportSyncService: ObservableObject {
               let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else { return nil }
         return Self.decodeFeed(data)
-    }
-
-    private func pushFeed(_ feed: CommunityFeed, to url: URL) async -> Bool {
-        if await send(feed, to: url, method: "POST") { return true }
-        return await send(feed, to: url, method: "PUT")
-    }
-
-    private func send(_ feed: CommunityFeed, to url: URL, method: String) async -> Bool {
-        var request = URLRequest(url: url, timeoutInterval: 20)
-        request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? Self.networkEncoder.encode(feed)
-        guard let (_, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else { return false }
-        return true
     }
 
     private static let networkEncoder: JSONEncoder = {
