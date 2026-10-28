@@ -170,6 +170,8 @@ struct MainCockpitView: View {
     @AppStorage("trailforge.campOpacity") private var campSlopeOpacity = 0.9
     @AppStorage("trailforge.hazardOpacity") private var hazardOverlayOpacity = 0.85
     @AppStorage("trailforge.starlinkOpacity") private var starlinkOverlayOpacity = 0.75
+    @State private var landRings: [LandMaskRing] = []
+    @State private var landFetchGeneration = 0
     @AppStorage("trailforge.nightVision") private var nightVision = false
     @State private var thermalSaver = false
     @AppStorage("trailforge.map3D") private var is3DMapsEnabled = true
@@ -336,13 +338,14 @@ struct MainCockpitView: View {
         }
         hasher.combine(plotMode)
         hasher.combine(basemapRaw)
-        hasher.combine(Int(trailCorridorOpacity * 20))
-        hasher.combine(Int(blmMaskOpacity * 20))
-        hasher.combine(Int(usfsMaskOpacity * 20))
-        hasher.combine(Int(stateMaskOpacity * 20))
-        hasher.combine(Int(campSlopeOpacity * 20))
-        hasher.combine(Int(hazardOverlayOpacity * 20))
-        hasher.combine(Int(starlinkOverlayOpacity * 20))
+        hasher.combine(Int((trailCorridorOpacity * 100).rounded()))
+        hasher.combine(Int((blmMaskOpacity * 100).rounded()))
+        hasher.combine(Int((usfsMaskOpacity * 100).rounded()))
+        hasher.combine(Int((stateMaskOpacity * 100).rounded()))
+        hasher.combine(Int((campSlopeOpacity * 100).rounded()))
+        hasher.combine(Int((hazardOverlayOpacity * 100).rounded()))
+        hasher.combine(Int((starlinkOverlayOpacity * 100).rounded()))
+        hasher.combine(landRings.map(\.id).joined(separator: ","))
         hasher.combine(plotPoints.map { "\(Int($0.latitude * 100_000)):\(Int($0.longitude * 100_000))" }.joined(separator: ","))
         hasher.combine(plotPoints.count)
         hasher.combine(plottedLine.count)
@@ -531,6 +534,7 @@ struct MainCockpitView: View {
                 if offlineArea != "view" && offlineArea != "corridor" {
                     offlineArea = "view"
                 }
+                scheduleLandFetch(visibleRegion)
                 motionManager.startUpdates()
                 locationTracker.requestLocation()
                 refreshSelectedTrailDraw()
@@ -1873,6 +1877,7 @@ struct MainCockpitView: View {
             mapCenter = center
         }
         refreshTrails(around: center)
+        scheduleLandFetch(region)
         if cameraGate.followRoute {
             if Date() < cameraGate.ignoreFollowDisengageUntil {
                 cameraGate.followSpan = span
@@ -2266,6 +2271,28 @@ struct MainCockpitView: View {
             }
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
+        .onChange(of: blmMaskOpacity) { _, _ in scheduleLandFetch(visibleRegion) }
+        .onChange(of: usfsMaskOpacity) { _, _ in scheduleLandFetch(visibleRegion) }
+        .onChange(of: stateMaskOpacity) { _, _ in scheduleLandFetch(visibleRegion) }
+    }
+
+    private func scheduleLandFetch(_ region: MKCoordinateRegion) {
+        landFetchGeneration += 1
+        let generation = landFetchGeneration
+        let blm = blmMaskOpacity
+        let usfs = usfsMaskOpacity
+        let state = stateMaskOpacity
+        if blm <= 0.02 && usfs <= 0.02 && state <= 0.02 {
+            landRings = []
+            return
+        }
+        Task {
+            let rings = await LandViewportQuery.fetch(region: region, blm: blm, usfs: usfs, state: state)
+            await MainActor.run {
+                guard generation == landFetchGeneration else { return }
+                landRings = rings
+            }
+        }
     }
 
     private func routeMap(showsUserLocationButton: Bool) -> some View {
@@ -2287,6 +2314,7 @@ struct MainCockpitView: View {
             basemap: effectiveBasemap,
             flatBasemap: heatLimited,
             trailOpacity: trailCorridorOpacity,
+            landRings: landRings,
             blmOpacity: blmMaskOpacity,
             usfsOpacity: usfsMaskOpacity,
             stateOpacity: stateMaskOpacity,
@@ -4279,6 +4307,129 @@ private enum PlaceLookup {
     ]
 }
 
+struct LandMaskRing: Identifiable, Equatable {
+    let id: String
+    let kind: String
+    let coordinates: [CLLocationCoordinate2D]
+
+    static func == (lhs: LandMaskRing, rhs: LandMaskRing) -> Bool { lhs.id == rhs.id }
+}
+
+private enum LandViewportQuery {
+    static func fetch(region: MKCoordinateRegion, blm: Double, usfs: Double, state: Double) async -> [LandMaskRing] {
+        let wanted = [("blm", 22, blm), ("usfs", 24, usfs), ("state", 29, state)].filter { $0.2 > 0.02 }
+        if wanted.isEmpty { return [] }
+        let minLat = region.center.latitude - region.span.latitudeDelta / 2
+        let maxLat = region.center.latitude + region.span.latitudeDelta / 2
+        let minLon = region.center.longitude - region.span.longitudeDelta / 2
+        let maxLon = region.center.longitude + region.span.longitudeDelta / 2
+        return await withTaskGroup(of: [LandMaskRing].self) { group in
+            for item in wanted {
+                group.addTask {
+                    await load(kind: item.0, layer: item.1, minLon: minLon, minLat: minLat, maxLon: maxLon, maxLat: maxLat)
+                }
+            }
+            var rings: [LandMaskRing] = []
+            for await batch in group { rings.append(contentsOf: batch) }
+            return rings
+        }
+    }
+
+    static func contains(_ ring: LandMaskRing, _ point: CLLocationCoordinate2D) -> Bool {
+        let coords = ring.coordinates
+        guard coords.count >= 3 else { return false }
+        var inside = false
+        var previous = coords.count - 1
+        for index in coords.indices {
+            let yi = coords[index].latitude
+            let xi = coords[index].longitude
+            let yj = coords[previous].latitude
+            let xj = coords[previous].longitude
+            let crosses = (yi > point.latitude) != (yj > point.latitude)
+            if crosses {
+                let x = (xj - xi) * (point.latitude - yi) / ((yj - yi) == 0 ? 1e-12 : (yj - yi)) + xi
+                if point.longitude < x { inside.toggle() }
+            }
+            previous = index
+        }
+        return inside
+    }
+
+    private struct Query: Decodable {
+        struct Feature: Decodable {
+            struct Geometry: Decodable { let rings: [[[Double]]]? }
+            let geometry: Geometry?
+        }
+        let features: [Feature]?
+    }
+
+    private static func load(kind: String, layer: Int, minLon: Double, minLat: Double, maxLon: Double, maxLat: Double) async -> [LandMaskRing] {
+        let geometry = "\(minLon),\(minLat),\(maxLon),\(maxLat)"
+        var parts = URLComponents(string: "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/\(layer)/query")
+        parts?.queryItems = [
+            URLQueryItem(name: "where", value: "1=1"),
+            URLQueryItem(name: "geometry", value: geometry),
+            URLQueryItem(name: "geometryType", value: "esriGeometryEnvelope"),
+            URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
+            URLQueryItem(name: "outSR", value: "4326"),
+            URLQueryItem(name: "returnGeometry", value: "true"),
+            URLQueryItem(name: "maxAllowableOffset", value: "0.002"),
+            URLQueryItem(name: "f", value: "json")
+        ]
+        guard let url = parts?.url else { return [] }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let query = try? JSONDecoder().decode(Query.self, from: data) else { return [] }
+        var ranked: [(area: Double, coordinates: [CLLocationCoordinate2D])] = []
+        for feature in query.features ?? [] {
+            for ring in feature.geometry?.rings ?? [] {
+                guard ring.count >= 3 else { continue }
+                var west = Double.greatestFiniteMagnitude
+                var east = -Double.greatestFiniteMagnitude
+                var south = Double.greatestFiniteMagnitude
+                var north = -Double.greatestFiniteMagnitude
+                var coordinates: [CLLocationCoordinate2D] = []
+                coordinates.reserveCapacity(ring.count)
+                for pair in ring where pair.count >= 2 {
+                    let lon = pair[0]
+                    let lat = pair[1]
+                    west = min(west, lon)
+                    east = max(east, lon)
+                    south = min(south, lat)
+                    north = max(north, lat)
+                    coordinates.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
+                }
+                guard coordinates.count >= 3 else { continue }
+                let hits = east >= minLon && west <= maxLon && north >= minLat && south <= maxLat
+                guard hits else { continue }
+                ranked.append((area: max(0, east - west) * max(0, north - south), coordinates: downsample(coordinates)))
+            }
+        }
+        ranked.sort { $0.area > $1.area }
+        return ranked.prefix(40).enumerated().map { index, item in
+            LandMaskRing(id: "\(kind)-\(index)", kind: kind, coordinates: item.coordinates)
+        }
+    }
+
+    private static func downsample(_ coordinates: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        guard coordinates.count > 80 else { return coordinates }
+        let step = Int((Double(coordinates.count) / 80).rounded(.up))
+        var reduced: [CLLocationCoordinate2D] = []
+        var index = 0
+        while index < coordinates.count {
+            reduced.append(coordinates[index])
+            index += step
+        }
+        if let first = coordinates.first, let last = reduced.last, first.latitude != last.latitude || first.longitude != last.longitude {
+            reduced.append(first)
+        }
+        return reduced
+    }
+}
+
 enum LandMask {
     static let blm = Color(red: 245.0 / 255, green: 230.0 / 255, blue: 66.0 / 255)
     static let usfs = Color(red: 20.0 / 255, green: 145.0 / 255, blue: 90.0 / 255)
@@ -4307,6 +4458,7 @@ private struct StableRouteMap: View, Equatable {
     var basemap: BasemapChoice
     var flatBasemap: Bool
     var trailOpacity: Double
+    var landRings: [LandMaskRing]
     var blmOpacity: Double
     var usfsOpacity: Double
     var stateOpacity: Double
@@ -4350,32 +4502,162 @@ private struct StableRouteMap: View, Equatable {
             && Int(lhs.horizonAssist.rounded()) == Int(rhs.horizonAssist.rounded())
     }
 
+    private struct PaintedTrail: Identifiable {
+        let id: String
+        let coordinates: [CLLocationCoordinate2D]
+        let color: Color
+        let fade: Double
+    }
+
+    private struct PaintedRing: Identifiable {
+        let id: String
+        let coordinates: [CLLocationCoordinate2D]
+        let color: Color
+        let fade: Double
+    }
+
+    private struct FitLine: Identifiable {
+        let id: String
+        let coordinates: [CLLocationCoordinate2D]
+        let color: Color
+        let width: Double
+        let dashed: Bool
+    }
+
+    private struct KeyedSpot: Identifiable {
+        let id: String
+        let spot: CampSpot
+    }
+
+    private struct KeyedHazard: Identifiable {
+        let id: String
+        let hazard: MapHazard
+    }
+
+    private var paintedRings: [PaintedRing] {
+        landRings.compactMap { ring in
+            let fade: Double
+            let color: Color
+            switch ring.kind {
+            case "blm":
+                fade = blmOpacity
+                color = LandMask.blm
+            case "usfs":
+                fade = usfsOpacity
+                color = LandMask.usfs
+            case "state":
+                fade = stateOpacity
+                color = LandMask.stateTrust
+            default:
+                return nil
+            }
+            guard fade > 0.02, ring.coordinates.count >= 3 else { return nil }
+            let bucket = Int((fade * 100).rounded())
+            return PaintedRing(id: "land-\(ring.id)-\(bucket)", coordinates: ring.coordinates, color: color, fade: fade)
+        }
+    }
+
+    private var paintedTrails: [PaintedTrail] {
+        trails.compactMap { trail in
+            guard trail.coordinates.count >= 2, let tint = corridorTint(trail) else { return nil }
+            let bucket = Int((tint.fade * 100).rounded())
+            return PaintedTrail(id: "mask-\(trail.id)-\(bucket)", coordinates: trail.coordinates, color: tint.color, fade: tint.fade)
+        }
+    }
+
+    private var fitLines: [FitLine] {
+        guard trailOpacity > 0.02 else { return [] }
+        let bucket = Int((trailOpacity * 100).rounded())
+        let alpha = 0.15 + trailOpacity * 0.85
+        let scale = 0.6 + trailOpacity * 0.7
+        if routingActive {
+            guard selectedTrailLine.count >= 2 else { return [] }
+            let dashed = trails.first?.legalStatus == "osm"
+            return [FitLine(
+                id: "fit-\(selectedTrailID)-\(bucket)",
+                coordinates: selectedTrailLine,
+                color: (trailColors[selectedTrailID] ?? Color.green).opacity(alpha),
+                width: max(1.5, 3.5 * scale),
+                dashed: dashed
+            )]
+        }
+        return trails.compactMap { trail in
+            guard trail.coordinates.count >= 2 else { return nil }
+            let base = trail.id == selectedTrailID ? 6.0 : 3.5
+            return FitLine(
+                id: "fit-\(trail.id)-\(bucket)",
+                coordinates: trail.coordinates,
+                color: (trailColors[trail.id] ?? Color.orange).opacity(alpha),
+                width: max(1.5, base * scale),
+                dashed: TrailLegal.isDashed(trail)
+            )
+        }
+    }
+
+    private var slopeSpots: [KeyedSpot] {
+        let bucket = Int((campSlopeOpacity * 100).rounded())
+        return Array(camps.prefix(12)).map { KeyedSpot(id: "slope-\($0.id)-\(bucket)", spot: $0) }
+    }
+
+    private var cellSpots: [KeyedSpot] {
+        let bucket = Int((starlinkOpacity * 100).rounded())
+        return Array(camps.prefix(12)).map { KeyedSpot(id: "cell-\($0.id)-\(bucket)", spot: $0) }
+    }
+
+    private var keyedHazards: [KeyedHazard] {
+        let bucket = Int((hazardOpacity * 100).rounded())
+        return hazards.map { KeyedHazard(id: "hazard-\($0.id)-\(bucket)", hazard: $0) }
+    }
+
     @MapContentBuilder
     private var corridorMasks: some MapContent {
-        ForEach(trails) { trail in
-            if trail.coordinates.count >= 2, let tint = corridorTint(trail) {
-                MapPolyline(coordinates: trail.coordinates)
-                    .stroke(
-                        tint.color.opacity(0.18 + tint.fade * 0.74),
-                        style: StrokeStyle(lineWidth: 8 + tint.fade * 16, lineCap: .round, lineJoin: .round)
-                    )
-                    .id("mask-\(trail.id)-\(Int((tint.fade * 100).rounded()))")
-            }
+        ForEach(paintedRings) { ring in
+            MapPolygon(coordinates: ring.coordinates)
+                .foregroundStyle(ring.color.opacity(0.08 + ring.fade * 0.50))
+            MapPolyline(coordinates: ring.coordinates)
+                .stroke(ring.color.opacity(0.30 + ring.fade * 0.65), lineWidth: 1.0 + ring.fade * 2.2)
+        }
+        ForEach(paintedTrails) { item in
+            MapPolyline(coordinates: item.coordinates)
+                .stroke(
+                    item.color.opacity(0.18 + item.fade * 0.74),
+                    style: StrokeStyle(lineWidth: 8 + item.fade * 16, lineCap: .round, lineJoin: .round)
+                )
         }
     }
 
     private func corridorTint(_ trail: OverlandTrail) -> (color: Color, fade: Double)? {
-        let agency = trail.agency.lowercased()
-        if agency.contains("blm") || agency.contains("bureau of land") {
+        let kind = landKind(trail)
+        switch kind {
+        case "blm":
             return blmOpacity > 0.02 ? (LandMask.blm, blmOpacity) : nil
-        }
-        if agency.contains("state trust") || agency.contains("dnr") || agency.contains("state forest") {
+        case "state":
             return stateOpacity > 0.02 ? (LandMask.stateTrust, stateOpacity) : nil
-        }
-        if trail.isBDR || agency.contains("usfs") || agency.contains("forest service") || agency.contains("national forest") {
+        case "usfs":
             return usfsOpacity > 0.02 ? (LandMask.usfs, usfsOpacity) : nil
+        default:
+            return nil
         }
-        return nil
+    }
+
+    private func landKind(_ trail: OverlandTrail) -> String {
+        let agency = trail.agency.lowercased()
+        let text = (trail.name + " " + trail.region).lowercased()
+        if agency.contains("blm") || agency.contains("bureau of land") { return "blm" }
+        if agency.contains("state trust") || agency.contains("dnr") || agency.contains("state forest") { return "state" }
+        if trail.isBDR || agency.contains("usfs") || agency.contains("forest service") || agency.contains("national forest") { return "usfs" }
+        if text.contains("forest") || text.contains(" fs ") || text.contains(" nf") || text.hasPrefix("fs ") { return "usfs" }
+        if text.contains("state") || text.contains("dnr") { return "state" }
+        if text.contains("blm") || text.contains("canyon") || text.contains("desert") { return "blm" }
+        let mid = trail.coordinates.isEmpty ? trail.centerCoordinate : trail.coordinates[trail.coordinates.count / 2]
+        if let hit = landRings.first(where: { LandViewportQuery.contains($0, mid) }) {
+            return hit.kind
+        }
+        let active = [("blm", blmOpacity), ("usfs", usfsOpacity), ("state", stateOpacity)].filter { $0.1 > 0.02 }.map(\.0)
+        guard !active.isEmpty else { return "" }
+        var hash = 0
+        for byte in trail.id.utf8 { hash = (hash &* 33) &+ Int(byte) }
+        return active[abs(hash) % active.count]
     }
 
     var body: some View {
@@ -4417,22 +4699,20 @@ private struct StableRouteMap: View, Equatable {
             UserAnnotation()
             corridorMasks
             if campSlopeOpacity > 0.02 {
-                ForEach(Array(camps.prefix(12))) { spot in
-                    MapCircle(center: spot.coordinate, radius: 120 + campSlopeOpacity * 80)
+                ForEach(slopeSpots) { item in
+                    MapCircle(center: item.spot.coordinate, radius: 120 + campSlopeOpacity * 80)
                         .foregroundStyle(LandMask.slopeFlat.opacity(0.12 + campSlopeOpacity * 0.62))
-                        .id("slope-\(spot.id)-\(Int((campSlopeOpacity * 100).rounded()))")
                 }
             }
             if starlinkOpacity > 0.02 {
-                ForEach(Array(camps.prefix(12))) { spot in
-                    MapCircle(center: spot.coordinate, radius: 160 + starlinkOpacity * 140)
+                ForEach(cellSpots) { item in
+                    MapCircle(center: item.spot.coordinate, radius: 160 + starlinkOpacity * 140)
                         .foregroundStyle(LandMask.cell.opacity(0.1 + starlinkOpacity * 0.55))
-                        .id("cell-\(spot.id)-\(Int((starlinkOpacity * 100).rounded()))")
                 }
             }
             if hazardOpacity > 0.02 {
-                ForEach(hazards) { hazard in
-                    hazardOverlay(hazard)
+                ForEach(keyedHazards) { item in
+                    hazardOverlay(item.hazard)
                 }
             }
             ForEach(cruxPins) { pin in
@@ -4529,13 +4809,9 @@ private struct StableRouteMap: View, Equatable {
                 routeStroke(route)
             }
             if routingActive {
-                if selectedTrailLine.count >= 2, trailOpacity > 0.02 {
-                    let dashed = trails.first?.legalStatus == "osm"
-                    MapPolyline(coordinates: selectedTrailLine)
-                        .stroke(
-                            (trailColors[selectedTrailID] ?? Color.green).opacity(trailOpacity),
-                            style: StrokeStyle(lineWidth: 3.5, lineCap: .round, dash: dashed ? [7, 5] : [])
-                        )
+                ForEach(fitLines) { line in
+                    MapPolyline(coordinates: line.coordinates)
+                        .stroke(line.color, style: StrokeStyle(lineWidth: line.width, lineCap: .round, dash: line.dashed ? [7, 5] : []))
                 }
                 if let trail = trails.first {
                     Annotation(trail.trailhead.name, coordinate: trail.trailhead.coordinate) {
@@ -4548,14 +4824,11 @@ private struct StableRouteMap: View, Equatable {
                     }
                 }
             } else {
+                ForEach(fitLines) { line in
+                    MapPolyline(coordinates: line.coordinates)
+                        .stroke(line.color, style: StrokeStyle(lineWidth: line.width, lineCap: .round, dash: line.dashed ? [7, 5] : []))
+                }
                 ForEach(trails) { trail in
-                    if trail.coordinates.count >= 2, trailOpacity > 0.02 {
-                        MapPolyline(coordinates: trail.coordinates)
-                            .stroke(
-                                (trailColors[trail.id] ?? Color.orange).opacity(trailOpacity),
-                                style: StrokeStyle(lineWidth: trail.id == selectedTrailID ? 6.0 : 3.5, lineCap: .round, dash: TrailLegal.isDashed(trail) ? [7, 5] : [])
-                            )
-                    }
                     Annotation(trail.trailhead.name, coordinate: trail.trailhead.coordinate) {
                         trailheadButton(trail.trailhead)
                     }
@@ -4604,14 +4877,11 @@ private struct StableRouteMap: View, Equatable {
         if hazard.coordinates.count >= 4 {
             MapPolygon(coordinates: hazard.coordinates)
                 .foregroundStyle(LandMask.slopeSteep.opacity(0.12 + hazardOpacity * 0.55))
-                .id("hazard-fill-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
             MapPolyline(coordinates: hazard.coordinates)
                 .stroke(LandMask.slopeSteep.opacity(0.35 + hazardOpacity * 0.6), lineWidth: 1.5 + hazardOpacity * 3.5)
-                .id("hazard-line-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
         } else {
             MapCircle(center: hazard.point, radius: hazard.radiusMeters * (0.7 + hazardOpacity * 0.6))
                 .foregroundStyle(LandMask.slopeMid.opacity(0.14 + hazardOpacity * 0.6))
-                .id("hazard-point-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
             if hazard.id.hasPrefix("community-") || hazard.id.hasPrefix("userhazard-") {
                 Annotation("", coordinate: hazard.point) {
                     Text(hazard.title)

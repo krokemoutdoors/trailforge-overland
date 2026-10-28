@@ -247,6 +247,8 @@
     label.field.mask .swatch.alt { background: var(--alt); }
     label.field.mask input[type="range"] { accent-color: var(--mask, var(--cyan)); }
     label.field.mask.on { background: var(--mask, var(--cyan)); color: #10200a; }
+    label.field.mask.nofill.on { background: color-mix(in srgb, var(--mask, var(--cyan)) 20%, #0c1520); color: inherit; }
+    label.field.mask.nofill.on span, label.field.mask.nofill.on b { color: #d5e4f0; }
     label.field.mask.on b { color: #10200a; }
     .name { width: 100%; border: 0; border-radius: 10px; background: #13202e; padding: 9px 10px; margin-bottom: 8px; }
     .rig-live { display: grid; grid-template-columns: 116px 1fr; gap: 8px; margin: 8px 0; align-items: center; }
@@ -396,6 +398,8 @@
             <button type="button" data-act="basemap" data-id="satellite">High-Res Satellite</button>
             <button type="button" data-act="basemap" data-id="dark">Dark Overland</button>
           </div>
+          <div class="drawer-label">TRAIL LINES</div>
+          <label class="field mask nofill" data-mask="trails" style="--mask:#3ddc84"><span><i class="swatch"></i><i class="swatch alt" style="--alt:#ff9f1a"></i><i class="swatch alt" style="--alt:#ff4d4d"></i>Rig-Fit Trail Lines <b data-read="trails">85%</b></span><input type="range" min="0" max="100" step="1" value="85" data-overlay="trails" aria-label="Rig-fit trail lines" /></label>
           <div class="drawer-label">LAND MASKS</div>
           <label class="field mask" data-mask="blm" style="--mask:#f5e642"><span><i class="swatch"></i>BLM Public Land <b data-read="blm">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="blm" aria-label="BLM public land mask" /></label>
           <label class="field mask" data-mask="usfs" style="--mask:#14915a"><span><i class="swatch"></i>USFS National Forest <b data-read="usfs">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="usfs" aria-label="USFS national forest mask" /></label>
