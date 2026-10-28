@@ -2141,7 +2141,7 @@ struct MainCockpitView: View {
 
     private func portraitCockpit(_ size: CGSize) -> some View {
         VStack(spacing: 0) {
-            mapStage(showGloveRow: false, viewportHeight: size.height)
+            mapStage(showGloveRow: false, viewportHeight: size.height, mapHeight: size.height - sheetHeight(size.height))
             cockpitSheet(expanded: detent != .peek)
                 .frame(height: sheetHeight(size.height))
         }
@@ -2149,7 +2149,7 @@ struct MainCockpitView: View {
 
     private func dashCockpit(_ size: CGSize) -> some View {
         HStack(spacing: 0) {
-            mapStage(showGloveRow: true, viewportHeight: size.height)
+            mapStage(showGloveRow: true, viewportHeight: size.height, mapHeight: size.height)
                 .frame(width: size.width * 0.65)
             dashColumn
                 .frame(width: size.width * 0.35)
@@ -2193,7 +2193,7 @@ struct MainCockpitView: View {
         return min(halfway, max(0, mapHeight - 150))
     }
 
-    private func mapStage(showGloveRow: Bool, viewportHeight: CGFloat) -> some View {
+    private func mapStage(showGloveRow: Bool, viewportHeight: CGFloat, mapHeight: CGFloat) -> some View {
         ZStack {
             routeMap(showsUserLocationButton: !showGloveRow)
             if nightVision {
@@ -2255,19 +2255,17 @@ struct MainCockpitView: View {
             .padding(.leading, 8)
         }
         .overlay(alignment: .topTrailing) {
-            GeometryReader { proxy in
-                if detent != .full || showGloveRow {
-                    let top = railColumnTop(showGloveRow: showGloveRow, viewportHeight: viewportHeight, mapHeight: proxy.size.height)
-                    VStack(spacing: 0) {
-                        Color.clear.frame(height: top)
-                        ScrollView(.vertical, showsIndicators: false) {
-                            rightRail(showGloveRow)
-                        }
-                        .scrollBounceBehavior(.basedOnSize)
+            if detent != .full || showGloveRow {
+                let top = railColumnTop(showGloveRow: showGloveRow, viewportHeight: viewportHeight, mapHeight: mapHeight)
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: top)
+                    ScrollView(.vertical, showsIndicators: false) {
+                        rightRail(showGloveRow)
                     }
-                    .frame(width: 62, height: proxy.size.height, alignment: .top)
-                    .padding(.trailing, 5)
+                    .scrollBounceBehavior(.basedOnSize)
                 }
+                .frame(width: 62, height: mapHeight, alignment: .top)
+                .padding(.trailing, 5)
             }
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
@@ -2383,7 +2381,9 @@ struct MainCockpitView: View {
         VStack(spacing: 5) {
             railButton("square.3.layers.3d.down.right", active: showLayers) {
                 leaveFullDetent()
-                showLayers = true
+                withAnimation(.easeOut(duration: 0.2)) {
+                    showLayers.toggle()
+                }
             }
             .accessibilityLabel("Map layers")
             railButton("point.topleft.down.curvedto.point.bottomright.up", active: plotMode) {
@@ -2750,7 +2750,7 @@ struct MainCockpitView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack {
-                        Text("Map Layers & Opacity")
+                        Text("Map Layers")
                             .font(.headline)
                         Spacer()
                         Button("Close") { showLayers = false }
@@ -2772,17 +2772,17 @@ struct MainCockpitView: View {
                         Text("On").tag(true)
                     }
                     .pickerStyle(.segmented)
-                    fitLineSlider
-                    maskSlider("BLM Public Land", color: LandMask.blm, value: $blmMaskOpacity)
-                    maskSlider("USFS National Forest", color: LandMask.usfs, value: $usfsMaskOpacity)
-                    maskSlider("State Trust Land", color: LandMask.stateTrust, value: $stateMaskOpacity)
+                    maskToggleButton("Rig-Fit Trail Lines", color: LandMask.slopeFlat, extra: [LandMask.slopeMid, LandMask.slopeSteep], value: $trailCorridorOpacity, onValue: 1.0, fill: false)
+                    maskToggleButton("BLM Public Land", color: LandMask.blm, value: $blmMaskOpacity, onValue: 0.75)
+                    maskToggleButton("USFS National Forest", color: LandMask.usfs, value: $usfsMaskOpacity, onValue: 0.75)
+                    maskToggleButton("State Trust Land", color: LandMask.stateTrust, value: $stateMaskOpacity, onValue: 0.75)
                     Text("Land shading is approximate and not a legal survey. Always verify private property boundaries, easements, and posted signs on the ground—never trespass.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    maskSlider("<3° Slope Shading", color: LandMask.slopeFlat, extra: [LandMask.slopeMid, LandMask.slopeSteep], value: $campSlopeOpacity)
-                    maskSlider("Wildfires & Hazards", color: LandMask.slopeSteep, extra: [LandMask.slopeMid], value: $hazardOverlayOpacity)
-                    maskSlider("Cell & Starlink Sky", color: LandMask.cell, value: $starlinkOverlayOpacity)
+                    maskToggleButton("<3° Slope Shading", color: LandMask.slopeFlat, extra: [LandMask.slopeMid, LandMask.slopeSteep], value: $campSlopeOpacity, onValue: 0.85)
+                    maskToggleButton("Wildfires & Hazards", color: LandMask.slopeSteep, extra: [LandMask.slopeMid], value: $hazardOverlayOpacity, onValue: 0.85)
+                    maskToggleButton("Cell & Starlink Sky", color: LandMask.cell, value: $starlinkOverlayOpacity, onValue: 0.80)
                     Toggle("🌡️ Thermal Saver", isOn: $thermalSaver)
                         .font(.caption.bold())
                     Toggle("🌙 Night Vision", isOn: $nightVision)
@@ -3409,13 +3409,13 @@ struct MainCockpitView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    private var fitLineSlider: some View {
-        maskSlider("Rig-Fit Trail Lines", color: LandMask.slopeFlat, extra: [LandMask.slopeMid, LandMask.slopeSteep], value: $trailCorridorOpacity, fill: false)
-    }
-
-    private func maskSlider(_ title: String, color: Color, extra: [Color] = [], value: Binding<Double>, fill: Bool = true) -> some View {
-        let active = value.wrappedValue > 0.02 && fill
-        return VStack(alignment: .leading, spacing: 4) {
+    private func maskToggleButton(_ title: String, color: Color, extra: [Color] = [], value: Binding<Double>, onValue: Double, fill: Bool = true) -> some View {
+        let active = value.wrappedValue > 0.02
+        let filled = active && fill
+        let ink = Color(red: 0.06, green: 0.12, blue: 0.04)
+        return Button {
+            value.wrappedValue = active ? 0 : onValue
+        } label: {
             HStack(spacing: 6) {
                 RoundedRectangle(cornerRadius: 3)
                     .fill(color)
@@ -3430,19 +3430,24 @@ struct MainCockpitView: View {
                 Text(title)
                     .font(.caption.bold())
                     .lineLimit(2)
-                    .foregroundColor(active ? Color(red: 0.06, green: 0.12, blue: 0.04) : .white)
-                Spacer()
-                Text("\(Int((value.wrappedValue * 100).rounded()))%")
-                    .font(.caption.monospacedDigit().bold())
-                    .foregroundColor(active ? Color(red: 0.06, green: 0.12, blue: 0.04) : color)
+                    .foregroundColor(filled ? ink : .white)
+                Spacer(minLength: 8)
+                Text(active ? "ON" : "OFF")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(filled ? Color.black.opacity(0.16) : color.opacity(0.22))
+                    .foregroundColor(filled ? ink : color)
+                    .clipShape(Capsule())
             }
-            Slider(value: value, in: 0...1)
-                .tint(color)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(filled ? color : (active ? color.opacity(0.24) : Color.white.opacity(0.06)))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(active ? color : color.opacity(0.45), lineWidth: active ? 1.5 : 1))
+            .contentShape(Rectangle())
         }
-        .padding(8)
-        .background(active ? color : color.opacity(0.18))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(color, lineWidth: 1.5))
+        .buttonStyle(.plain)
     }
 
     private var savedMarkersCard: some View {
