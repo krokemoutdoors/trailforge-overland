@@ -73,6 +73,8 @@ Additional answers:
 - Location collection is optional. Denying location still opens the atlas; routing and the live puck wait for permission.
 - No data is shared with third parties for advertising. Public map and science endpoints receive only the coordinate needed for that request.
 - The privacy policy is https://krokemoutdoors.github.io/trailforge-overland/#privacy
+- Terms and the safety disclaimer are https://krokemoutdoors.github.io/trailforge-overland/#terms and https://krokemoutdoors.github.io/trailforge-overland/#disclaimer
+- Paste the SAFETY & LIABILITY DISCLAIMER from `APP_STORE_CONNECT_LISTING.md` at the end of the Play full description before you submit.
 
 ## Release artifacts
 

@@ -173,6 +173,9 @@ struct MainCockpitView: View {
     @AppStorage("trailforge.nightVision") private var nightVision = false
     @State private var thermalSaver = false
     @AppStorage("trailforge.map3D") private var is3DMapsEnabled = true
+    @AppStorage("trailforge.safetyDisclaimerAccepted.v1") private var safetyDisclaimerAccepted = false
+    @AppStorage("trailforge.safetyDisclaimerAcceptedAt.v1") private var safetyDisclaimerAcceptedAt = ""
+    @State private var showSafetyDisclaimer = false
     @State private var cameraPitch: Double = 0
     @State private var reportedMapPitch: Double = 0
     @State private var pitchCeiling: Double = 0
@@ -508,6 +511,10 @@ struct MainCockpitView: View {
                 }
                 if showOffline {
                     offlineDrawer
+                }
+                if showSafetyDisclaimer || !safetyDisclaimerAccepted {
+                    safetyDisclaimerOverlay
+                        .transition(.opacity)
                 }
             }
         }
@@ -2387,6 +2394,7 @@ struct MainCockpitView: View {
                             fitBanner
                         }
                         cockpitModeBody(includeFieldCards: true)
+                        safetyLegalButton
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 56)
@@ -2429,6 +2437,7 @@ struct MainCockpitView: View {
                     }
                     savedMarkersCard
                     cockpitModeBody(includeFieldCards: false)
+                    safetyLegalButton
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -2478,6 +2487,96 @@ struct MainCockpitView: View {
                     detent = detent == .peek ? .half : .full
                 }
             }
+    }
+
+    private var safetyLegalButton: some View {
+        Button {
+            showSafetyDisclaimer = true
+        } label: {
+            Text("Safety & Legal Disclaimer / Terms of Use")
+                .font(.caption.bold())
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 8)
+                .background(Color(red: 0.14, green: 0.10, blue: 0.04))
+                .foregroundColor(Color(red: 1.0, green: 0.74, blue: 0.18))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.55), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Safety and legal disclaimer, terms of use")
+    }
+
+    private var safetyDisclaimerOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Safety, Assumption of Risk & Liability Disclaimer")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    Text("Read this before you use the map. TrailForge Overland is a reference tool from Krokem Outdoors, not a survey, a land-agency decision, or a promise that a road is open or legal.")
+                        .font(.caption)
+                        .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
+                    safetyBlock(
+                        "Informational Reference Only — No Guarantee of Map or Boundary Accuracy",
+                        "Trail routes, difficulty ratings, GPX tracks, MVUM/USFS/BLM/State/Park land ownership masks, water crossings, SNOTEL snow depth, wildfire perimeters, 3D terrain pitch/slope shading, and clearance warnings are crowd and agency estimates for situational reference only. Map boundaries and routes may contain errors, omissions, or outdated data. Do not use them to decide legal property boundaries or whether a road is legal to drive."
+                    )
+                    safetyBlock(
+                        "Assumption of Risk & Backcountry Responsibility",
+                        "Off-road driving, overlanding, and backcountry travel can severely damage a vehicle, strand you, injure you, or kill you. You assume 100% of the risk of the route you choose and the travel you make. Verify road status with the local land manager, obey posted signs, gates, and seasonal closures, carry emergency satellite communication and recovery gear, and do not trespass."
+                    )
+                    safetyBlock(
+                        "Do Not Operate While Driving",
+                        "Do not touch map controls, plot a route, or open sheets while the vehicle is moving. Pull over in a safe place before you change a route or a setting."
+                    )
+                    safetyBlock(
+                        "\"AS IS\" No Warranty, Limitation of Liability & Indemnification",
+                        "TrailForge Overland is provided by Krokem Outdoors strictly \"AS IS\" and \"AS AVAILABLE,\" without warranties of any kind, express or implied. To the maximum extent permitted by law, Edward Shin, Krokem Outdoors, and its affiliates are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. You agree to indemnify and hold them harmless from claims arising from your backcountry travel."
+                    )
+                    Button {
+                        safetyDisclaimerAccepted = true
+                        safetyDisclaimerAcceptedAt = ISO8601DateFormatter().string(from: Date())
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            showSafetyDisclaimer = false
+                        }
+                    } label: {
+                        Text("I Understand & Agree — Enter TrailForge")
+                            .font(.subheadline.bold())
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .padding(.horizontal, 10)
+                            .background(Color(red: 0.24, green: 0.86, blue: 0.52))
+                            .foregroundColor(Color(red: 0.02, green: 0.08, blue: 0.05))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    Link("Terms of Use & Privacy Policy", destination: URL(string: "https://krokemoutdoors.github.io/trailforge-overland/#terms")!)
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(16)
+                .background(Color(red: 0.05, green: 0.08, blue: 0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .padding(16)
+            }
+        }
+        .zIndex(20)
+    }
+
+    private func safetyBlock(_ title: String, _ body: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.bold())
+                .foregroundColor(Color(red: 1.0, green: 0.74, blue: 0.18))
+            Text(body)
+                .font(.caption)
+                .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var modePicker: some View {
