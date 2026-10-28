@@ -67,9 +67,9 @@
     .hud-read b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; font-weight: 800; }
     .hud-read span, .legend, .clin-pill { font-size: 10px; color: #c5d5e4; letter-spacing: 0.04em; }
     .hud-read .phone-gps { min-width: 0; align-self: center; background: transparent; color: #3ddc84; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; }
-    .legend { left: 8px; bottom: 102px; display: flex; flex-wrap: wrap; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; max-width: calc(100% - 70px); }
+    .legend { left: 8px; bottom: 102px; display: flex; flex-wrap: wrap; gap: 8px; border-radius: 999px; padding: 5px 8px; font-weight: 800; max-width: calc(100% - 78px); }
     .legend [hidden] { display: none !important; }
-    .coords { left: 8px; right: 62px; bottom: 40px; display: grid; gap: 4px; }
+    .coords { left: 8px; right: 68px; bottom: 40px; display: grid; gap: 4px; }
     .coords .line { display: flex; align-items: baseline; gap: 6px; width: 100%; margin: 0; border: 0; border-radius: 10px; background: rgba(7, 16, 24, 0.84); backdrop-filter: blur(8px); padding: 5px 8px; text-align: left; color: #e8f1f8; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; }
     .coords .k { flex: 0 0 auto; color: #7dd3fc; font-size: 10px; letter-spacing: 0.08em; }
     .coords b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
@@ -108,11 +108,11 @@
     #mapChrome button.on { background: var(--cyan); color: #041018; }
     #compassArrow, #locateArrow { display: block; transform-origin: 50% 50%; }
     #app[data-dash="1"] #mapChrome #locateBtn { display: none; }
-    #rail { position: absolute; z-index: 560; right: 5px; top: 102px; box-sizing: border-box; width: 46px; display: flex; flex-direction: column; gap: 5px; max-height: calc(100% - 108px); overflow-y: auto; background: rgba(8, 16, 28, 0.92); padding: 4px; border-radius: 13px; border: 1px solid var(--line); }
-    #app[data-dash="1"] #rail { top: 108px; width: 48px; max-height: calc(100% - 116px); }
-    @media (orientation: landscape) {
+    #rail { position: fixed; z-index: 560; right: 5px; top: 50%; bottom: auto; box-sizing: border-box; width: 52px; display: flex; flex-direction: column; gap: 6px; max-height: calc(50% - 86px); overflow-y: auto; background: rgba(8, 16, 28, 0.92); padding: 6px 4px; border-radius: 14px; border: 1px solid var(--line); }
+    #app[data-dash="1"] #rail { position: absolute; top: 108px; bottom: auto; width: 56px; max-height: calc(100% - 116px); }
+    @media (orientation: landscape), (max-height: 500px) and (orientation: landscape) {
       #mapChrome #locateBtn { display: none; }
-      #rail { top: 108px; max-height: calc(100% - 116px); }
+      #rail { position: absolute; top: 108px; bottom: auto; max-height: calc(100% - 116px); }
       #app[data-dash="1"] #dashHud .tl { top: 92px; }
       #app[data-dash="1"] .leaflet-control-attribution { margin-bottom: 58px !important; max-width: min(42vw, 280px) !important; }
       #app[data-dash="1"] #dashTarget { bottom: 54px; }
@@ -120,17 +120,20 @@
     #app[data-detent="full"]:not([data-dash="1"]) #rail,
     #app[data-detent="full"]:not([data-dash="1"]) .legend,
     #app[data-detent="full"]:not([data-dash="1"]) .coords { display: none; }
-    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]):not([data-detent="full"]) #rail { top: 108px; max-height: calc(100% - 116px); }
-    #rail button { width: 38px; height: 38px; min-width: 38px; min-height: 38px; border: 0; border-radius: 10px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 18px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
-    #rail svg { width: 19px; height: 19px; }
+    #app[data-mode="rig"]:not([data-dash="1"]):not([data-detent="peek"]):not([data-detent="full"]) #rail { position: absolute; top: 50%; bottom: auto; max-height: calc(50% - 8px); }
+    #rail button { width: 42px; height: 42px; min-width: 42px; min-height: 42px; border: 0; border-radius: 11px; background: rgba(8, 16, 28, 0.9); color: white; font-size: 20px; font-weight: 800; padding: 0; line-height: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+    #rail svg { width: 21px; height: 21px; }
     #rail button.on { background: var(--cyan); color: #041018; }
-    #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 58px; width: min(340px, calc(100% - 70px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
+    #layerDrawer { position: absolute; z-index: 640; top: 8px; right: 68px; width: min(340px, calc(100% - 80px)); max-height: calc(100% - 16px); overflow: auto; background: rgba(8, 16, 28, 0.96); border: 1px solid var(--line); border-radius: 16px; padding: 10px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4); }
     #layerDrawer[hidden] { display: none; }
     .drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
     .drawer-head button { border: 0; background: transparent; color: white; font-size: 16px; }
     .drawer-label { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.06em; margin: 8px 0 4px; }
     #layerDrawer .seg { flex-direction: column; }
     #layerDrawer .seg button { text-align: left; border-radius: 10px; }
+    #packAreaSeg { flex-direction: column; align-items: stretch; width: 100%; }
+    #packAreaSeg button { width: 100%; display: block; box-sizing: border-box; text-align: left; cursor: pointer; pointer-events: auto; }
+    #packAreaSeg button * { pointer-events: none; }
     #layerDrawer .field { margin-top: 6px; }
     .pack { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; background: #13202e; border-radius: 10px; padding: 8px; margin-top: 6px; }
     .pack small { grid-column: 1; color: var(--muted); font-size: 10px; }
@@ -179,7 +182,7 @@
     #app[data-dash="1"] #sheet { display: block !important; max-height: none !important; overflow: auto !important; -webkit-overflow-scrolling: touch; flex: 1 1 auto; min-height: 0; padding-bottom: 40px; }
     #app[data-dash="1"] #detents { background: var(--panel); padding-bottom: 6px; }
     #app[data-dash="1"] .modes button, #app[data-dash="1"] .actions button, #app[data-dash="1"] .reports button, #app[data-dash="1"] #detents button { min-height: 48px; font-size: 14px; }
-    #app[data-dash="1"] #rail button { width: 40px; height: 40px; min-width: 40px; min-height: 40px; font-size: 17px; }
+    #app[data-dash="1"] #rail button { width: 46px; height: 46px; min-width: 46px; min-height: 46px; font-size: 19px; }
     #app[data-night="1"] #map { filter: sepia(1) saturate(4) hue-rotate(-40deg) brightness(0.55); }
     #app[data-night="1"] .hud-read b, #app[data-night="1"] #dashHud b, #app[data-night="1"] .fit-title, #app[data-night="1"] .coords b { color: #ffb020; }
     #app[data-night="1"] .clin-pill, #app[data-night="1"] #dashHud span { color: #ff8a3d; }
@@ -404,11 +407,10 @@
         </section>
         <section id="offlineDrawer" data-panel="corridor" hidden>
           <div class="drawer-label">AREA SIZE</div>
-          <div class="sub">Pan the map. A 30 sq mi box stays centered on the screen. Current Map View downloads the exact bounds on screen.</div>
+          <div class="sub">Current Map View downloads the exact bounds on screen. The 5-mile corridor follows the selected trail or active GPS route.</div>
           <div class="sub">Saved on-device in TrailForge local storage (offline-ready, zero cell required)</div>
-          <div class="seg" id="packAreaSeg" style="margin-top:8px;flex-wrap:wrap">
+          <div class="seg" id="packAreaSeg">
             <button type="button" data-act="pack-area" data-id="corridor">5-Mi Route Corridor</button>
-            <button type="button" data-act="pack-area" data-id="sq30">30 sq mi Area</button>
             <button type="button" data-act="pack-area" data-id="view">Current Map View</button>
           </div>
           <div class="sub" id="packEstimate"></div>
