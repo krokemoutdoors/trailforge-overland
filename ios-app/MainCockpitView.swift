@@ -785,6 +785,18 @@ struct MainCockpitView: View {
             }
             .font(.caption.bold())
             .foregroundColor(.cyan)
+            HStack(spacing: 8) {
+                Button { focusRouteStart() } label: {
+                    Label("Starting Point", systemImage: "location.fill")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+                Button { focusRouteDestination() } label: {
+                    Label("Destination", systemImage: "flag.fill")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -836,6 +848,18 @@ struct MainCockpitView: View {
                     }
                 }
             }
+            HStack(spacing: 8) {
+                Button { focusRouteStart() } label: {
+                    Label("Starting Point", systemImage: "location.fill")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+                Button { focusRouteDestination() } label: {
+                    Label("Destination", systemImage: "flag.fill")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+            }
             if isRouteConfirmed {
                 HStack(spacing: 8) {
                     Button {
@@ -865,7 +889,7 @@ struct MainCockpitView: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    Button("Start GPS Route") { startFollow() }
+                    Button("Start GPS Route") { confirmRoute() }
                         .font(.caption.bold())
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
@@ -1411,22 +1435,15 @@ struct MainCockpitView: View {
             isRouteConfirmed = false
             followRoute = false
             detent = .peek
-            if built.selected.road.count >= 2 {
-                frame(built)
-            }
+            focusDestinationArea(built)
             return
         }
         isRouteConfirmed = true
         if refit {
             followRoute = false
+            focusDestinationArea(built)
             if built.selected.road.count >= 2 {
-                frame(built)
                 announceRouteStart(built)
-            } else {
-                pushCamera(regionCamera(
-                    center: spot.coordinate,
-                    span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
-                ))
             }
             skipStepsAlreadyReached()
         } else if followRoute {
@@ -1545,7 +1562,21 @@ struct MainCockpitView: View {
             announceRouteStart(route)
         }
         skipStepsAlreadyReached()
-        if !followRoute { frame(route) }
+        if !followRoute { focusDestinationArea(route) }
+    }
+
+    private func confirmRoute() {
+        isRouteConfirmed = true
+        followRoute = false
+        followHeading = false
+        detent = .peek
+        showingRouteOverview = false
+        skipStepsAlreadyReached()
+        if let route = activeRoute {
+            announceRouteStart(route)
+            focusDestinationArea(route)
+        }
+        flashRouteStartNote()
     }
 
     private func startFollow() {
@@ -1560,6 +1591,56 @@ struct MainCockpitView: View {
             announceRouteStart(route)
         }
         flashRouteStartNote()
+    }
+
+    private func focusRouteStart() {
+        let start = activeRoute?.selected.road.first ?? locationTracker.userCoordinate ?? mapCenter
+        if isRouteConfirmed {
+            followRoute = true
+            followHeading = true
+        }
+        cameraGate.ignoreFollowDisengageUntil = Date().addingTimeInterval(0.45)
+        showingRouteOverview = false
+        withAnimation {
+            pushCamera(regionCamera(
+                center: start,
+                span: MKCoordinateSpan(latitudeDelta: 0.015, longitudeDelta: 0.015)
+            ))
+        }
+    }
+
+    private func focusRouteDestination() {
+        guard let route = activeRoute else { return }
+        followRoute = false
+        followHeading = false
+        focusDestinationArea(route)
+    }
+
+    private func focusDestinationArea(_ route: ActiveCampRoute) {
+        let spot = route.destination.coordinate
+        let alreadyNear = miles(from: mapCenter, to: spot) < 1.5
+            && visibleRegion.span.latitudeDelta <= 0.05
+            && visibleRegion.span.longitudeDelta <= 0.05
+        cameraGate.ignoreFollowDisengageUntil = Date().addingTimeInterval(0.45)
+        showingRouteOverview = false
+        if alreadyNear { return }
+        var coords = [spot]
+        if route.spur.count >= 2 {
+            coords.append(contentsOf: route.spur.suffix(6))
+        }
+        let latitudes = coords.map(\.latitude)
+        let longitudes = coords.map(\.longitude)
+        let latSpan = ((latitudes.max() ?? spot.latitude) - (latitudes.min() ?? spot.latitude)) * 1.6
+        let lonSpan = ((longitudes.max() ?? spot.longitude) - (longitudes.min() ?? spot.longitude)) * 1.6
+        withAnimation {
+            pushCamera(regionCamera(
+                center: spot,
+                span: MKCoordinateSpan(
+                    latitudeDelta: min(0.035, max(0.012, latSpan)),
+                    longitudeDelta: min(0.035, max(0.012, lonSpan))
+                )
+            ))
+        }
     }
 
     private func flashRouteStartNote() {
@@ -2065,7 +2146,7 @@ struct MainCockpitView: View {
         }
         guard route else { return }
         let spot = placeSpot(hit)
-        Task { await beginRoute(to: spot) }
+        Task { await beginRoute(to: spot, previewOnly: true) }
     }
 
     private func coordinatesBar(filled: Bool) -> some View {
@@ -2182,10 +2263,15 @@ struct MainCockpitView: View {
                 .foregroundColor(.cyan)
                 .lineLimit(2)
             HStack(spacing: 8) {
-                Button("Start GPS Route") { startFollow() }
+                Button("Start GPS Route") { confirmRoute() }
                     .font(.caption.bold())
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
+                Button { focusRouteStart() } label: {
+                    Label("Starting Point", systemImage: "location.fill")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
                 Button("Cancel") { endRoute() }
                     .font(.caption.bold())
                     .buttonStyle(.bordered)
@@ -2356,7 +2442,7 @@ struct MainCockpitView: View {
                     addPlotPoint(spot.coordinate)
                     return
                 }
-                Task { await beginRoute(to: spot, previewOnly: spot.kind == .pad) }
+                Task { await beginRoute(to: spot, previewOnly: true) }
             },
             onInspect: { coordinate in
                 if plotMode {
@@ -2608,7 +2694,7 @@ struct MainCockpitView: View {
                     Text("Safety, Assumption of Risk & Liability Disclaimer")
                         .font(.headline)
                         .foregroundColor(.white)
-                    Text("Read this before you use the map. TrailForge Overland is a reference tool from SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors, not a survey, a land-agency decision, or a promise that a road is open or legal.")
+                    Text("Read this before you use the map. TrailForge Overland is a reference tool from SE Media LLC and its members, managers, officers, employees, affiliates, licensors, and contributors, not a survey, a land-agency decision, or a promise that a road is open or legal.")
                         .font(.caption)
                         .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
                     safetyBlock(
@@ -2634,7 +2720,7 @@ struct MainCockpitView: View {
                     )
                     safetyBlock(
                         "\"AS IS\" No Warranty, Limitation of Liability & Indemnification",
-                        "TrailForge Overland is provided by SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors strictly \"AS IS\" and \"AS AVAILABLE,\" without warranties of any kind, express or implied. To the fullest extent permitted by law, SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. Their total aggregate liability for any claim shall not exceed the greater of $0.00 USD or the amount you actually paid for the App in the twelve (12) months before the claim. You agree to indemnify and hold them harmless from claims arising from your backcountry travel."
+                        "TrailForge Overland is provided by SE Media LLC and its members, managers, officers, employees, affiliates, licensors, and contributors strictly \"AS IS\" and \"AS AVAILABLE,\" without warranties of any kind, express or implied. To the fullest extent permitted by law, SE Media LLC and its members, managers, officers, employees, affiliates, licensors, and contributors are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. Their total aggregate liability for any claim shall not exceed the greater of $0.00 USD or the amount you actually paid for the App in the twelve (12) months before the claim. You agree to indemnify and hold them harmless from claims arising from your backcountry travel."
                     )
                     safetyBlock(
                         "Dispute Resolution, Binding Individual Arbitration & Class-Action Waiver",
@@ -2679,7 +2765,7 @@ struct MainCockpitView: View {
             Text("You are 100% responsible for verifying that any trail, road, dispersed campsite, waypoint, or off-road area you enter is legally open to public motorized use and is not private property.")
             Text("BLM, USFS, NPS, State Trust, and other land-shading overlays are generalized agency datasets. They do not replace an official cadastral land survey. Public lands frequently contain unmarked private inholdings, patented mining claims, private ranch roads, locked gates, or roads with no legal public right-of-way or easement.")
             Text("Map lines, routed paths, and colored land masks never grant permission to cross private land or to bypass a gate, fence, “No Trespassing” sign, or seasonal closure. Signs and gates on the ground govern. When in doubt, turn around.")
-            Text("SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not responsible or liable for trespass claims, fines, citations, towing, impoundment, or legal disputes that result from entering private, restricted, or closed property.")
+            Text("SE Media LLC and its members, managers, officers, employees, affiliates, licensors, and contributors are not responsible or liable for trespass claims, fines, citations, towing, impoundment, or legal disputes that result from entering private, restricted, or closed property.")
         }
         .font(.caption)
         .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
@@ -3693,7 +3779,7 @@ struct MainCockpitView: View {
         )
         droppedPin = nil
         editingMarker = nil
-        Task { await beginRoute(to: spot) }
+        Task { await beginRoute(to: spot, previewOnly: true) }
     }
 
     private func saveDroppedPin() {
