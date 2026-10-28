@@ -2544,7 +2544,7 @@ struct MainCockpitView: View {
                     Text("Safety, Assumption of Risk & Liability Disclaimer")
                         .font(.headline)
                         .foregroundColor(.white)
-                    Text("Read this before you use the map. TrailForge Overland is a reference tool from Krokem Outdoors, not a survey, a land-agency decision, or a promise that a road is open or legal.")
+                    Text("Read this before you use the map. TrailForge Overland is a reference tool from SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors, not a survey, a land-agency decision, or a promise that a road is open or legal.")
                         .font(.caption)
                         .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
                     safetyBlock(
@@ -2570,7 +2570,7 @@ struct MainCockpitView: View {
                     )
                     safetyBlock(
                         "\"AS IS\" No Warranty, Limitation of Liability & Indemnification",
-                        "TrailForge Overland is provided by Krokem Outdoors strictly \"AS IS\" and \"AS AVAILABLE,\" without warranties of any kind, express or implied. To the fullest extent permitted by law, Edward Shin, Krokem Outdoors, Krokem Outdoors LLC, and their affiliates and licensors are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. Their total aggregate liability for any claim shall not exceed the greater of $0.00 USD or the amount you actually paid for the App in the twelve (12) months before the claim. You agree to indemnify and hold them harmless from claims arising from your backcountry travel."
+                        "TrailForge Overland is provided by SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors strictly \"AS IS\" and \"AS AVAILABLE,\" without warranties of any kind, express or implied. To the fullest extent permitted by law, SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. Their total aggregate liability for any claim shall not exceed the greater of $0.00 USD or the amount you actually paid for the App in the twelve (12) months before the claim. You agree to indemnify and hold them harmless from claims arising from your backcountry travel."
                     )
                     safetyBlock(
                         "Dispute Resolution, Binding Individual Arbitration & Class-Action Waiver",
@@ -2615,7 +2615,7 @@ struct MainCockpitView: View {
             Text("You are 100% responsible for verifying that any trail, road, dispersed campsite, waypoint, or off-road area you enter is legally open to public motorized use and is not private property.")
             Text("BLM, USFS, NPS, State Trust, and other land-shading overlays are generalized agency datasets. They do not replace an official cadastral land survey. Public lands frequently contain unmarked private inholdings, patented mining claims, private ranch roads, locked gates, or roads with no legal public right-of-way or easement.")
             Text("Map lines, routed paths, and colored land masks never grant permission to cross private land or to bypass a gate, fence, “No Trespassing” sign, or seasonal closure. Signs and gates on the ground govern. When in doubt, turn around.")
-            Text("Neither Edward Shin nor Krokem Outdoors is responsible or liable for trespass claims, fines, citations, towing, impoundment, or legal disputes that result from entering private, restricted, or closed property.")
+            Text("SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not responsible or liable for trespass claims, fines, citations, towing, impoundment, or legal disputes that result from entering private, restricted, or closed property.")
         }
         .font(.caption)
         .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
