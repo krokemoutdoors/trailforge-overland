@@ -135,7 +135,8 @@
     droppedPin: null,
     pinCategory: "Waypoint",
     savedMarkers: loadSavedMarkers(),
-    activeMarkerId: null
+    activeMarkerId: null,
+    landRings: []
   };
 
   const pendingNet = new Map();
@@ -1033,18 +1034,22 @@
       const fit = evaluate(trail);
       const selectedTrail = trail.id === state.selectedId;
       const unverified = !!trail.live && (String(trail.id).indexOf("osm-") === 0 || /openstreetmap/i.test(trail.agency || ""));
+      const trailFade = Math.max(0, Math.min(100, Number(state.opacity.trails) || 0)) / 100;
+      if (trailFade <= 0) return;
+      const scale = 0.6 + trailFade * 0.7;
+      const alpha = 0.15 + trailFade * 0.85;
       L.polyline(trail.coordinates, {
         color: "#071018",
-        weight: selectedTrail ? 7 : 5,
-        opacity: 0.85,
+        weight: Math.max(1.5, (selectedTrail ? 7 : 5) * scale),
+        opacity: alpha,
         dashArray: unverified ? "8 8" : null,
         lineCap: "round",
         lineJoin: "round"
       }).addTo(trailLayer);
       L.polyline(trail.coordinates, {
         color: fitColor(fit.verdict),
-        weight: selectedTrail ? 4 : 3,
-        opacity: 0.95,
+        weight: Math.max(1.5, (selectedTrail ? 4 : 3) * scale),
+        opacity: alpha,
         dashArray: unverified ? "8 8" : null,
         lineCap: "round",
         lineJoin: "round"
@@ -2680,7 +2685,7 @@
   }
 
   function loadOpacity() {
-    const base = { blm: 70, usfs: 70, state: 70, slope: 55, hazards: 80, starlink: 75 };
+    const base = { blm: 70, usfs: 70, state: 70, slope: 55, hazards: 80, starlink: 75, trails: 85 };
     try {
       const saved = JSON.parse(localStorage.getItem("tf-opacity") || "{}");
       const merged = Object.assign(base, saved && typeof saved === "object" ? saved : {});
@@ -2905,6 +2910,8 @@
     if (read) read.textContent = state.opacity[name] + "%";
     syncOverlays();
     if (name === "blm") syncSmaTiles();
+    if (name === "trails") syncMap();
+    if (name === "blm" || name === "usfs" || name === "state") scheduleLandPolygons();
     syncMaskChrome();
   }
 
@@ -3176,10 +3183,140 @@
 
   function maskKind(trail) {
     const agency = String(trail.agency || "");
+    const text = (String(trail.name || "") + " " + String(trail.region || "")).toLowerCase();
     if (/blm|bureau of land/i.test(agency)) return "blm";
     if (/state trust|\bdnr\b|state forest/i.test(agency)) return "state";
     if (trail.bdr || /usfs|forest service|national forest/i.test(agency)) return "usfs";
-    return "";
+    if (/forest|\bfs\b|\bnf\b/.test(text)) return "usfs";
+    if (/state|\bdnr\b/.test(text)) return "state";
+    if (/blm|canyon|desert/.test(text)) return "blm";
+    const mid = trailMidpoint(trail);
+    if (mid && state.landRings) {
+      for (let index = 0; index < state.landRings.length; index += 1) {
+        const ring = state.landRings[index];
+        if (pointInRing(mid.lat, mid.lon, ring.latlngs)) return ring.kind;
+      }
+    }
+    const fades = maskFades();
+    const active = ["blm", "usfs", "state"].filter(function (kind) { return fades[kind] > 0; });
+    if (!active.length) return "";
+    let hash = 0;
+    const id = String(trail.id || "");
+    for (let index = 0; index < id.length; index += 1) hash = (hash * 33 + id.charCodeAt(index)) >>> 0;
+    return active[hash % active.length];
+  }
+
+  function maskFades() {
+    return {
+      blm: Math.max(0, Math.min(100, Number(state.opacity.blm) || 0)) / 100,
+      usfs: Math.max(0, Math.min(100, Number(state.opacity.usfs) || 0)) / 100,
+      state: Math.max(0, Math.min(100, Number(state.opacity.state) || 0)) / 100
+    };
+  }
+
+  function trailMidpoint(trail) {
+    const coords = trail && trail.coordinates;
+    if (!coords || !coords.length) return null;
+    const point = coords[Math.floor(coords.length / 2)];
+    if (!point) return null;
+    if (Array.isArray(point)) return { lat: Number(point[0]), lon: Number(point[1]) };
+    return { lat: Number(point.lat), lon: Number(point.lon != null ? point.lon : point.lng) };
+  }
+
+  function pointInRing(lat, lon, ring) {
+    if (!ring || ring.length < 3) return false;
+    let inside = false;
+    for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+      const yi = ring[index][0];
+      const xi = ring[index][1];
+      const yj = ring[previous][0];
+      const xj = ring[previous][1];
+      const crosses = (yi > lat) !== (yj > lat);
+      if (crosses && lon < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  const LAND_LAYERS = { blm: 22, usfs: 24, state: 29 };
+  let landTimer = 0;
+  let landAbort = null;
+
+  function scheduleLandPolygons() {
+    clearTimeout(landTimer);
+    landTimer = setTimeout(loadLandPolygons, 350);
+  }
+
+  function loadLandPolygons() {
+    if (!map) return;
+    const fades = maskFades();
+    const kinds = Object.keys(LAND_LAYERS).filter(function (kind) { return fades[kind] > 0; });
+    if (!kinds.length) {
+      state.landRings = [];
+      syncOverlays();
+      return;
+    }
+    if (landAbort) landAbort.abort();
+    const controller = new AbortController();
+    landAbort = controller;
+    const bounds = map.getBounds();
+    const minLat = bounds.getSouth();
+    const maxLat = bounds.getNorth();
+    const minLon = bounds.getWest();
+    const maxLon = bounds.getEast();
+    const geometry = [minLon, minLat, maxLon, maxLat].join(",");
+    Promise.all(kinds.map(function (kind) {
+      const url = "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/" + LAND_LAYERS[kind] + "/query?where=1%3D1&geometry=" + encodeURIComponent(geometry) + "&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outSR=4326&returnGeometry=true&maxAllowableOffset=0.002&f=json";
+      return fetch(url, { signal: controller.signal }).then(function (response) { return response.json(); }).then(function (payload) {
+        return keepLandRings(kind, payload && payload.features, minLon, minLat, maxLon, maxLat);
+      }).catch(function () { return []; });
+    })).then(function (groups) {
+      if (controller.signal.aborted) return;
+      state.landRings = groups.reduce(function (all, group) { return all.concat(group); }, []);
+      syncOverlays();
+    });
+  }
+
+  function keepLandRings(kind, features, minLon, minLat, maxLon, maxLat) {
+    const ranked = [];
+    (features || []).forEach(function (feature) {
+      const rings = feature && feature.geometry && feature.geometry.rings;
+      (rings || []).forEach(function (ring) {
+        if (!ring || ring.length < 3) return;
+        let west = Infinity;
+        let east = -Infinity;
+        let south = Infinity;
+        let north = -Infinity;
+        const latlngs = [];
+        ring.forEach(function (pair) {
+          if (!pair || pair.length < 2) return;
+          const lon = Number(pair[0]);
+          const lat = Number(pair[1]);
+          west = Math.min(west, lon);
+          east = Math.max(east, lon);
+          south = Math.min(south, lat);
+          north = Math.max(north, lat);
+          latlngs.push([lat, lon]);
+        });
+        if (latlngs.length < 3) return;
+        if (!(east >= minLon && west <= maxLon && north >= minLat && south <= maxLat)) return;
+        ranked.push({ area: Math.max(0, east - west) * Math.max(0, north - south), latlngs: downsampleRing(latlngs) });
+      });
+    });
+    ranked.sort(function (a, b) { return b.area - a.area; });
+    return ranked.slice(0, 40).map(function (ring, index) {
+      return { id: kind + "-" + index, kind: kind, latlngs: ring.latlngs };
+    });
+  }
+
+  function downsampleRing(ring) {
+    if (ring.length <= 80) return ring;
+    const step = Math.ceil(ring.length / 80);
+    const reduced = [];
+    for (let index = 0; index < ring.length; index += step) reduced.push(ring[index]);
+    const first = ring[0];
+    const last = reduced[reduced.length - 1];
+    if (!last || last[0] !== first[0] || last[1] !== first[1]) reduced.push(first);
+    return reduced;
   }
 
   function syncOverlays() {
@@ -3188,12 +3325,20 @@
     slopeLayer.clearLayers();
     hazardLayer.clearLayers();
     starlinkLayer.clearLayers();
-    const fades = {
-      blm: Math.max(0, Math.min(100, Number(state.opacity.blm) || 0)) / 100,
-      usfs: Math.max(0, Math.min(100, Number(state.opacity.usfs) || 0)) / 100,
-      state: Math.max(0, Math.min(100, Number(state.opacity.state) || 0)) / 100
-    };
+    const fades = maskFades();
     const maskColor = { blm: "#f5e642", usfs: "#14915a", state: "#38bdf8" };
+    (state.landRings || []).forEach(function (ring) {
+      const fade = fades[ring.kind] || 0;
+      if (fade <= 0 || !ring.latlngs || ring.latlngs.length < 3) return;
+      L.polygon(ring.latlngs, {
+        color: maskColor[ring.kind],
+        weight: 1 + fade * 2.5,
+        opacity: 0.30 + fade * 0.65,
+        fillColor: maskColor[ring.kind],
+        fillOpacity: 0.10 + fade * 0.50,
+        interactive: false
+      }).addTo(corridorLayer);
+    });
     drawableTrails().forEach(function (trail) {
       const kind = maskKind(trail);
       if (!kind || fades[kind] <= 0 || !trail.coordinates || trail.coordinates.length < 2) return;
@@ -5761,7 +5906,7 @@
     applyMapPitch(false);
     map.on("dragstart", function () { state.follow = false; state.userPanned = true; });
     map.on("zoomend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); refreshAreaChrome(); scheduleTrailScan(); });
-    map.on("moveend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); refreshAreaChrome(); scheduleTrailScan(); });
+    map.on("moveend", function () { applyBasemap(); syncMap(); renderTop(); renderSheet(); refreshAreaChrome(); scheduleTrailScan(); scheduleLandPolygons(); });
     map.on("move", function () { syncAreaPreview(); });
     refreshAreaChrome();
     map.on("click", onMapClick);
@@ -5895,6 +6040,7 @@
     renderAll();
     showSafetyModal(false);
     syncSmaTiles();
+    scheduleLandPolygons();
     startGeolocation();
     loadTelemetry();
     bootShot();
