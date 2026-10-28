@@ -93,7 +93,7 @@
     packKind: localStorage.getItem("tf-pack-kind") === "satellite" ? "satellite" : "topo",
     packArea: (function () {
       const saved = localStorage.getItem("tf-pack-area") || "corridor";
-      const area = saved === "sq30" || saved === "view" || saved === "corridor" ? saved : "view";
+      const area = saved === "view" || saved === "corridor" ? saved : "view";
       if (area !== saved) localStorage.setItem("tf-pack-area", area);
       return area;
     })(),
@@ -726,7 +726,7 @@
     const color = "#8ea6bb";
     const title = locating ? "Near Me • Locating you" : (!list.length ? "No routes for " + filterTitle() : filterTitle() + " • " + list.length + (list.length === 1 ? " Route" : " Routes"));
     const detail = locating ? "Waiting for GPS. Pan the map to browse another area." : (state.filter === "near" || state.filter === "all" ? "Closest trails first" : "Pick a route below");
-    top.innerHTML = '<div class="fit"><div class="lamp" style="background:' + color + ";color:" + color + '"></div><div class="fit-copy"><div class="fit-title">' + esc(title) + '</div><div class="sub">' + esc(detail) + '</div>' + liveFlagHtml() + '</div><button type="button" class="pill-btn" data-act="offline">' + (state.offlineSaved ? "Offline" : "Save") + "</button></div>";
+    top.innerHTML = '<div class="fit"><div class="lamp" style="background:' + color + ";color:" + color + '"></div><div class="fit-copy"><div class="fit-title">' + esc(title) + '</div><div class="sub">' + esc(detail) + '</div>' + liveFlagHtml() + '</div><button type="button" class="pill-btn' + (state.drawer === "corridor" ? " on" : "") + '" data-act="offline">' + (state.offlineSaved ? "Offline Maps" : "Save") + "</button></div>";
   }
 
   function routeBarHtml() {
@@ -856,7 +856,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.6 · build 28<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.7 · build 29<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2277,10 +2277,7 @@
       return;
     }
     if (act === "offline") {
-      state.offlineSaved = !state.offlineSaved;
-      localStorage.setItem("tf-offline", state.offlineSaved ? "1" : "0");
-      toast(state.offlineSaved ? "50-state atlas saved on this device." : "Atlas will refresh while you are online.");
-      renderTop();
+      toggleOfflineMaps(false);
       return;
     }
     if (act === "mute") { setMuted(!state.muted); return; }
@@ -2395,11 +2392,17 @@
       toast("North");
       return;
     }
-    if (act === "corridor" || act === "download-corridor") {
-      state.drawer = "corridor";
-      leaveFullDetent();
-      renderDrawer();
-      applyChrome();
+    if (act === "corridor") {
+      toggleOfflineMaps(true);
+      return;
+    }
+    if (act === "download-corridor") {
+      if (state.drawer !== "corridor") {
+        state.drawer = "corridor";
+        leaveFullDetent();
+        renderDrawer();
+        applyChrome();
+      }
       downloadCorridor();
       return;
     }
@@ -2433,7 +2436,7 @@
     }
     if (act === "pack-area") {
       const id = button.dataset.id;
-      state.packArea = id === "sq30" || id === "view" || id === "corridor" ? id : "view";
+      state.packArea = id === "view" || id === "corridor" ? id : "view";
       localStorage.setItem("tf-pack-area", state.packArea);
       refreshAreaChrome();
       renderDrawer();
@@ -2670,6 +2673,10 @@
     if (!map || !smaLayer) return;
     const fade = Math.max(0, Math.min(100, Number(state.opacity.blm) || 0)) / 100;
     toggleTile(smaLayer, fade > 0, fade || 0);
+    if (fade > 0 && smaLayer.getContainer) {
+      const container = smaLayer.getContainer();
+      if (container) container.style.opacity = String(fade);
+    }
   }
 
   function loadOpacity() {
@@ -2711,6 +2718,47 @@
     localStorage.setItem("tf-packs", JSON.stringify(state.packs));
   }
 
+  function toggleOfflineMaps(startDownload) {
+    if (state.drawer === "corridor") {
+      state.drawer = null;
+    } else {
+      state.drawer = "corridor";
+      leaveFullDetent();
+      if (startDownload) downloadCorridor();
+    }
+    renderDrawer();
+    applyChrome();
+    syncAreaPreview();
+    renderTop();
+  }
+
+  function placeRail() {
+    const rail = document.getElementById("rail");
+    const dock = document.getElementById("dock");
+    const stage = document.getElementById("stage");
+    if (!rail || !dock || !stage) return;
+    const landscape = window.matchMedia("(orientation: landscape)").matches;
+    if (dashOn() || landscape || state.detent === "full") {
+      rail.style.top = "";
+      rail.style.maxHeight = "";
+      rail.style.position = "";
+      return;
+    }
+    const start = Math.round(window.innerHeight * 0.5);
+    const room = dock.getBoundingClientRect().top - start - 8;
+    if (room >= 120) {
+      rail.style.position = "fixed";
+      rail.style.top = start + "px";
+      rail.style.maxHeight = room + "px";
+      return;
+    }
+    const stageBox = stage.getBoundingClientRect();
+    const fit = Math.min(220, Math.max(88, stageBox.height - 12));
+    rail.style.position = "absolute";
+    rail.style.top = Math.max(8, stageBox.height - fit) + "px";
+    rail.style.maxHeight = fit + "px";
+  }
+
   function dashOn() {
     if (state.dash === "on") return true;
     if (state.dash === "off") return false;
@@ -2742,7 +2790,9 @@
       if (map) map.invalidateSize();
       refreshPitchForStage();
       paintElevation();
+      placeRail();
     }, 60);
+    placeRail();
   }
 
   function setDetent(id) {
@@ -2764,7 +2814,7 @@
     drawer.querySelectorAll("[data-panel]").forEach(function (panel) {
       panel.hidden = panel.dataset.panel !== state.drawer;
     });
-    const titles = { layers: "Layers & Opacity", corridor: "Offline Maps — Area Box & Route Corridor", plot: "Custom Route" };
+    const titles = { layers: "Layers & Opacity", corridor: "Offline Maps", plot: "Custom Route" };
     const title = document.getElementById("drawerTitle");
     if (title) title.textContent = titles[state.drawer] || "Layers";
     drawer.querySelectorAll("[data-act=basemap]").forEach(function (button) {
@@ -3147,10 +3197,11 @@
     drawableTrails().forEach(function (trail) {
       const kind = maskKind(trail);
       if (!kind || fades[kind] <= 0 || !trail.coordinates || trail.coordinates.length < 2) return;
+      const fade = fades[kind];
       L.polyline(trail.coordinates, {
         color: maskColor[kind],
-        weight: 16,
-        opacity: fades[kind] * 0.45,
+        weight: 8 + Math.round(fade * 16),
+        opacity: 0.18 + fade * 0.74,
         lineCap: "round",
         lineJoin: "round",
         interactive: false
@@ -3165,8 +3216,8 @@
         const color = grade < 3 ? "#3ddc84" : grade < 8 ? "#ff9f1a" : "#ff4d4d";
         L.polyline([[profile[index - 1].lat, profile[index - 1].lon], [profile[index].lat, profile[index].lon]], {
           color: color,
-          weight: 8,
-          opacity: slopeFade * 0.85,
+          weight: 6 + Math.round(slopeFade * 12),
+          opacity: 0.22 + slopeFade * 0.7,
           lineCap: "round"
         }).addTo(slopeLayer);
       }
@@ -3193,12 +3244,12 @@
         const spot = spots[index];
         if (spot.slope >= 3) continue;
         L.circle([spot.lat, spot.lon], {
-          radius: 220,
+          radius: 180 + starlinkFade * 180,
           color: "#3ecbff",
-          weight: 1,
-          opacity: starlinkFade * 0.85,
+          weight: 1 + Math.round(starlinkFade * 3),
+          opacity: 0.28 + starlinkFade * 0.68,
           fillColor: "#3ecbff",
-          fillOpacity: starlinkFade * 0.22 * (Number(spot.starlink) || 0) / 100,
+          fillOpacity: 0.08 + starlinkFade * 0.5,
           interactive: false
         }).addTo(starlinkLayer);
         drawn += 1;
@@ -4209,14 +4260,6 @@
 
   function liveAreaBox() {
     if (!map || state.packArea === "corridor") return null;
-    if (state.packArea === "sq30") {
-      const sqMiles = 30;
-      const center = map.getCenter();
-      const box = squareBounds(center.lat, center.lng, sqMiles);
-      box.sqMiles = sqMiles;
-      box.mode = "sq30";
-      return box;
-    }
     const box = currentViewBounds();
     if (!box) return null;
     box.sqMiles = boxSqMiles(box);
@@ -4234,11 +4277,11 @@
     const box = liveAreaBox();
     if (!box) return "5-Mi Route Corridor";
     if (box.mode === "view") return currentScreenLabel();
-    return box.sqMiles + " sq mi Area";
+    return "5-Mi Route Corridor";
   }
 
   function areaZooms(box) {
-    if (!box || box.mode === "sq30" || box.sqMiles <= 45) return [11, 12, 13, 14, 15];
+    if (!box || box.sqMiles <= 45) return [11, 12, 13, 14, 15];
     return [11, 12, 13, 14];
   }
 
@@ -5860,7 +5903,10 @@
     refreshCommunity(false);
     window.addEventListener("resize", function () {
       clearTimeout(pitchResizeTimer);
-      pitchResizeTimer = setTimeout(refreshPitchForStage, 60);
+      pitchResizeTimer = setTimeout(function () {
+        refreshPitchForStage();
+        placeRail();
+      }, 60);
     });
     setTimeout(function () {
       map.invalidateSize();

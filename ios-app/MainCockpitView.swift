@@ -143,10 +143,10 @@ struct MainCockpitView: View {
     @State private var offlineTier = "Route + USFS snapshot"
     @AppStorage("trailforge.offlineArea") private var offlineArea = "corridor"
 
-    /// Saved 100 and 250 sq mi choices, and any other unknown value, open as Current Map View.
+    /// Saved 30, 100, and 250 sq mi choices, and any other unknown value, open as Current Map View.
     private var resolvedOfflineArea: String {
         switch offlineArea {
-        case "view", "sq30", "corridor":
+        case "view", "corridor":
             return offlineArea
         default:
             return "view"
@@ -528,6 +528,9 @@ struct MainCockpitView: View {
                 if detent == .peek || (newMode == .rig && detent == .full) { detent = .half }
             }
             .onAppear {
+                if offlineArea != "view" && offlineArea != "corridor" {
+                    offlineArea = "view"
+                }
                 motionManager.startUpdates()
                 locationTracker.requestLocation()
                 refreshSelectedTrailDraw()
@@ -672,9 +675,9 @@ struct MainCockpitView: View {
                 }
                 Spacer()
                 Button {
-                    offlineSaved.toggle()
+                    toggleOfflineMaps()
                 } label: {
-                    Label(offlineSaved ? "Offline" : "Save", systemImage: offlineSaved ? "checkmark.icloud.fill" : "arrow.down.circle.fill")
+                    Label(offlineSaved ? "Offline Maps" : "Save", systemImage: offlineSaved ? "checkmark.icloud.fill" : "arrow.down.circle.fill")
                         .font(.caption.bold())
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -2133,7 +2136,7 @@ struct MainCockpitView: View {
 
     private func portraitCockpit(_ size: CGSize) -> some View {
         VStack(spacing: 0) {
-            mapStage(showGloveRow: false)
+            mapStage(showGloveRow: false, viewportHeight: size.height)
             cockpitSheet(expanded: detent != .peek)
                 .frame(height: sheetHeight(size.height))
         }
@@ -2141,7 +2144,7 @@ struct MainCockpitView: View {
 
     private func dashCockpit(_ size: CGSize) -> some View {
         HStack(spacing: 0) {
-            mapStage(showGloveRow: true)
+            mapStage(showGloveRow: true, viewportHeight: size.height)
                 .frame(width: size.width * 0.65)
             dashColumn
                 .frame(width: size.width * 0.35)
@@ -2177,7 +2180,15 @@ struct MainCockpitView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func mapStage(showGloveRow: Bool) -> some View {
+    private func railColumnTop(showGloveRow: Bool, viewportHeight: CGFloat, mapHeight: CGFloat) -> CGFloat {
+        if showGloveRow {
+            return min(88, max(0, mapHeight - 160))
+        }
+        let halfway = viewportHeight * 0.50
+        return min(halfway, max(0, mapHeight - 150))
+    }
+
+    private func mapStage(showGloveRow: Bool, viewportHeight: CGFloat) -> some View {
         ZStack {
             routeMap(showsUserLocationButton: !showGloveRow)
             if nightVision {
@@ -2199,7 +2210,7 @@ struct MainCockpitView: View {
             VStack(spacing: 8) {
                 if let route = activeRoute, followRoute {
                     navigationBanner(route)
-                        .padding(.trailing, 56)
+                        .padding(.trailing, 70)
                 }
                 if showRouteStartNote {
                     Text("Obey posted signs, verify private property, and keep your eyes on the trail.")
@@ -2210,7 +2221,7 @@ struct MainCockpitView: View {
                         .background(Color.black.opacity(0.82))
                         .foregroundColor(Color(red: 1.0, green: 0.74, blue: 0.18))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .padding(.trailing, 56)
+                        .padding(.trailing, 70)
                         .allowsHitTesting(false)
                 }
                 topCluster
@@ -2227,7 +2238,7 @@ struct MainCockpitView: View {
                 if let route = activeRoute, !isRouteConfirmed {
                     routePreviewBanner(route)
                         .padding(.leading, 4)
-                        .padding(.trailing, 46)
+                        .padding(.trailing, 70)
                 }
                 if showGloveRow {
                     gloveRow
@@ -2239,18 +2250,19 @@ struct MainCockpitView: View {
             .padding(.leading, 8)
         }
         .overlay(alignment: .topTrailing) {
-            if detent != .full || showGloveRow {
-                VStack(spacing: 0) {
-                    Spacer()
-                        .frame(height: showGloveRow ? 88 : 148)
-                    ScrollView(.vertical, showsIndicators: false) {
-                        rightRail(showGloveRow)
+            GeometryReader { proxy in
+                if detent != .full || showGloveRow {
+                    let top = railColumnTop(showGloveRow: showGloveRow, viewportHeight: viewportHeight, mapHeight: proxy.size.height)
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: top)
+                        ScrollView(.vertical, showsIndicators: false) {
+                            rightRail(showGloveRow)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
                     }
-                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(width: 62, height: proxy.size.height, alignment: .top)
+                    .padding(.trailing, 5)
                 }
-                .frame(width: 56)
-                .padding(.trailing, 5)
-                .padding(.bottom, 8)
             }
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)
@@ -2351,8 +2363,7 @@ struct MainCockpitView: View {
             }
             .accessibilityLabel("Custom route plotter")
             railButton("arrow.down.circle.fill", active: showOffline) {
-                leaveFullDetent()
-                showOffline = true
+                toggleOfflineMaps()
             }
             .accessibilityLabel("Download 5-mile corridor")
             railButton("camera.fill", active: showHazardSheet) {
@@ -2366,19 +2377,18 @@ struct MainCockpitView: View {
             .accessibilityLabel("Night vision")
         }
         .padding(4)
-        .frame(width: 48)
+        .frame(width: 54)
         .background(Color.black.opacity(0.84))
-        .clipShape(RoundedRectangle(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.white.opacity(0.15), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15), lineWidth: 1))
     }
 
     private var topCluster: some View {
         HStack(spacing: 6) {
             Button {
-                leaveFullDetent()
-                showOffline = true
+                toggleOfflineMaps()
             } label: {
-                Text("Offline")
+                Text("Offline Maps")
                     .font(.caption.bold())
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -2387,6 +2397,15 @@ struct MainCockpitView: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    private func toggleOfflineMaps() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            showOffline.toggle()
+        }
+        if showOffline {
+            leaveFullDetent()
         }
     }
 
@@ -2770,14 +2789,14 @@ struct MainCockpitView: View {
             ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Offline Maps — Area Box & Route Corridor")
+                    Text("Offline Maps")
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Close") { showOffline = false }
                         .font(.caption.bold())
                 }
-                Text("Pan the map. A 30 sq mi box stays centered on the screen. Current Map View uses the exact bounds on screen.")
+                Text("Current Map View uses the exact bounds on screen. The 5-mile corridor follows the selected trail or active GPS route.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 Text("Saved on-device in TrailForge local storage (offline-ready, zero cell required)")
@@ -2853,14 +2872,20 @@ struct MainCockpitView: View {
                 .font(.caption2.bold())
                 .foregroundColor(.secondary)
             ForEach(offlineAreaChoices, id: \.id) { choice in
-                Button(choice.title) { offlineArea = choice.id }
-                    .font(.caption.bold())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(resolvedOfflineArea == choice.id ? Color.cyan : Color.white.opacity(0.12))
-                    .foregroundColor(resolvedOfflineArea == choice.id ? .black : .white)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                Button {
+                    offlineArea = choice.id
+                } label: {
+                    Text(choice.title)
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(resolvedOfflineArea == choice.id ? Color.cyan : Color.white.opacity(0.12))
+                        .foregroundColor(resolvedOfflineArea == choice.id ? .black : .white)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -2869,17 +2894,13 @@ struct MainCockpitView: View {
         let viewMiles = Int(OfflineAreaBox.visible(visibleRegion).squareMiles.rounded())
         return [
             ("corridor", "5-Mi Route Corridor"),
-            ("sq30", "30 sq mi Area"),
             ("view", "Current Screen View (~\(viewMiles) sq mi)")
         ]
     }
 
     private var offlineDownloadTitle: String {
-        guard let box = liveOfflineBox() else { return "Download 5-Mile Corridor" }
-        if resolvedOfflineArea == "view" {
-            return "Download Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
-        }
-        return "Download 30 sq mi Area"
+        guard resolvedOfflineArea == "view", let box = liveOfflineBox() else { return "Download 5-Mile Corridor" }
+        return "Download Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
     }
 
     private var offlineEstimateLine: String {
@@ -2890,9 +2911,7 @@ struct MainCockpitView: View {
         let tiles = OfflineAreaMath.tileCount(for: box, zooms: zooms)
         let trails = trailsInside(box).count
         let mb = max(4, tiles * 18 / 1024)
-        let label = resolvedOfflineArea == "view"
-            ? "Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
-            : "30 sq mi Area"
+        let label = "Current Screen View (~\(Int(box.squareMiles.rounded())) sq mi)"
         return "\(label) · ~\(tiles) tiles · \(trails) trails · ~\(mb) MB"
     }
 
@@ -3695,11 +3714,11 @@ struct MainCockpitView: View {
     private func railButton(_ system: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.system(size: 17, weight: .bold))
-                .frame(width: 40, height: 40)
+                .font(.system(size: 19, weight: .bold))
+                .frame(width: 44, height: 44)
                 .background(active ? Color.cyan : Color.black.opacity(0.78))
                 .foregroundColor(active ? .black : .white)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
     }
@@ -4005,8 +4024,8 @@ struct MainCockpitView: View {
         downloadProgress = 0.2
         let satellite = basemap != .standard
         let miles = Int(box.squareMiles.rounded())
-        let preset = resolvedOfflineArea == "sq30" ? 30 : miles
-        let label = resolvedOfflineArea == "view" ? "Current Screen View (~\(miles) sq mi)" : "\(preset) sq mi Area"
+        let preset = miles
+        let label = "Current Screen View (~\(miles) sq mi)"
         let tier = (satellite ? "Satellite" : "Topo") + " + Trails"
         let spec = OfflineAreaDownload(
             box: box,
@@ -4030,8 +4049,6 @@ struct MainCockpitView: View {
     private func liveOfflineBox() -> OfflineAreaBox? {
         guard showOffline || downloadRunning else { return nil }
         switch resolvedOfflineArea {
-        case "sq30":
-            return .square(center: screenCenter, squareMiles: 30)
         case "view":
             return .visible(visibleRegion)
         default:
@@ -4040,7 +4057,7 @@ struct MainCockpitView: View {
     }
 
     private func offlineZooms(for box: OfflineAreaBox) -> [Int] {
-        if resolvedOfflineArea == "sq30" || box.squareMiles <= 45 { return [11, 12, 13, 14, 15] }
+        if box.squareMiles <= 45 { return [11, 12, 13, 14, 15] }
         return [11, 12, 13, 14]
     }
 
@@ -4338,7 +4355,11 @@ private struct StableRouteMap: View, Equatable {
         ForEach(trails) { trail in
             if trail.coordinates.count >= 2, let tint = corridorTint(trail) {
                 MapPolyline(coordinates: trail.coordinates)
-                    .stroke(tint.color.opacity(tint.fade * 0.5), style: StrokeStyle(lineWidth: 14, lineCap: .round, lineJoin: .round))
+                    .stroke(
+                        tint.color.opacity(0.18 + tint.fade * 0.74),
+                        style: StrokeStyle(lineWidth: 8 + tint.fade * 16, lineCap: .round, lineJoin: .round)
+                    )
+                    .id("mask-\(trail.id)-\(Int((tint.fade * 100).rounded()))")
             }
         }
     }
@@ -4397,14 +4418,16 @@ private struct StableRouteMap: View, Equatable {
             corridorMasks
             if campSlopeOpacity > 0.02 {
                 ForEach(Array(camps.prefix(12))) { spot in
-                    MapCircle(center: spot.coordinate, radius: 140)
-                        .foregroundStyle(LandMask.slopeFlat.opacity(0.28 * campSlopeOpacity))
+                    MapCircle(center: spot.coordinate, radius: 120 + campSlopeOpacity * 80)
+                        .foregroundStyle(LandMask.slopeFlat.opacity(0.12 + campSlopeOpacity * 0.62))
+                        .id("slope-\(spot.id)-\(Int((campSlopeOpacity * 100).rounded()))")
                 }
             }
             if starlinkOpacity > 0.02 {
                 ForEach(Array(camps.prefix(12))) { spot in
-                    MapCircle(center: spot.coordinate, radius: 220)
-                        .foregroundStyle(LandMask.cell.opacity(0.22 * starlinkOpacity * Double(spot.starlinkPct) / 100))
+                    MapCircle(center: spot.coordinate, radius: 160 + starlinkOpacity * 140)
+                        .foregroundStyle(LandMask.cell.opacity(0.1 + starlinkOpacity * 0.55))
+                        .id("cell-\(spot.id)-\(Int((starlinkOpacity * 100).rounded()))")
                 }
             }
             if hazardOpacity > 0.02 {
@@ -4580,12 +4603,15 @@ private struct StableRouteMap: View, Equatable {
     private func hazardOverlay(_ hazard: MapHazard) -> some MapContent {
         if hazard.coordinates.count >= 4 {
             MapPolygon(coordinates: hazard.coordinates)
-                .foregroundStyle(LandMask.slopeSteep.opacity(0.18 * hazardOpacity))
+                .foregroundStyle(LandMask.slopeSteep.opacity(0.12 + hazardOpacity * 0.55))
+                .id("hazard-fill-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
             MapPolyline(coordinates: hazard.coordinates)
-                .stroke(LandMask.slopeSteep.opacity(hazardOpacity), lineWidth: 1.5)
+                .stroke(LandMask.slopeSteep.opacity(0.35 + hazardOpacity * 0.6), lineWidth: 1.5 + hazardOpacity * 3.5)
+                .id("hazard-line-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
         } else {
-            MapCircle(center: hazard.point, radius: hazard.radiusMeters)
-                .foregroundStyle(LandMask.slopeMid.opacity(0.28 * hazardOpacity))
+            MapCircle(center: hazard.point, radius: hazard.radiusMeters * (0.7 + hazardOpacity * 0.6))
+                .foregroundStyle(LandMask.slopeMid.opacity(0.14 + hazardOpacity * 0.6))
+                .id("hazard-point-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
             if hazard.id.hasPrefix("community-") || hazard.id.hasPrefix("userhazard-") {
                 Annotation("", coordinate: hazard.point) {
                     Text(hazard.title)
