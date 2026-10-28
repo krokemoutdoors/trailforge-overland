@@ -306,6 +306,10 @@
     .safety-card .lead { margin: 0; color: #d5e4f0; font-size: 13px; }
     .safety-card h3 { margin: 14px 0 4px; font-size: 13px; color: #ffb020; }
     .safety-card p { margin: 0; font-size: 13px; line-height: 1.45; color: #d5e4f0; }
+    .safety-card .trespass { margin-top: 14px; border: 1px solid rgba(255, 180, 32, 0.55); border-radius: 12px; padding: 10px 12px; background: rgba(255, 180, 32, 0.08); }
+    .safety-card .trespass h3 { margin-top: 0; color: #ffd27a; }
+    .safety-card .trespass p + p { margin-top: 8px; }
+    .mask-note { margin: 8px 2px 2px; color: var(--muted); font-size: 11px; line-height: 1.4; }
     .safety-agree { width: 100%; margin-top: 14px; border: 0; border-radius: 999px; background: #3ddc84; color: #04140c; font-weight: 800; font-size: 15px; padding: 14px 12px; }
     .safety-links { display: block; text-align: center; margin-top: 10px; color: #7dd3fc; font-size: 12px; font-weight: 800; }
     button.safety-review { width: 100%; margin: 12px 0 8px; border: 1px solid rgba(255, 180, 32, 0.55); background: #1c1408; color: #ffb020; border-radius: 12px; font-weight: 800; font-size: 13px; padding: 12px; }
@@ -393,6 +397,7 @@
           <label class="field mask" data-mask="blm" style="--mask:#f5e642"><span><i class="swatch"></i>BLM Public Land <b data-read="blm">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="blm" aria-label="BLM public land mask" /></label>
           <label class="field mask" data-mask="usfs" style="--mask:#14915a"><span><i class="swatch"></i>USFS National Forest <b data-read="usfs">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="usfs" aria-label="USFS national forest mask" /></label>
           <label class="field mask" data-mask="state" style="--mask:#38bdf8"><span><i class="swatch"></i>State Trust Land <b data-read="state">70%</b></span><input type="range" min="0" max="100" step="1" value="70" data-overlay="state" aria-label="State trust land mask" /></label>
+          <p class="mask-note">Land shading is approximate and not a legal survey. Always verify private property boundaries, easements, and posted signs on the ground—never trespass.</p>
           <label class="field mask" data-mask="slope" style="--mask:#3ddc84"><span><i class="swatch"></i><i class="swatch alt" style="--alt:#ff9f1a"></i><i class="swatch alt" style="--alt:#ff4d4d"></i>&lt;3° Slope Shading <b data-read="slope">55%</b></span><input type="range" min="0" max="100" step="1" value="55" data-overlay="slope" aria-label="Slope shading mask" /></label>
           <label class="field mask" data-mask="hazards" style="--mask:#ff4d4d"><span><i class="swatch"></i><i class="swatch alt" style="--alt:#ff9f1a"></i>Wildfires &amp; Hazards <b data-read="hazards">80%</b></span><input type="range" min="0" max="100" step="1" value="80" data-overlay="hazards" aria-label="Wildfire and hazard mask" /></label>
           <label class="field mask" data-mask="starlink" style="--mask:#3ecbff"><span><i class="swatch"></i>Cell &amp; Starlink Sky <b data-read="starlink">75%</b></span><input type="range" min="0" max="100" step="1" value="75" data-overlay="starlink" aria-label="Cell and Starlink sky mask" /></label>
@@ -499,15 +504,28 @@
   <div id="safetyModal" role="dialog" aria-modal="true" aria-labelledby="safetyTitle">
     <div class="safety-card">
       <h2 id="safetyTitle">Safety, Assumption of Risk &amp; Liability Disclaimer</h2>
-      <p class="lead">Read this before you use the map. TrailForge Overland is a reference tool from Krokem Outdoors, not a survey, a land-agency decision, or a promise that a road is open or legal.</p>
+      <p class="lead">Read this before you use the map. TrailForge Overland is a reference tool from SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors, not a survey, a land-agency decision, or a promise that a road is open or legal.</p>
       <h3>1. Informational Reference Only — No Guarantee of Map or Boundary Accuracy</h3>
       <p>Trail routes, difficulty ratings, GPX tracks, MVUM/USFS/BLM/State/Park land ownership masks, water crossings, SNOTEL snow depth, wildfire perimeters, 3D terrain pitch/slope shading, and clearance warnings are crowd and agency estimates for situational reference only. Map boundaries and routes may contain errors, omissions, or outdated data. Do not use them to decide legal property boundaries or whether a road is legal to drive.</p>
+      <div class="trespass">
+        <h3>Private Property, Land Ownership &amp; No Trespassing</h3>
+        <p>You are 100% responsible for verifying that any trail, road, dispersed campsite, waypoint, or off-road area you enter is legally open to public motorized use and is not private property.</p>
+        <p>BLM, USFS, NPS, State Trust, and other land-shading overlays are generalized agency datasets. They do not replace an official cadastral land survey. Public lands frequently contain unmarked private inholdings, patented mining claims, private ranch roads, locked gates, or roads with no legal public right-of-way or easement.</p>
+        <p>Map lines, routed paths, and colored land masks never grant permission to cross private land or to bypass a gate, fence, “No Trespassing” sign, or seasonal closure. Signs and gates on the ground govern. When in doubt, turn around.</p>
+        <p>SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not responsible or liable for trespass claims, fines, citations, towing, impoundment, or legal disputes that result from entering private, restricted, or closed property.</p>
+      </div>
       <h3>2. Assumption of Risk &amp; Backcountry Responsibility</h3>
       <p>Off-road driving, overlanding, and backcountry travel can severely damage a vehicle, strand you, injure you, or kill you. You assume 100% of the risk of the route you choose and the travel you make. Verify road status with the local land manager, obey posted signs, gates, and seasonal closures, carry emergency satellite communication and recovery gear, and do not trespass.</p>
       <h3>3. Do Not Operate While Driving</h3>
       <p>Do not touch map controls, plot a route, or open sheets while the vehicle is moving. Pull over in a safe place before you change a route or a setting.</p>
-      <h3>4. “AS IS” No Warranty, Limitation of Liability &amp; Indemnification</h3>
-      <p>TrailForge Overland is provided by Krokem Outdoors strictly “AS IS” and “AS AVAILABLE,” without warranties of any kind, express or implied. To the maximum extent permitted by law, Edward Shin, Krokem Outdoors, and its affiliates are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. You agree to indemnify and hold them harmless from claims arising from your backcountry travel.</p>
+      <h3>4. No Emergency, SOS, or Search-and-Rescue Service</h3>
+      <p>TrailForge Overland is not an emergency beacon, a satellite SOS communicator, or a search-and-rescue dispatch service. Never rely on it as a life-safety device. Carry a dedicated satellite communicator, such as a Garmin inReach or Apple Emergency SOS via satellite, in the backcountry.</p>
+      <h3>5. Vehicle Clinometer, Clearance &amp; Water/Snow Gauges</h3>
+      <p>Device-sensor pitch and roll angles, vehicle-build clearance comparisons, obstacle crux ratings, and USGS and SNOTEL water and snow readings are uncalibrated informational estimates. They never guarantee rollover safety, vehicle clearance, or a safe water-crossing depth.</p>
+      <h3>6. “AS IS” No Warranty, Limitation of Liability &amp; Indemnification</h3>
+      <p>TrailForge Overland is provided by SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors strictly “AS IS” and “AS AVAILABLE,” without warranties of any kind, express or implied. To the fullest extent permitted by law, SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. Their total aggregate liability for any claim shall not exceed the greater of $0.00 USD or the amount you actually paid for the App in the twelve (12) months before the claim. You agree to indemnify and hold them harmless from claims arising from your backcountry travel.</p>
+      <h3>7. Dispute Resolution, Binding Individual Arbitration &amp; Class-Action Waiver</h3>
+      <p>All disputes arising out of these terms or the App shall be resolved exclusively by binding individual arbitration under the Federal Arbitration Act. You waive any right to participate in a class, collective, or representative action, and you waive any right to a jury trial. If a court finds any part of these terms unenforceable, the rest remains in effect.</p>
       <button type="button" class="safety-agree" data-act="safety-agree">I Understand &amp; Agree — Enter TrailForge</button>
       <a class="safety-links" href="https://krokemoutdoors.github.io/trailforge-overland/#terms" data-act="terms">Terms of Use &amp; Privacy Policy</a>
     </div>

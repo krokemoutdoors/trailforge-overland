@@ -176,6 +176,8 @@ struct MainCockpitView: View {
     @AppStorage("trailforge.safetyDisclaimerAccepted.v1") private var safetyDisclaimerAccepted = false
     @AppStorage("trailforge.safetyDisclaimerAcceptedAt.v1") private var safetyDisclaimerAcceptedAt = ""
     @State private var showSafetyDisclaimer = false
+    @State private var showRouteStartNote = false
+    @State private var routeNoteToken = 0
     @State private var cameraPitch: Double = 0
     @State private var reportedMapPitch: Double = 0
     @State private var pitchCeiling: Double = 0
@@ -1538,6 +1540,19 @@ struct MainCockpitView: View {
         if let route = activeRoute {
             announceRouteStart(route)
         }
+        flashRouteStartNote()
+    }
+
+    private func flashRouteStartNote() {
+        routeNoteToken += 1
+        let token = routeNoteToken
+        showRouteStartNote = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 4_500_000_000)
+            if token == routeNoteToken {
+                showRouteStartNote = false
+            }
+        }
     }
 
     private func followUserCamera() {
@@ -2186,6 +2201,18 @@ struct MainCockpitView: View {
                     navigationBanner(route)
                         .padding(.trailing, 56)
                 }
+                if showRouteStartNote {
+                    Text("Obey posted signs, verify private property, and keep your eyes on the trail.")
+                        .font(.caption2.bold())
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.black.opacity(0.82))
+                        .foregroundColor(Color(red: 1.0, green: 0.74, blue: 0.18))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.trailing, 56)
+                        .allowsHitTesting(false)
+                }
                 topCluster
                 if plotMode {
                     Text(nextSegmentFreehand ? "Plotter • next segment is freehand" : "Plotter • next segment snaps to the trail")
@@ -2517,13 +2544,14 @@ struct MainCockpitView: View {
                     Text("Safety, Assumption of Risk & Liability Disclaimer")
                         .font(.headline)
                         .foregroundColor(.white)
-                    Text("Read this before you use the map. TrailForge Overland is a reference tool from Krokem Outdoors, not a survey, a land-agency decision, or a promise that a road is open or legal.")
+                    Text("Read this before you use the map. TrailForge Overland is a reference tool from SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors, not a survey, a land-agency decision, or a promise that a road is open or legal.")
                         .font(.caption)
                         .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
                     safetyBlock(
                         "Informational Reference Only — No Guarantee of Map or Boundary Accuracy",
                         "Trail routes, difficulty ratings, GPX tracks, MVUM/USFS/BLM/State/Park land ownership masks, water crossings, SNOTEL snow depth, wildfire perimeters, 3D terrain pitch/slope shading, and clearance warnings are crowd and agency estimates for situational reference only. Map boundaries and routes may contain errors, omissions, or outdated data. Do not use them to decide legal property boundaries or whether a road is legal to drive."
                     )
+                    privatePropertyBlock
                     safetyBlock(
                         "Assumption of Risk & Backcountry Responsibility",
                         "Off-road driving, overlanding, and backcountry travel can severely damage a vehicle, strand you, injure you, or kill you. You assume 100% of the risk of the route you choose and the travel you make. Verify road status with the local land manager, obey posted signs, gates, and seasonal closures, carry emergency satellite communication and recovery gear, and do not trespass."
@@ -2533,8 +2561,20 @@ struct MainCockpitView: View {
                         "Do not touch map controls, plot a route, or open sheets while the vehicle is moving. Pull over in a safe place before you change a route or a setting."
                     )
                     safetyBlock(
+                        "No Emergency, SOS, or Search-and-Rescue Service",
+                        "TrailForge Overland is not an emergency beacon, a satellite SOS communicator, or a search-and-rescue dispatch service. Never rely on it as a life-safety device. Carry a dedicated satellite communicator, such as a Garmin inReach or Apple Emergency SOS via satellite, in the backcountry."
+                    )
+                    safetyBlock(
+                        "Vehicle Clinometer, Clearance & Water/Snow Gauges",
+                        "Device-sensor pitch and roll angles, vehicle-build clearance comparisons, obstacle crux ratings, and USGS and SNOTEL water and snow readings are uncalibrated informational estimates. They never guarantee rollover safety, vehicle clearance, or a safe water-crossing depth."
+                    )
+                    safetyBlock(
                         "\"AS IS\" No Warranty, Limitation of Liability & Indemnification",
-                        "TrailForge Overland is provided by Krokem Outdoors strictly \"AS IS\" and \"AS AVAILABLE,\" without warranties of any kind, express or implied. To the maximum extent permitted by law, Edward Shin, Krokem Outdoors, and its affiliates are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. You agree to indemnify and hold them harmless from claims arising from your backcountry travel."
+                        "TrailForge Overland is provided by SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors strictly \"AS IS\" and \"AS AVAILABLE,\" without warranties of any kind, express or implied. To the fullest extent permitted by law, SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not liable for any direct, indirect, incidental, consequential, or special damages — including vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death — arising out of or related to your use of the app. Their total aggregate liability for any claim shall not exceed the greater of $0.00 USD or the amount you actually paid for the App in the twelve (12) months before the claim. You agree to indemnify and hold them harmless from claims arising from your backcountry travel."
+                    )
+                    safetyBlock(
+                        "Dispute Resolution, Binding Individual Arbitration & Class-Action Waiver",
+                        "All disputes arising out of these terms or the App shall be resolved exclusively by binding individual arbitration under the Federal Arbitration Act. You waive any right to participate in a class, collective, or representative action, and you waive any right to a jury trial. If a court finds any part of these terms unenforceable, the rest remains in effect."
                     )
                     Button {
                         safetyDisclaimerAccepted = true
@@ -2565,6 +2605,24 @@ struct MainCockpitView: View {
             }
         }
         .zIndex(20)
+    }
+
+    private var privatePropertyBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Private Property, Land Ownership & No Trespassing")
+                .font(.caption.bold())
+                .foregroundColor(Color(red: 1.0, green: 0.82, blue: 0.35))
+            Text("You are 100% responsible for verifying that any trail, road, dispersed campsite, waypoint, or off-road area you enter is legally open to public motorized use and is not private property.")
+            Text("BLM, USFS, NPS, State Trust, and other land-shading overlays are generalized agency datasets. They do not replace an official cadastral land survey. Public lands frequently contain unmarked private inholdings, patented mining claims, private ranch roads, locked gates, or roads with no legal public right-of-way or easement.")
+            Text("Map lines, routed paths, and colored land masks never grant permission to cross private land or to bypass a gate, fence, “No Trespassing” sign, or seasonal closure. Signs and gates on the ground govern. When in doubt, turn around.")
+            Text("SE Media LLC (d/b/a Krokem Outdoors), Edward Shin, and their members, officers, affiliates, and licensors are not responsible or liable for trespass claims, fines, citations, towing, impoundment, or legal disputes that result from entering private, restricted, or closed property.")
+        }
+        .font(.caption)
+        .foregroundColor(Color(red: 0.83, green: 0.89, blue: 0.94))
+        .padding(10)
+        .background(Color.orange.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.55), lineWidth: 1))
     }
 
     private func safetyBlock(_ title: String, _ body: String) -> some View {
@@ -2671,6 +2729,10 @@ struct MainCockpitView: View {
                     maskSlider("BLM Public Land", color: LandMask.blm, value: $blmMaskOpacity)
                     maskSlider("USFS National Forest", color: LandMask.usfs, value: $usfsMaskOpacity)
                     maskSlider("State Trust Land", color: LandMask.stateTrust, value: $stateMaskOpacity)
+                    Text("Land shading is approximate and not a legal survey. Always verify private property boundaries, easements, and posted signs on the ground—never trespass.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     maskSlider("<3° Slope Shading", color: LandMask.slopeFlat, extra: [LandMask.slopeMid, LandMask.slopeSteep], value: $campSlopeOpacity)
                     maskSlider("Wildfires & Hazards", color: LandMask.slopeSteep, extra: [LandMask.slopeMid], value: $hazardOverlayOpacity)
                     maskSlider("Cell & Starlink Sky", color: LandMask.cell, value: $starlinkOverlayOpacity)
