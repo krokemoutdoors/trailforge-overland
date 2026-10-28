@@ -2673,6 +2673,10 @@
     if (!map || !smaLayer) return;
     const fade = Math.max(0, Math.min(100, Number(state.opacity.blm) || 0)) / 100;
     toggleTile(smaLayer, fade > 0, fade || 0);
+    if (fade > 0 && smaLayer.getContainer) {
+      const container = smaLayer.getContainer();
+      if (container) container.style.opacity = String(fade);
+    }
   }
 
   function loadOpacity() {
@@ -3193,10 +3197,11 @@
     drawableTrails().forEach(function (trail) {
       const kind = maskKind(trail);
       if (!kind || fades[kind] <= 0 || !trail.coordinates || trail.coordinates.length < 2) return;
+      const fade = fades[kind];
       L.polyline(trail.coordinates, {
         color: maskColor[kind],
-        weight: 16,
-        opacity: fades[kind] * 0.45,
+        weight: 8 + Math.round(fade * 16),
+        opacity: 0.18 + fade * 0.74,
         lineCap: "round",
         lineJoin: "round",
         interactive: false
@@ -3211,8 +3216,8 @@
         const color = grade < 3 ? "#3ddc84" : grade < 8 ? "#ff9f1a" : "#ff4d4d";
         L.polyline([[profile[index - 1].lat, profile[index - 1].lon], [profile[index].lat, profile[index].lon]], {
           color: color,
-          weight: 8,
-          opacity: slopeFade * 0.85,
+          weight: 6 + Math.round(slopeFade * 12),
+          opacity: 0.22 + slopeFade * 0.7,
           lineCap: "round"
         }).addTo(slopeLayer);
       }
@@ -3239,12 +3244,12 @@
         const spot = spots[index];
         if (spot.slope >= 3) continue;
         L.circle([spot.lat, spot.lon], {
-          radius: 220,
+          radius: 180 + starlinkFade * 180,
           color: "#3ecbff",
-          weight: 1,
-          opacity: starlinkFade * 0.85,
+          weight: 1 + Math.round(starlinkFade * 3),
+          opacity: 0.28 + starlinkFade * 0.68,
           fillColor: "#3ecbff",
-          fillOpacity: starlinkFade * 0.22 * (Number(spot.starlink) || 0) / 100,
+          fillOpacity: 0.08 + starlinkFade * 0.5,
           interactive: false
         }).addTo(starlinkLayer);
         drawn += 1;

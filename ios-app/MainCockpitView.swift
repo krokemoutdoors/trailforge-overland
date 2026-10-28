@@ -4355,7 +4355,11 @@ private struct StableRouteMap: View, Equatable {
         ForEach(trails) { trail in
             if trail.coordinates.count >= 2, let tint = corridorTint(trail) {
                 MapPolyline(coordinates: trail.coordinates)
-                    .stroke(tint.color.opacity(tint.fade * 0.5), style: StrokeStyle(lineWidth: 14, lineCap: .round, lineJoin: .round))
+                    .stroke(
+                        tint.color.opacity(0.18 + tint.fade * 0.74),
+                        style: StrokeStyle(lineWidth: 8 + tint.fade * 16, lineCap: .round, lineJoin: .round)
+                    )
+                    .id("mask-\(trail.id)-\(Int((tint.fade * 100).rounded()))")
             }
         }
     }
@@ -4414,14 +4418,16 @@ private struct StableRouteMap: View, Equatable {
             corridorMasks
             if campSlopeOpacity > 0.02 {
                 ForEach(Array(camps.prefix(12))) { spot in
-                    MapCircle(center: spot.coordinate, radius: 140)
-                        .foregroundStyle(LandMask.slopeFlat.opacity(0.28 * campSlopeOpacity))
+                    MapCircle(center: spot.coordinate, radius: 120 + campSlopeOpacity * 80)
+                        .foregroundStyle(LandMask.slopeFlat.opacity(0.12 + campSlopeOpacity * 0.62))
+                        .id("slope-\(spot.id)-\(Int((campSlopeOpacity * 100).rounded()))")
                 }
             }
             if starlinkOpacity > 0.02 {
                 ForEach(Array(camps.prefix(12))) { spot in
-                    MapCircle(center: spot.coordinate, radius: 220)
-                        .foregroundStyle(LandMask.cell.opacity(0.22 * starlinkOpacity * Double(spot.starlinkPct) / 100))
+                    MapCircle(center: spot.coordinate, radius: 160 + starlinkOpacity * 140)
+                        .foregroundStyle(LandMask.cell.opacity(0.1 + starlinkOpacity * 0.55))
+                        .id("cell-\(spot.id)-\(Int((starlinkOpacity * 100).rounded()))")
                 }
             }
             if hazardOpacity > 0.02 {
@@ -4597,12 +4603,15 @@ private struct StableRouteMap: View, Equatable {
     private func hazardOverlay(_ hazard: MapHazard) -> some MapContent {
         if hazard.coordinates.count >= 4 {
             MapPolygon(coordinates: hazard.coordinates)
-                .foregroundStyle(LandMask.slopeSteep.opacity(0.18 * hazardOpacity))
+                .foregroundStyle(LandMask.slopeSteep.opacity(0.12 + hazardOpacity * 0.55))
+                .id("hazard-fill-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
             MapPolyline(coordinates: hazard.coordinates)
-                .stroke(LandMask.slopeSteep.opacity(hazardOpacity), lineWidth: 1.5)
+                .stroke(LandMask.slopeSteep.opacity(0.35 + hazardOpacity * 0.6), lineWidth: 1.5 + hazardOpacity * 3.5)
+                .id("hazard-line-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
         } else {
-            MapCircle(center: hazard.point, radius: hazard.radiusMeters)
-                .foregroundStyle(LandMask.slopeMid.opacity(0.28 * hazardOpacity))
+            MapCircle(center: hazard.point, radius: hazard.radiusMeters * (0.7 + hazardOpacity * 0.6))
+                .foregroundStyle(LandMask.slopeMid.opacity(0.14 + hazardOpacity * 0.6))
+                .id("hazard-point-\(hazard.id)-\(Int((hazardOpacity * 100).rounded()))")
             if hazard.id.hasPrefix("community-") || hazard.id.hasPrefix("userhazard-") {
                 Annotation("", coordinate: hazard.point) {
                     Text(hazard.title)
