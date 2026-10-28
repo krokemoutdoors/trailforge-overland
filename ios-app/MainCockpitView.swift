@@ -274,6 +274,11 @@ struct MainCockpitView: View {
 
     private var mapTrails: [OverlandTrail] {
         guard activeRoute == nil else { return [activeTrail] }
+        return allViewportTrails
+    }
+
+    /// Nearby trails used for camp pads. Unlike `mapTrails`, this stays populated while a GPS route is previewed or followed.
+    private var allViewportTrails: [OverlandTrail] {
         let activeID = selectedTrailID
         if regionFilter == "near" || regionFilter == "all" {
             return viewportTrails(activeID: activeID)
@@ -282,14 +287,20 @@ struct MainCockpitView: View {
     }
 
     private var mapCampSpots: [CampSpot] {
-        let pads = mapTrails.flatMap(\.campSpots)
+        var seen = Set<String>()
+        var pads: [CampSpot] = []
+        let routedPads = [activeRoute?.destination].compactMap { $0 }.filter { $0.kind == .pad }
+        for spot in allViewportTrails.flatMap(\.campSpots) + activeTrail.campSpots + routedPads {
+            guard seen.insert(spot.id).inserted else { continue }
+            pads.append(spot)
+        }
         let origin = mapCenter
         let sorted = pads.sorted { miles(from: origin, to: $0.coordinate) < miles(from: origin, to: $1.coordinate) }
         return Array(sorted.prefix(80))
     }
 
     private var mapCamps: [CampSpot] {
-        activeRoute == nil ? mapCampSpots : Array(activeTrail.campSpots.prefix(3))
+        mapCampSpots
     }
 
     private var showRouteAlternates: Bool {
@@ -327,6 +338,8 @@ struct MainCockpitView: View {
         hasher.combine(activeRoute?.spur.count)
         hasher.combine(selectedTrailID)
         hasher.combine(mapTrails.map(\.id).joined(separator: ","))
+        hasher.combine(mapCamps.map(\.id).joined(separator: ","))
+        hasher.combine(telemetry.discoveredTrails.count)
         hasher.combine(pertinentCruxPins.map(\.id).joined(separator: ","))
         hasher.combine(selectedTrailDraw.count)
         hasher.combine(routeStartedFromGPS)
@@ -334,7 +347,6 @@ struct MainCockpitView: View {
         hasher.combine(rigStore.profile.hasRearLocker)
         if activeRoute == nil {
             hasher.combine(pickerTrails.map(\.id).joined(separator: ","))
-            hasher.combine(telemetry.discoveredTrails.count)
         }
         hasher.combine(plotMode)
         hasher.combine(basemapRaw)
@@ -4828,7 +4840,7 @@ private struct StableRouteMap: View, Equatable {
                         trailheadButton(trail.trailhead)
                     }
                 }
-                ForEach(Array(camps.prefix(3))) { spot in
+                ForEach(camps) { spot in
                     Annotation(spot.name, coordinate: spot.coordinate) {
                         campButton(spot)
                     }
