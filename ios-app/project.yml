@@ -13,9 +13,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.edwardshin.trailforge
         PRODUCT_NAME: TrailForgeOverland
         DEVELOPMENT_TEAM: 25VZT7485A
-        # Build 27. First-launch safety clickwrap and public terms.
+        # Build 28. Private-property clickwrap, liability cap, and route reminder.
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "27"
+        CURRENT_PROJECT_VERSION: "28"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Info.plist
         CODE_SIGN_STYLE: Automatic
@@ -47,7 +47,7 @@ targets:
       properties:
         CFBundleDisplayName: "TrailForge Overland"
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "27"
+        CFBundleVersion: "28"
         LSApplicationQueriesSchemes:
           - comgooglemaps
         ITSAppUsesNonExemptEncryption: false

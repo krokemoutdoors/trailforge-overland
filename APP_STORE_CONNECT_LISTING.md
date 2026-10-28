@@ -45,7 +45,15 @@ TrailForge Overland is an informational reference only. Trail routes, difficulty
 
 Off-road and backcountry travel can damage your vehicle, strand you, injure you, or kill you. You assume 100% of that risk. Verify road status with the land manager, obey signs, gates, and closures, carry satellite communication and recovery gear, and do not trespass. Do not operate the app while the vehicle is moving. Pull over first.
 
-TrailForge Overland is provided by Krokem Outdoors “AS IS” and “AS AVAILABLE,” without warranties. To the maximum extent permitted by law, Edward Shin, Krokem Outdoors, and its affiliates are not liable for vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death arising from use of the app. You agree to indemnify and hold them harmless from claims arising from your backcountry travel.
+Private property, land ownership, and no trespassing: you are 100% responsible for confirming that any trail, road, dispersed campsite, waypoint, or off-road area is legally open to public motorized use and is not private property. BLM, USFS, NPS, State Trust, and other land shading is approximate agency data, not a legal survey. Public land often includes private inholdings, patented mining claims, private ranch roads, locked gates, or roads without a public right-of-way. Map lines and colored masks never permit you to cross private land or bypass a gate, fence, “No Trespassing” sign, or seasonal closure. When in doubt, turn around. Edward Shin and Krokem Outdoors are not liable for trespass claims, fines, citations, towing, impoundment, or legal disputes from entering private, restricted, or closed property.
+
+TrailForge Overland is not an emergency beacon, satellite SOS communicator, or search-and-rescue dispatch service. Never rely on it as a life-safety device. Carry a dedicated satellite communicator, such as a Garmin inReach or Apple Emergency SOS via satellite.
+
+Pitch and roll angles, vehicle clearance comparisons, obstacle crux ratings, and USGS and SNOTEL water and snow readings are uncalibrated estimates. They never guarantee rollover safety, vehicle clearance, or a safe water-crossing depth.
+
+TrailForge Overland is provided by Krokem Outdoors “AS IS” and “AS AVAILABLE,” without warranties. To the fullest extent permitted by law, the total aggregate liability of Edward Shin, Krokem Outdoors, Krokem Outdoors LLC, and their affiliates and licensors for any claim shall not exceed the greater of $0.00 USD or the actual amount paid for the App in the twelve (12) months preceding the claim. You agree to indemnify and hold them harmless from claims arising from your backcountry travel.
+
+Disputes are resolved exclusively by binding individual arbitration under the Federal Arbitration Act. You waive any class, collective, or representative action and any jury trial. If any term is unenforceable, the rest remains in effect.
 
 Full terms: https://krokemoutdoors.github.io/trailforge-overland/#terms
 Privacy: https://krokemoutdoors.github.io/trailforge-overland/#privacy
