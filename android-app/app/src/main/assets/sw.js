@@ -1,4 +1,4 @@
-const CACHE = "trailforge-overland-1.6.9-31";
+const CACHE = "trailforge-overland-1.7.0-32";
 const SHELL = [
   "./",
   "./index.html",
