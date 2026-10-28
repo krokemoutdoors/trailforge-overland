@@ -48,7 +48,7 @@ class NativeFetchBridge(
                     readTimeout = 40000
                     instanceFollowRedirects = true
                     setRequestProperty("Accept", "application/json,text/plain,*/*")
-                    setRequestProperty("User-Agent", "TrailForgeOverland/1.6.7")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.6.8")
                     if (requestMethod == "POST") {
                         doOutput = true
                         setRequestProperty("Content-Type", "text/plain; charset=utf-8")
@@ -85,7 +85,7 @@ class NativeFetchBridge(
                     readTimeout = 20000
                     instanceFollowRedirects = true
                     setRequestProperty("Accept", "image/png,image/jpeg,*/*")
-                    setRequestProperty("User-Agent", "TrailForgeOverland/1.6.7")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.6.8")
                 }
                 val code = connection.responseCode
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream

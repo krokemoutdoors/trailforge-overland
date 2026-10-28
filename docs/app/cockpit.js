@@ -857,7 +857,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.7 · build 29<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.8 · build 30<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2363,6 +2363,13 @@
       renderSheet();
       return;
     }
+    if (act === "toggle-overlay") {
+      const name = button.dataset.overlay;
+      const onValue = Number(button.dataset.on);
+      const current = Number(state.opacity[name]) || 0;
+      setOverlay(name, current > 2 ? 0 : (Number.isFinite(onValue) ? onValue : 75));
+      return;
+    }
     if (act === "layers") {
       state.drawer = state.drawer === "layers" ? null : "layers";
       if (state.drawer) leaveFullDetent();
@@ -2685,7 +2692,7 @@
   }
 
   function loadOpacity() {
-    const base = { blm: 70, usfs: 70, state: 70, slope: 55, hazards: 80, starlink: 75, trails: 85 };
+    const base = { blm: 75, usfs: 75, state: 75, slope: 75, hazards: 85, starlink: 80, trails: 85 };
     try {
       const saved = JSON.parse(localStorage.getItem("tf-opacity") || "{}");
       const merged = Object.assign(base, saved && typeof saved === "object" ? saved : {});
@@ -2819,7 +2826,7 @@
     drawer.querySelectorAll("[data-panel]").forEach(function (panel) {
       panel.hidden = panel.dataset.panel !== state.drawer;
     });
-    const titles = { layers: "Layers & Opacity", corridor: "Offline Maps", plot: "Custom Route" };
+    const titles = { layers: "Map Layers", corridor: "Offline Maps", plot: "Custom Route" };
     const title = document.getElementById("drawerTitle");
     if (title) title.textContent = titles[state.drawer] || "Layers";
     drawer.querySelectorAll("[data-act=basemap]").forEach(function (button) {
@@ -2841,14 +2848,9 @@
     drawer.querySelectorAll("[data-act=plot-mode]").forEach(function (button) {
       button.classList.toggle("on", button.dataset.id === state.plotMode);
     });
-    drawer.querySelectorAll("[data-overlay]").forEach(function (input) {
-      if (document.activeElement === input) return;
-      const value = state.opacity[input.dataset.overlay];
-      if (value != null) input.value = value;
-    });
     Object.keys(state.opacity).forEach(function (name) {
       const read = document.querySelector('[data-read="' + name + '"]');
-      if (read) read.textContent = state.opacity[name] + "%";
+      if (read) read.textContent = Number(state.opacity[name]) > 2 ? "ON" : "OFF";
     });
     const count = document.getElementById("plotCount");
     const verdict = document.getElementById("plotFit");
@@ -2894,7 +2896,7 @@
   }
 
   function syncMaskChrome() {
-    document.querySelectorAll("label.mask").forEach(function (row) {
+    document.querySelectorAll("label.mask, button.mask").forEach(function (row) {
       row.classList.toggle("on", Number(state.opacity[row.dataset.mask]) > 0);
     });
     document.querySelectorAll("[data-mask-key]").forEach(function (item) {
@@ -2907,7 +2909,7 @@
     state.opacity[name] = Math.max(0, Math.min(100, Math.round(value)));
     localStorage.setItem("tf-opacity", JSON.stringify(state.opacity));
     const read = document.querySelector('[data-read="' + name + '"]');
-    if (read) read.textContent = state.opacity[name] + "%";
+    if (read) read.textContent = state.opacity[name] > 2 ? "ON" : "OFF";
     syncOverlays();
     if (name === "blm") syncSmaTiles();
     if (name === "trails") syncMap();
