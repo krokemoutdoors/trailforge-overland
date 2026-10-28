@@ -2186,11 +2186,15 @@ struct MainCockpitView: View {
     }
 
     private func railColumnTop(showGloveRow: Bool, viewportHeight: CGFloat, mapHeight: CGFloat) -> CGFloat {
+        let railFullHeight: CGFloat = 258
         if showGloveRow {
-            return min(88, max(0, mapHeight - 160))
+            return min(88, max(8, mapHeight - railFullHeight))
         }
-        let halfway = viewportHeight * 0.50
-        return min(halfway, max(0, mapHeight - 150))
+        let fittedTop = max(8, mapHeight - railFullHeight)
+        if detent == .peek {
+            return min(viewportHeight * 0.50, max(88, fittedTop))
+        }
+        return fittedTop
     }
 
     private func mapStage(showGloveRow: Bool, viewportHeight: CGFloat, mapHeight: CGFloat) -> some View {
@@ -2266,6 +2270,7 @@ struct MainCockpitView: View {
                 }
                 .frame(width: 62, height: mapHeight, alignment: .top)
                 .padding(.trailing, 5)
+                .animation(.easeOut(duration: 0.2), value: detent)
             }
         }
         .colorMultiply(nightVision ? Color(red: 0.86, green: 0.38, blue: 0.16) : Color.white)

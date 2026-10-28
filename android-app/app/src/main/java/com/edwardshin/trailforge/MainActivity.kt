@@ -89,7 +89,7 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             loadsImagesAutomatically = true
-            userAgentString = "$userAgentString TrailForgeOverland/1.6.8"
+            userAgentString = "$userAgentString TrailForgeOverland/1.6.9"
         }
 
         webView.addJavascriptInterface(speechBridge, "TrailForgeSpeech")

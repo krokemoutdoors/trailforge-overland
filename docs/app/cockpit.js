@@ -857,7 +857,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.8 · build 30<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.9 · build 31<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2756,19 +2756,15 @@
       rail.style.position = "";
       return;
     }
-    const start = Math.round(window.innerHeight * 0.5);
-    const room = dock.getBoundingClientRect().top - start - 8;
-    if (room >= 120) {
-      rail.style.position = "fixed";
-      rail.style.top = start + "px";
-      rail.style.maxHeight = room + "px";
-      return;
-    }
-    const stageBox = stage.getBoundingClientRect();
-    const fit = Math.min(220, Math.max(88, stageBox.height - 12));
-    rail.style.position = "absolute";
-    rail.style.top = Math.max(8, stageBox.height - fit) + "px";
-    rail.style.maxHeight = fit + "px";
+    const railNeeded = Math.max(rail.scrollHeight + 4, 204);
+    const dockTop = dock.getBoundingClientRect().top;
+    const desiredTop = Math.round(window.innerHeight * 0.5);
+    const maxTopForFullBar = Math.max(96, dockTop - railNeeded - 10);
+    const top = Math.min(desiredTop, maxTopForFullBar);
+    const availHeight = Math.max(120, dockTop - top - 8);
+    rail.style.position = "fixed";
+    rail.style.top = top + "px";
+    rail.style.maxHeight = availHeight + "px";
   }
 
   function dashOn() {
