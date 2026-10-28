@@ -36,3 +36,17 @@ Download compact USGS topo + public land packs for dead-zone backcountry trips a
 - **Weekend Pass**: $4.99/month
 
 Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
+TrailForge terms, privacy, and liability disclaimer: https://krokemoutdoors.github.io/trailforge-overland/#terms
+
+## SAFETY & LIABILITY DISCLAIMER
+Pre-download notice for the App Store and Google Play descriptions.
+
+TrailForge Overland is an informational reference only. Trail routes, difficulty ratings, GPX tracks, MVUM/USFS/BLM/State/Park masks, water crossings, SNOTEL snow, wildfire perimeters, 3D pitch and slope shading, and clearance warnings are crowd and agency estimates. They can be wrong, incomplete, or outdated. Do not rely on them for legal property boundaries or road legality.
+
+Off-road and backcountry travel can damage your vehicle, strand you, injure you, or kill you. You assume 100% of that risk. Verify road status with the land manager, obey signs, gates, and closures, carry satellite communication and recovery gear, and do not trespass. Do not operate the app while the vehicle is moving. Pull over first.
+
+TrailForge Overland is provided by Krokem Outdoors “AS IS” and “AS AVAILABLE,” without warranties. To the maximum extent permitted by law, Edward Shin, Krokem Outdoors, and its affiliates are not liable for vehicle damage, towing or recovery costs, citations, fines, property damage, personal injury, or death arising from use of the app. You agree to indemnify and hold them harmless from claims arising from your backcountry travel.
+
+Full terms: https://krokemoutdoors.github.io/trailforge-overland/#terms
+Privacy: https://krokemoutdoors.github.io/trailforge-overland/#privacy
+Disclaimer anchor: https://krokemoutdoors.github.io/trailforge-overland/#disclaimer

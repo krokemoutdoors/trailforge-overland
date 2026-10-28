@@ -90,35 +90,35 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleRelease bundleRelease
           mkdir -p "${GITHUB_WORKSPACE}/dist"
-          cp app/build/outputs/apk/release/*-release.apk "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.6.4-release.apk"
-          cp app/build/outputs/bundle/release/*.aab "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.6.4-release.aab"
+          cp app/build/outputs/apk/release/*-release.apk "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.6.5-release.apk"
+          cp app/build/outputs/bundle/release/*.aab "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.6.5-release.aab"
 
       - name: Upload APK and AAB artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TrailForge-Overland-v1.6.4
+          name: TrailForge-Overland-v1.6.5
           path: |
-            dist/TrailForge-Overland-v1.6.4-release.apk
-            dist/TrailForge-Overland-v1.6.4-release.aab
+            dist/TrailForge-Overland-v1.6.5-release.apk
+            dist/TrailForge-Overland-v1.6.5-release.aab
           if-no-files-found: error
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.6.4-android
-          name: TrailForge Overland v1.6.4 (Android)
+          tag_name: v1.6.5-android
+          name: TrailForge Overland v1.6.5 (Android)
           target_commitish: ${{ github.sha }}
           overwrite_files: true
           make_latest: false
           generate_release_notes: false
           body: |
-            TrailForge Overland 1.6.4 (versionCode 26) for Android and Google Play.
+            TrailForge Overland 1.6.5 (versionCode 27) for Android and Google Play.
 
-            - `TrailForge-Overland-v1.6.4-release.apk` installs directly on an Android phone.
-            - `TrailForge-Overland-v1.6.4-release.aab` uploads to Google Play Console.
+            - `TrailForge-Overland-v1.6.5-release.apk` installs directly on an Android phone.
+            - `TrailForge-Overland-v1.6.5-release.aab` uploads to Google Play Console.
 
             Package: `com.edwardshin.trailforge`. The release is signed with `trailforge-release.jks`. Set `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`, and `ANDROID_KEY_ALIAS` to reuse one upload key. Without those secrets, CI generates a fresh keystore for that run.
           files: |
-            dist/TrailForge-Overland-v1.6.4-release.apk
-            dist/TrailForge-Overland-v1.6.4-release.aab
+            dist/TrailForge-Overland-v1.6.5-release.apk
+            dist/TrailForge-Overland-v1.6.5-release.aab
           fail_on_unmatched_files: true

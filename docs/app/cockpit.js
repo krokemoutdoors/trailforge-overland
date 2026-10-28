@@ -747,9 +747,8 @@
   }
 
   function sheetHtml() {
-    if (state.mode === "drive") return driveHtml();
-    if (state.mode === "camp") return campHtml();
-    return rigHtml();
+    const body = state.mode === "drive" ? driveHtml() : state.mode === "camp" ? campHtml() : rigHtml();
+    return body + '<button type="button" class="safety-review" data-act="safety-review">Safety &amp; Legal Disclaimer / Terms of Use</button>';
   }
 
   function renderModebar() {
@@ -857,7 +856,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.4 · build 26<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.6.5 · build 27<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -1896,6 +1895,32 @@
     }
   }
 
+  function showSafetyModal(force) {
+    const modal = document.getElementById("safetyModal");
+    if (!modal) return;
+    const accepted = localStorage.getItem("tf_disclaimer_accepted_v1");
+    modal.classList.remove("closing");
+    if (force || !accepted) {
+      document.documentElement.classList.remove("safety-ok");
+      modal.hidden = false;
+    } else {
+      document.documentElement.classList.add("safety-ok");
+      modal.hidden = true;
+    }
+  }
+
+  function acceptSafety() {
+    localStorage.setItem("tf_disclaimer_accepted_v1", new Date().toISOString());
+    const modal = document.getElementById("safetyModal");
+    if (!modal) return;
+    modal.classList.add("closing");
+    setTimeout(function () {
+      document.documentElement.classList.add("safety-ok");
+      modal.hidden = true;
+      modal.classList.remove("closing");
+    }, 180);
+  }
+
   function openExternal(url) {
     if (window.TrailForgeHost && TrailForgeHost.openUrl) {
       TrailForgeHost.openUrl(url);
@@ -2300,10 +2325,12 @@
       else toast("Restore runs inside the Android app with Google Play.");
       return;
     }
-    if (act === "privacy") {
-      openExternal("https://krokemoutdoors.github.io/trailforge-overland/#privacy");
+    if (act === "privacy" || act === "terms") {
+      openExternal(act === "terms" ? "https://krokemoutdoors.github.io/trailforge-overland/#terms" : "https://krokemoutdoors.github.io/trailforge-overland/#privacy");
       return;
     }
+    if (act === "safety-review") { showSafetyModal(true); return; }
+    if (act === "safety-agree") { acceptSafety(); return; }
     if (act === "detent") { setDetent(button.dataset.id); return; }
     if (act === "dash") {
       state.dash = dashOn() ? "off" : "on";
@@ -5696,6 +5723,7 @@
     map.on("click", onMapClick);
     document.addEventListener("click", function (event) {
       const button = event.target.closest("[data-act]");
+      if (button && (button.dataset.act === "terms" || button.dataset.act === "privacy")) event.preventDefault();
       if (!button) {
         if (state.menuOpen && !event.target.closest("#trailList")) {
           state.menuOpen = false;
@@ -5821,6 +5849,7 @@
     installCommunityChannel();
     setMuted(state.muted);
     renderAll();
+    showSafetyModal(false);
     syncSmaTiles();
     startGeolocation();
     loadTelemetry();
