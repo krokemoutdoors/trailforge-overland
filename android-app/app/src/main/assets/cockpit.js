@@ -710,7 +710,7 @@
       const remaining = remainingMeters(state.route);
       const seconds = remainingSeconds(state.route, remaining);
       const slope = spot.kind === "pad" ? " · " + Number(spot.slope || 0).toFixed(1) + "° slope" : "";
-      top.innerHTML = '<div class="nav preview"><div class="nav-copy"><div class="nav-dist">Previewing Route to ' + esc(spot.name) + '</div><div class="nav-street">' + esc(formatDistance(remaining) + " · " + formatDuration(seconds) + slope) + '</div></div><button type="button" class="primary" data-act="confirm-route">Start GPS Route</button><button type="button" class="ghost" data-act="end">Cancel</button></div>';
+      top.innerHTML = '<div class="nav preview"><div class="nav-copy"><div class="nav-dist">Previewing Route to ' + esc(spot.name) + '</div><div class="nav-street">' + esc(formatDistance(remaining) + " · " + formatDuration(seconds) + slope) + '</div></div><button type="button" class="primary" data-act="confirm-route">Start GPS Route</button><button type="button" class="ghost" data-act="go-start">Starting Point</button><button type="button" class="ghost" data-act="go-dest">Destination</button><button type="button" class="ghost" data-act="end">Cancel</button></div>';
       return;
     }
     if (state.route) {
@@ -719,7 +719,7 @@
       const stepHtml = state.showSteps ? '<div class="steps">' + steps.map(function (step, index) {
         return '<div class="step' + (index === (state.route.stepIndex || 0) ? " on" : "") + '"><span>' + formatDistance(step.distanceMeters) + "</span><span>" + esc(step.instruction) + "</span></div>";
       }).join("") + "</div>" : "";
-      top.innerHTML = '<div class="nav"><div class="man" id="navIcon">' + maneuverSvg(cue.step) + '</div><div class="nav-copy"><div class="nav-dist" id="navDist">' + esc(state.routing ? "Recalculating route…" : cue.distance) + '</div><div class="nav-street" id="navStreet">' + esc(cue.street) + '</div><div class="sub" id="navSub">' + esc(cue.text) + '</div>' + liveFlagHtml() + '</div><button type="button" class="icon-btn" id="muteBtn" data-act="mute" aria-label="Mute voice directions">' + (state.muted ? "🔇" : "🔊") + '</button><button type="button" class="icon-btn" data-act="steps" aria-label="Step list">☰</button></div>' + stepHtml;
+      top.innerHTML = '<div class="nav"><div class="man" id="navIcon">' + maneuverSvg(cue.step) + '</div><div class="nav-copy"><div class="nav-dist" id="navDist">' + esc(state.routing ? "Recalculating route…" : cue.distance) + '</div><div class="nav-street" id="navStreet">' + esc(cue.street) + '</div><div class="sub" id="navSub">' + esc(cue.text) + '</div>' + liveFlagHtml() + '</div><button type="button" class="icon-btn" id="muteBtn" data-act="mute" aria-label="Mute voice directions">' + (state.muted ? "🔇" : "🔊") + '</button><button type="button" class="icon-btn" data-act="steps" aria-label="Step list">☰</button></div><div class="nav-jumps"><button type="button" data-act="go-start">Starting Point</button><button type="button" data-act="go-dest">Destination</button></div>' + stepHtml;
       return;
     }
     const list = pickerTrails();
@@ -741,10 +741,11 @@
     const slopeLabel = spot.kind === "pad" ? "pad slope" : spot.kind === "parcel" ? "lot size" : "destination";
     const skyLabel = spot.kind === "pad" ? "Starlink" : spot.kind === "parcel" ? "zoning" : spot.kind === "place" ? "address" : "sky";
     const stats = '<div class="route-stats"><div><b id="rbSlope">' + esc(slope) + "</b><span>" + slopeLabel + '</span></div><div><b id="rbSky">' + esc(sky) + "</b><span>" + skyLabel + '</span></div><div><b id="rbEta">' + esc(formatDuration(seconds)) + "</b><span>ETA " + esc(eta) + '</span></div><div><b id="rbMiles">' + esc(formatDistance(remaining)) + '</b><span>remaining</span></div></div>';
+    const jumps = '<button type="button" data-act="go-start">Starting Point</button><button type="button" data-act="go-dest">Destination</button>';
     if (!state.route.confirmed) {
-      return stats + '<div class="actions"><button type="button" class="primary on" data-act="confirm-route">Start GPS Route</button><button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">Cancel ✕</button></div>';
+      return stats + '<div class="actions"><button type="button" class="primary on" data-act="confirm-route">Start GPS Route</button>' + jumps + '<button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">Cancel ✕</button></div>';
     }
-    return stats + '<div class="actions"><button type="button" class="primary' + (state.follow ? " on" : "") + '" data-act="follow">Follow GPS</button><button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">End Route ✕</button></div>';
+    return stats + '<div class="actions"><button type="button" class="primary' + (state.follow ? " on" : "") + '" data-act="follow">Follow GPS</button>' + jumps + '<button type="button" data-act="overview">Overview</button><button type="button" data-act="gmaps">Open in Google Maps</button><button type="button" class="end" data-act="end">End Route ✕</button></div>';
   }
 
   function sheetHtml() {
@@ -857,7 +858,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.0 · build 32<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.1 · build 33<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -1066,7 +1067,7 @@
           });
           L.marker([spot.lat, spot.lon], { icon: icon, zIndexOffset: 400 }).on("click", function () {
             if (state.plotting) { connectPlotWaypoint(spot.lat, spot.lon); return; }
-            beginRoute(spot, true, spot.kind === "pad");
+            beginRoute(spot, true, true);
           }).addTo(campLayer);
         });
       }
@@ -1075,7 +1076,7 @@
         const flag = L.divIcon({ className: "flag-pin", html: "<span>⚑</span>", iconAnchor: [12, 12] });
         L.marker([head.lat, head.lon], { icon: flag, zIndexOffset: 450 }).on("click", function () {
           if (state.plotting) { connectPlotWaypoint(head.lat, head.lon); return; }
-          beginRoute(head);
+          beginRoute(head, true, true);
         }).addTo(campLayer);
       }
     });
@@ -1832,13 +1833,11 @@
       localStorage.setItem("tf-detent", "peek");
     }
     renderAll();
-    if (refit !== false && road.length >= 2) {
+    if (refit !== false && map) {
       requestAnimationFrame(function () {
         map.invalidateSize();
-        frameRoute();
+        map.setView([spot.lat, spot.lon], Math.max(map.getZoom(), 13));
       });
-    } else if (refit !== false && map) {
-      map.setView([spot.lat, spot.lon], Math.max(map.getZoom(), 12));
     }
     const first = options[0].steps.find(function (step) { return step.type !== "depart"; }) || options[0].steps[0];
     const milesText = (options[0].distanceMeters / 1609.344).toFixed(1);
@@ -2262,11 +2261,19 @@
     }
     if (act === "route") {
       const spot = findSpot(button.dataset.id);
-      beginRoute(spot, true, !!(spot && spot.kind === "pad"));
+      beginRoute(spot, true, true);
       return;
     }
     if (act === "confirm-route") {
       confirmRoute();
+      return;
+    }
+    if (act === "go-start") {
+      goToRouteStart();
+      return;
+    }
+    if (act === "go-dest") {
+      goToRouteDestination();
       return;
     }
     if (act === "center") {
@@ -5236,7 +5243,7 @@
       return;
     }
     const trail = selected();
-    beginRoute({
+      beginRoute({
       id: hit.id,
       trailID: trail ? trail.id : state.selectedId,
       name: hit.name,
@@ -5247,7 +5254,7 @@
       kind: "place",
       acres: 0,
       zoning: hit.address || "Address"
-    });
+    }, true, true);
     setTimeout(function () { drawPlacePin(true); }, 450);
   }
 
@@ -5321,13 +5328,32 @@
     return "";
   }
 
+  function goToRouteStart() {
+    const route = state.route;
+    if (!route || !map) return;
+    const option = route.options[route.selected] || route.options[0];
+    const start = option && option.road && option.road.length ? option.road[0] : (state.fix ? [state.fix.lat, state.fix.lon] : null);
+    if (!start) return;
+    if (route.confirmed) state.follow = true;
+    map.setView(start, Math.max(map.getZoom(), 15));
+    renderAll();
+  }
+
+  function goToRouteDestination() {
+    const route = state.route;
+    if (!route || !map) return;
+    state.follow = false;
+    map.setView([route.destination.lat, route.destination.lon], Math.max(map.getZoom(), 13));
+    renderAll();
+  }
+
   function confirmRoute() {
     const route = state.route;
     if (!route) return;
     route.confirmed = true;
-    state.follow = true;
+    state.follow = false;
     setDetent("peek");
-    if (state.fix && map) map.setView([state.fix.lat, state.fix.lon], Math.max(map.getZoom(), 15));
+    if (map && route.destination) map.setView([route.destination.lat, route.destination.lon], Math.max(map.getZoom(), 13));
     const spot = route.destination;
     const option = route.options[route.selected] || route.options[0];
     const first = option && option.steps ? option.steps.find(function (step) { return step.type !== "depart"; }) || option.steps[0] : null;
@@ -5698,7 +5724,7 @@
       starlink: 0,
       kind: "trailhead"
     };
-    beginRoute(spot, true);
+    beginRoute(spot, true, true);
   }
 
   function routeDroppedPin() {
@@ -6056,7 +6082,9 @@
     setTimeout(function () {
       map.invalidateSize();
       refreshPitchForStage();
-      if (state.route && !state.follow) frameRoute();
+      if (state.route && !state.follow && state.route.destination) {
+        map.setView([state.route.destination.lat, state.route.destination.lon], Math.max(map.getZoom(), 13));
+      }
     }, 400);
     if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0 && location.host.indexOf("androidplatform") < 0 && navigator.userAgent.indexOf("TrailForgeOverland/") < 0) {
       navigator.serviceWorker.register("./sw.js").catch(function () {});

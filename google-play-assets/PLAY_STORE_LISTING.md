@@ -9,7 +9,7 @@ Copy-paste fields for Play Console. Package `com.edwardshin.trailforge`, version
 - **Full description:** see below (under 4,000 characters)
 - **Category:** Maps & Navigation
 - **Tags:** Off-road, Navigation, Camping
-- **Contact email:** use the address on the KrokeM Outdoors Play Console account
+- **Contact email:** use the address on the SE Media LLC Play Console account
 - **Privacy policy URL:** https://krokemoutdoors.github.io/trailforge-overland/#privacy
 - **Content rating:** Everyone (IARC). Community trail reports share a status, rig type, and coordinate with other TrailForge users. No personal names, no violence, no unrestricted web. Location is used for navigation and for a report the driver chooses to publish.
 
