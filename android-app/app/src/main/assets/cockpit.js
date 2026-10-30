@@ -107,6 +107,7 @@
       if (localStorage.getItem("tf-map-pitch") !== String(next)) localStorage.setItem("tf-map-pitch", String(next));
       return next;
     })(),
+    mapBearing: 0,
     plotClearedByUser: false,
     scrubIndex: null,
     scrubTrailId: null,
@@ -858,7 +859,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.1 · build 33<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.2 · build 34<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -2407,9 +2408,10 @@
       return;
     }
     if (act === "compass-north") {
-      const arrow = document.getElementById("compassArrow");
-      if (arrow) arrow.style.transform = "rotate(0deg)";
+      const hadBearing = bearingActive(state.mapBearing);
+      setMapBearing(0, false);
       toast("North");
+      if (hadBearing && map) map.fire("moveend");
       return;
     }
     if (act === "corridor") {
@@ -2903,9 +2905,6 @@
     document.querySelectorAll("label.mask, button.mask").forEach(function (row) {
       row.classList.toggle("on", Number(state.opacity[row.dataset.mask]) > 0);
     });
-    document.querySelectorAll("[data-mask-key]").forEach(function (item) {
-      item.hidden = !(Number(state.opacity[item.dataset.maskKey]) > 0);
-    });
   }
 
   function setOverlay(name, value) {
@@ -3092,8 +3091,123 @@
     return L.point(width * 0.5 + localX, height * visual.originY + localY);
   }
 
+  function normalizeBearing(deg) {
+    return ((Number(deg) || 0) % 360 + 360) % 360;
+  }
+
+  function bearingActive(deg) {
+    const bearing = normalizeBearing(deg);
+    return bearing > 0.05 && bearing < 359.95;
+  }
+
+  function northOnScreen(deg) {
+    let angle = -normalizeBearing(deg);
+    angle = ((angle % 360) + 360) % 360;
+    if (angle > 180) angle -= 360;
+    return angle;
+  }
+
+  function rotateScreen(x, y, deg) {
+    const rad = deg * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    return { x: x * cos - y * sin, y: x * sin + y * cos };
+  }
+
+  function expandBoundsForBearing(bounds) {
+    const bearing = normalizeBearing(state.mapBearing || 0);
+    if (!bounds || !bearingActive(bearing)) return bounds;
+    const rad = bearing * Math.PI / 180;
+    const c = Math.abs(Math.cos(rad));
+    const s = Math.abs(Math.sin(rad));
+    const mid = bounds.getCenter();
+    const halfX = bounds.max.x - mid.x;
+    const halfY = bounds.max.y - mid.y;
+    const extra = L.point(halfX * c + halfY * s + 32, halfX * s + halfY * c + 32);
+    return L.bounds(mid.subtract(extra), mid.add(extra));
+  }
+
+  function applyBearingToPane() {
+    if (!map || !map._panes || !map._panes.mapPane) return;
+    const pane = map._panes.mapPane;
+    const bearing = normalizeBearing(state.mapBearing || 0);
+    const pos = L.DomUtil.getPosition(pane);
+    const size = map.getSize();
+    pane.style.transformOrigin = (size.x / 2 - pos.x) + "px " + (size.y / 2 - pos.y) + "px";
+    const prop = L.DomUtil.TRANSFORM || "transform";
+    let transform = (pane.style[prop] || pane.style.transform || "").replace(/\s*rotate\([^)]*\)/g, "");
+    if (bearingActive(bearing)) transform += " rotate(" + northOnScreen(bearing).toFixed(3) + "deg)";
+    pane.style[prop] = transform;
+    if (prop !== "transform") pane.style.transform = transform;
+  }
+
+  let coverageTimer = 0;
+  function refreshRotatedCoverage() {
+    if (!map) return;
+    map.eachLayer(function (layer) {
+      if (layer && layer._tiles && typeof layer._update === "function") {
+        try { layer._update(map.getCenter()); } catch (error) {}
+      }
+    });
+  }
+  function scheduleRotatedCoverage() {
+    if (coverageTimer) return;
+    coverageTimer = setTimeout(function () {
+      coverageTimer = 0;
+      if (bearingActive(state.mapBearing)) refreshRotatedCoverage();
+    }, 80);
+  }
+
+  function setMapBearing(deg, live) {
+    state.mapBearing = normalizeBearing(deg);
+    applyBearingToPane();
+    if (typeof syncNavArrow === "function") syncNavArrow();
+    if (live) scheduleRotatedCoverage();
+    else {
+      if (coverageTimer) { clearTimeout(coverageTimer); coverageTimer = 0; }
+      refreshRotatedCoverage();
+    }
+  }
+
+  function installMapBearing() {
+    if (!map || map.__tfBearing || !window.L) return;
+    map.__tfBearing = true;
+    const origPixelBounds = map.getPixelBounds.bind(map);
+    map.getPixelBounds = function (center, zoom) {
+      return expandBoundsForBearing(origPixelBounds(center, zoom));
+    };
+    const gridProto = L.GridLayer && L.GridLayer.prototype;
+    if (gridProto && !gridProto.__tfBearing && typeof gridProto._getTiledPixelBounds === "function") {
+      const origTiles = gridProto._getTiledPixelBounds;
+      gridProto._getTiledPixelBounds = function (center) {
+        return expandBoundsForBearing(origTiles.call(this, center));
+      };
+      gridProto.__tfBearing = true;
+    }
+    const origC2L = map.containerPointToLayerPoint.bind(map);
+    const origL2C = map.layerPointToContainerPoint.bind(map);
+    map.containerPointToLayerPoint = function (point) {
+      const p = L.point(point);
+      const bearing = normalizeBearing(state.mapBearing || 0);
+      if (!bearingActive(bearing)) return origC2L(p);
+      const size = this.getSize();
+      const unrotated = rotateScreen(p.x - size.x / 2, p.y - size.y / 2, bearing);
+      return origC2L(L.point(size.x / 2 + unrotated.x, size.y / 2 + unrotated.y));
+    };
+    map.layerPointToContainerPoint = function (point) {
+      const unrotatedPoint = origL2C(L.point(point));
+      const bearing = normalizeBearing(state.mapBearing || 0);
+      if (!bearingActive(bearing)) return unrotatedPoint;
+      const size = this.getSize();
+      const screen = rotateScreen(unrotatedPoint.x - size.x / 2, unrotatedPoint.y - size.y / 2, -bearing);
+      return L.point(size.x / 2 + screen.x, size.y / 2 + screen.y);
+    };
+    map.on("move zoom zoomanim zoomend viewreset", applyBearingToPane);
+  }
+
   function installPitchGesture() {
     if (!map || !window.L || !L.DomEvent || L.DomEvent.__tfPitch) return;
+    installMapBearing();
     const original = L.DomEvent.getMousePosition;
     L.DomEvent.getMousePosition = function (event, container) {
       if (state.map3d && state.mapPitch > 0.5 && map && container === map.getContainer() && event && event.clientX != null) {
@@ -3106,6 +3220,38 @@
     const pointers = new Map();
     let span = 0;
     let pitching = false;
+    let twistOrigin = null;
+    let twistBase = null;
+    let twistArmed = false;
+    function pairAngle() {
+      const pts = Array.from(pointers.values());
+      if (pts.length < 2) return null;
+      return Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+    }
+    function angleDelta(next, prev) {
+      let delta = next - prev;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      return delta;
+    }
+    function applyTwist() {
+      const angle = pairAngle();
+      if (angle == null) return;
+      if (twistOrigin == null || twistBase == null) {
+        twistOrigin = angle;
+        twistBase = angle;
+        return;
+      }
+      if (!twistArmed && Math.abs(angleDelta(angle, twistOrigin)) < 0.055) return;
+      if (!twistArmed) {
+        twistArmed = true;
+        state.follow = false;
+      }
+      const delta = angleDelta(angle, twistBase);
+      twistBase = angle;
+      if (Math.abs(delta) < 0.001) return;
+      setMapBearing((state.mapBearing || 0) - delta * 180 / Math.PI, true);
+    }
     function spanNow() {
       const pts = Array.from(pointers.values());
       if (pts.length < 2) return 0;
@@ -3125,6 +3271,16 @@
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startY: event.clientY });
       span = spanNow();
       pitching = false;
+      if (pointers.size >= 2) {
+        const angle = pairAngle();
+        twistOrigin = angle;
+        twistBase = angle;
+        twistArmed = false;
+      } else {
+        twistOrigin = null;
+        twistBase = null;
+        twistArmed = false;
+      }
     });
     container.addEventListener("pointermove", function (event) {
       if (!pointers.has(event.pointerId)) return;
@@ -3134,29 +3290,45 @@
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startY: current.startY });
       const two = pointers.size >= 2;
       const shiftDrag = pointers.size === 1 && event.shiftKey;
-      if (!two && !shiftDrag) return;
-      if (!state.map3dEnabled) return;
-      const nextSpan = spanNow();
-      if (two && !pitching && span && Math.abs(nextSpan - span) > 45) {
-        releaseMapGestures();
-        return;
+      if ((two || shiftDrag) && state.map3dEnabled) {
+        const nextSpan = spanNow();
+        const pinch = two && !pitching && span && Math.abs(nextSpan - span) > 45;
+        if (pinch) {
+          releaseMapGestures();
+        } else {
+          const active = Array.from(pointers.values());
+          const avgY = averageY(active, "y");
+          const avgStartY = averageY(active, "startY");
+          if (pitching || Math.abs(avgY - avgStartY) >= 6) {
+            pitching = true;
+            if (map.dragging) map.dragging.disable();
+            if (map.touchZoom) map.touchZoom.disable();
+            const dy = avgY - prevAvgY;
+            setMapPitch(Math.max(0, Math.min(75, (state.mapPitch || 0) - dy * 0.28)), true);
+          }
+        }
       }
-      const active = Array.from(pointers.values());
-      const avgY = averageY(active, "y");
-      const avgStartY = averageY(active, "startY");
-      if (!pitching && Math.abs(avgY - avgStartY) < 6) return;
-      pitching = true;
-      if (map.dragging) map.dragging.disable();
-      if (map.touchZoom) map.touchZoom.disable();
-      const dy = avgY - prevAvgY;
-      setMapPitch(Math.max(0, Math.min(75, (state.mapPitch || 0) - dy * 0.28)), true);
+      if (two) applyTwist();
     });
     function endPitch(event) {
       pointers.delete(event.pointerId);
-      if (pointers.size >= 2) return;
+      if (pointers.size >= 2) {
+        const angle = pairAngle();
+        twistOrigin = angle;
+        twistBase = angle;
+        return;
+      }
+      const spun = twistArmed;
+      twistOrigin = null;
+      twistBase = null;
+      twistArmed = false;
       if (pitching) setMapPitch(state.mapPitch, false);
       pitching = false;
       releaseMapGestures();
+      if (spun) {
+        setMapBearing(state.mapBearing, false);
+        if (map) map.fire("moveend");
+      }
     }
     container.addEventListener("pointerup", endPitch);
     container.addEventListener("pointercancel", endPitch);
@@ -4173,11 +4345,18 @@
   }
 
   function syncNavArrow() {
-    const heading = state.compass == null || !Number.isFinite(Number(state.compass)) ? 0 : Number(state.compass);
+    const device = state.compass == null || !Number.isFinite(Number(state.compass)) ? null : Number(state.compass);
+    const bearing = normalizeBearing(state.mapBearing || 0);
     const compass = document.getElementById("compassArrow");
-    if (compass) compass.style.transform = "rotate(" + ((-heading % 360) + 360) % 360 + "deg)";
+    if (compass) {
+      const needle = bearingActive(bearing) ? northOnScreen(bearing).toFixed(3) : "0";
+      compass.style.transform = "rotate(" + needle + "deg)";
+    }
     const locate = document.getElementById("locateArrow");
-    if (locate) locate.style.transform = "rotate(" + ((heading % 360) + 360) % 360 + "deg)";
+    if (locate) {
+      const screenHeading = device == null ? 0 : device - bearing;
+      locate.style.transform = "rotate(" + ((screenHeading % 360) + 360) % 360 + "deg)";
+    }
   }
 
   function markersForPlot() {
