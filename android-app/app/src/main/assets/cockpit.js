@@ -859,7 +859,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.2 · build 34<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.3 · build 35<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -3203,6 +3203,111 @@
       return L.point(size.x / 2 + screen.x, size.y / 2 + screen.y);
     };
     map.on("move zoom zoomanim zoomend viewreset", applyBearingToPane);
+    installGrabDrag();
+  }
+
+  function dragClientPoint(event) {
+    if (!event) return null;
+    const touch = event.touches && event.touches.length ? event.touches[0] : null;
+    const source = touch || event;
+    if (source.clientX == null) return null;
+    return { x: source.clientX, y: source.clientY };
+  }
+
+  function grabProbe() {
+    if (map.__tfGrabProbe) return map.__tfGrabProbe;
+    const probe = document.createElement("div");
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText = "position:absolute;width:4px;height:4px;margin:-2px 0 0 -2px;pointer-events:none;opacity:0;";
+    map.getPane("markerPane").appendChild(probe);
+    map.__tfGrabProbe = probe;
+    return probe;
+  }
+
+  function probeScreen() {
+    const rect = grabProbe().getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+
+  function panePosition() {
+    return L.DomUtil.getPosition(map._panes.mapPane);
+  }
+
+  function commitPane(pos) {
+    L.DomUtil.setPosition(map._panes.mapPane, pos);
+    applyBearingToPane();
+  }
+
+  // Screen movement of a point inside the tilted map is not a constant scale.
+  // Measure how one pane pixel moves that point, then solve for the pan that
+  // puts it back under the finger.
+  function paneDeltaForScreen(targetX, targetY) {
+    const base = panePosition();
+    const origin = probeScreen();
+    commitPane(L.point(base.x + 1, base.y));
+    const sx = probeScreen();
+    commitPane(L.point(base.x, base.y + 1));
+    const sy = probeScreen();
+    commitPane(base);
+    const jxx = sx.x - origin.x;
+    const jxy = sy.x - origin.x;
+    const jyx = sx.y - origin.y;
+    const jyy = sy.y - origin.y;
+    const ex = targetX - origin.x;
+    const ey = targetY - origin.y;
+    const det = jxx * jyy - jxy * jyx;
+    if (Math.abs(det) < 1e-4) return L.point(ex, ey);
+    return L.point((ex * jyy - ey * jxy) / det, (jxx * ey - jyx * ex) / det);
+  }
+
+  function installGrabDrag() {
+    const draggable = map.dragging && map.dragging._draggable;
+    if (!draggable || draggable.__tfGrab) return;
+    draggable.__tfGrab = true;
+    draggable.on("dragstart", function () {
+      draggable.__tfGrabReady = false;
+    });
+    draggable.on("dragend", function () {
+      draggable.__tfGrabReady = false;
+      if (map.__tfGrabProbe) {
+        map.__tfGrabProbe.remove();
+        map.__tfGrabProbe = null;
+      }
+    });
+    draggable.on("predrag", function () {
+      const start = draggable._startPos;
+      const origin = draggable._startPoint;
+      const event = draggable._lastEvent;
+      const finger = dragClientPoint(event);
+      if (!start || !origin || !finger) return;
+      const pitched = !!(state.map3d && state.mapPitch > 0.5);
+      if (pitched) {
+        if (!draggable.__tfGrabReady) {
+          const startContainer = mapContainerPoint(origin.x, origin.y);
+          const latlng = map.containerPointToLatLng(startContainer);
+          L.DomUtil.setPosition(grabProbe(), map.latLngToLayerPoint(latlng));
+          const fix = paneDeltaForScreen(origin.x, origin.y);
+          const layer = L.DomUtil.getPosition(grabProbe());
+          L.DomUtil.setPosition(grabProbe(), L.point(layer.x + fix.x, layer.y + fix.y));
+          draggable.__tfGrabReady = true;
+        }
+        const delta = paneDeltaForScreen(finger.x, finger.y);
+        const pos = panePosition();
+        draggable._newPos = L.point(pos.x + delta.x, pos.y + delta.y);
+        return;
+      }
+      const from = mapContainerPoint(origin.x, origin.y);
+      const to = mapContainerPoint(finger.x, finger.y);
+      let dx = to.x - from.x;
+      let dy = to.y - from.y;
+      const bearing = normalizeBearing(state.mapBearing || 0);
+      if (bearingActive(bearing)) {
+        const turned = rotateScreen(dx, dy, bearing);
+        dx = turned.x;
+        dy = turned.y;
+      }
+      draggable._newPos = L.point(start.x + dx, start.y + dy);
+    });
   }
 
   function installPitchGesture() {

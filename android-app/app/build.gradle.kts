@@ -11,8 +11,8 @@ android {
         applicationId = "com.edwardshin.trailforge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "1.7.2"
+        versionCode = 35
+        versionName = "1.7.3"
     }
 
     val releaseStore = file(
