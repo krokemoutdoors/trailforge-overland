@@ -859,7 +859,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.3 · build 35<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.4 · build 36<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -1112,28 +1112,171 @@
     }
   }
 
-  function updatePuck() {
-    if (!map || !state.fix) {
-      if (puck) { map.removeLayer(puck); puck = null; }
+  const puckMotion = {
+    shownHeading: null,
+    aimHeading: null,
+    shownLat: null,
+    shownLon: null,
+    aimLat: null,
+    aimLon: null,
+    compass: null,
+    course: null,
+    speed: 0,
+    raf: 0,
+    lastFrame: 0
+  };
+
+  function wrap360(deg) {
+    return ((Number(deg) % 360) + 360) % 360;
+  }
+
+  function angleDelta(from, to) {
+    return wrap360(to - from + 180) - 180;
+  }
+
+  function approachAngle(from, to, amount) {
+    if (!Number.isFinite(to)) return from;
+    const target = wrap360(to);
+    if (from == null || !Number.isFinite(from)) return target;
+    return wrap360(from + angleDelta(from, target) * Math.max(0, Math.min(1, amount)));
+  }
+
+  function filterHeading(current, sample, alpha, deadband) {
+    if (!Number.isFinite(sample)) return current;
+    const target = wrap360(sample);
+    if (current == null || !Number.isFinite(current)) return target;
+    const delta = angleDelta(current, target);
+    if (Math.abs(delta) < deadband) return current;
+    return wrap360(current + delta * alpha);
+  }
+
+  function blendHeadings(compass, course, weight) {
+    if (course == null || !Number.isFinite(course)) return compass;
+    if (compass == null || !Number.isFinite(compass)) return course;
+    return approachAngle(compass, course, weight);
+  }
+
+  function refreshHeadingAim() {
+    const speed = puckMotion.speed || 0;
+    const weight = puckMotion.course == null ? 0 : (speed <= 1 ? 0 : speed >= 3 ? 1 : (speed - 1) / 2);
+    const aim = blendHeadings(puckMotion.compass, puckMotion.course, weight);
+    if (aim == null || !Number.isFinite(aim)) return;
+    if (puckMotion.shownHeading == null) puckMotion.shownHeading = aim;
+    puckMotion.aimHeading = aim;
+    if (state.fix) state.fix.heading = aim;
+    startPuckFrame();
+    syncNavArrow();
+  }
+
+  function noteCompass(sample) {
+    const next = filterHeading(puckMotion.compass, sample, 0.42, 2.5);
+    if (next == null) return;
+    puckMotion.compass = next;
+    state.compass = next;
+    refreshHeadingAim();
+  }
+
+  function noteCourse(sample) {
+    if (!Number.isFinite(sample)) return;
+    puckMotion.course = filterHeading(puckMotion.course, sample, 0.7, 1.5);
+    refreshHeadingAim();
+  }
+
+  function notePuckPosition(lat, lon) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if (puckMotion.aimLat == null) {
+      puckMotion.aimLat = lat;
+      puckMotion.aimLon = lon;
+      puckMotion.shownLat = lat;
+      puckMotion.shownLon = lon;
+      paintPuck();
       return;
     }
-    const heading = state.fix.heading == null ? 0 : state.fix.heading;
+    const jump = meters({ lat: puckMotion.aimLat, lon: puckMotion.aimLon }, { lat: lat, lon: lon });
+    const speed = puckMotion.speed || 0;
+    if (speed < 0.7 && jump < 8) return;
+    if (jump > 80) {
+      puckMotion.shownLat = lat;
+      puckMotion.shownLon = lon;
+    }
+    puckMotion.aimLat = lat;
+    puckMotion.aimLon = lon;
+    startPuckFrame();
+  }
+
+  function startPuckFrame() {
+    if (puckMotion.raf) return;
+    puckMotion.lastFrame = 0;
+    puckMotion.raf = requestAnimationFrame(stepPuck);
+  }
+
+  function stepPuck(now) {
+    const dt = puckMotion.lastFrame ? Math.min(0.05, (now - puckMotion.lastFrame) / 1000) : 0.016;
+    puckMotion.lastFrame = now;
+    let again = false;
+    if (puckMotion.aimHeading != null) {
+      const remain = Math.abs(angleDelta(puckMotion.shownHeading, puckMotion.aimHeading));
+      if (remain > 0.2) {
+        puckMotion.shownHeading = approachAngle(puckMotion.shownHeading, puckMotion.aimHeading, 1 - Math.exp(-dt / 0.18));
+        again = Math.abs(angleDelta(puckMotion.shownHeading, puckMotion.aimHeading)) > 0.2;
+      }
+    }
+    if (puckMotion.aimLat != null && puckMotion.shownLat != null) {
+      const dist = meters({ lat: puckMotion.shownLat, lon: puckMotion.shownLon }, { lat: puckMotion.aimLat, lon: puckMotion.aimLon });
+      if (dist > 0.4) {
+        const alpha = 1 - Math.exp(-dt / 0.32);
+        puckMotion.shownLat += (puckMotion.aimLat - puckMotion.shownLat) * alpha;
+        puckMotion.shownLon += (puckMotion.aimLon - puckMotion.shownLon) * alpha;
+        again = meters({ lat: puckMotion.shownLat, lon: puckMotion.shownLon }, { lat: puckMotion.aimLat, lon: puckMotion.aimLon }) > 0.4;
+      } else {
+        puckMotion.shownLat = puckMotion.aimLat;
+        puckMotion.shownLon = puckMotion.aimLon;
+      }
+    }
+    paintPuck();
+    puckMotion.raf = again ? requestAnimationFrame(stepPuck) : 0;
+  }
+
+  function paintPuck() {
+    if (!map || puckMotion.shownLat == null || puckMotion.shownLon == null) {
+      if (!state.fix && puck) { map.removeLayer(puck); puck = null; }
+      return;
+    }
+    const heading = puckMotion.shownHeading == null ? 0 : puckMotion.shownHeading;
+    const lat = puckMotion.shownLat;
+    const lon = puckMotion.shownLon;
     if (!puck) {
       const icon = L.divIcon({
         className: "puck-icon",
         iconSize: [86, 86],
         iconAnchor: [43, 43],
-        html: '<div class="puck" style="--h:' + heading + 'deg"><div class="cone-rot"><div class="cone"></div></div><div class="pulse"></div><div class="dot"></div></div>'
+        html: '<div class="puck" style="--h:' + heading.toFixed(2) + 'deg"><div class="cone-rot"><div class="cone"></div></div><div class="pulse"></div><div class="dot"></div></div>'
       });
-      puck = L.marker([state.fix.lat, state.fix.lon], { icon: icon, zIndexOffset: 800, interactive: false }).addTo(map);
-    } else {
-      puck.setLatLng([state.fix.lat, state.fix.lon]);
-      const el = puck.getElement();
-      if (el) {
-        const node = el.querySelector(".puck");
-        if (node) node.style.setProperty("--h", heading + "deg");
-      }
+      puck = L.marker([lat, lon], { icon: icon, zIndexOffset: 800, interactive: false }).addTo(map);
+      puck._tfHeading = heading;
+      return;
     }
+    const prev = puck.getLatLng();
+    if (!prev || Math.abs(prev.lat - lat) > 1e-8 || Math.abs(prev.lng - lon) > 1e-8) puck.setLatLng([lat, lon]);
+    const node = puck.getElement() && puck.getElement().querySelector(".puck");
+    if (node && (puck._tfHeading == null || Math.abs(angleDelta(puck._tfHeading, heading)) > 0.05)) {
+      node.style.setProperty("--h", heading.toFixed(2) + "deg");
+      puck._tfHeading = heading;
+    }
+    syncNavArrow();
+  }
+
+  function updatePuck() {
+    if (!map || !state.fix) {
+      if (puck) { map.removeLayer(puck); puck = null; }
+      return;
+    }
+    if (puckMotion.shownLat == null) notePuckPosition(state.fix.lat, state.fix.lon);
+    if (puckMotion.shownHeading == null && Number.isFinite(state.fix.heading)) {
+      puckMotion.shownHeading = wrap360(state.fix.heading);
+      puckMotion.aimHeading = puckMotion.shownHeading;
+    }
+    paintPuck();
   }
 
   function focusTrail(trail, zoom) {
@@ -1954,11 +2097,6 @@
     if (!Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) return;
     if (SHOT && state.fix && state.fix.shot && !fix.shot) return;
     const previous = state.fix;
-    if (!(fix.speedMps > 1.2) || fix.heading == null) {
-      if (state.compass != null && !(fix.speedMps > 1.2)) fix.heading = state.compass;
-      else if (previous && meters(previous, fix) > 8) fix.heading = bearing(previous, fix);
-      else if (previous && previous.heading != null) fix.heading = previous.heading;
-    }
     if (!(fix.speedMps >= 0)) {
       if (previous && Number.isFinite(Number(fix.time)) && Number.isFinite(Number(previous.time))) {
         const dt = (Number(fix.time) - Number(previous.time)) / 1000;
@@ -1967,8 +2105,14 @@
       } else fix.speedMps = 0;
     }
     if (fix.speedMps < 0) fix.speedMps = 0;
+    puckMotion.speed = fix.speedMps || 0;
+    const gpsCourse = Number.isFinite(fix.heading) ? fix.heading : (previous && meters(previous, fix) > 12 && puckMotion.speed > 1 ? bearing(previous, fix) : null);
+    if (gpsCourse != null) noteCourse(gpsCourse);
+    else refreshHeadingAim();
+    if (puckMotion.aimHeading != null) fix.heading = puckMotion.aimHeading;
     state.fix = fix;
     appendRecording(fix);
+    notePuckPosition(fix.lat, fix.lon);
     updatePuck();
     updateHud();
     if (!state.centeredOnce && !state.route && !SHOT) {
@@ -2017,13 +2161,9 @@
     }
     state.pitch += (pitch - state.pitch) * 0.22;
     state.roll += (roll - state.roll) * 0.22;
-    if (data.heading != null && Number.isFinite(Number(data.heading))) state.compass = Number(data.heading);
-    syncNavArrow();
+    if (data.heading != null && Number.isFinite(Number(data.heading))) noteCompass(Number(data.heading));
+    else syncNavArrow();
     updateHud();
-    if (state.fix && !(state.fix.speedMps > 1.2) && state.compass != null) {
-      state.fix.heading = state.compass;
-      updatePuck();
-    }
   }
 
   function unitGravity(x, y, z) {
@@ -2147,7 +2287,7 @@
 
   function ingestWebGravity(x, y, z, heading) {
     if (state.nativeAttAt && Date.now() - state.nativeAttAt < 1200) {
-      if (heading != null && Number.isFinite(Number(heading))) state.compass = Number(heading);
+      if (heading != null && Number.isFinite(Number(heading))) noteCompass(Number(heading));
       return;
     }
     const screenG = remapScreenGravity(x, y, z);
@@ -4450,7 +4590,9 @@
   }
 
   function syncNavArrow() {
-    const device = state.compass == null || !Number.isFinite(Number(state.compass)) ? null : Number(state.compass);
+    const device = puckMotion.shownHeading != null && Number.isFinite(puckMotion.shownHeading)
+      ? puckMotion.shownHeading
+      : (state.compass == null || !Number.isFinite(Number(state.compass)) ? null : Number(state.compass));
     const bearing = normalizeBearing(state.mapBearing || 0);
     const compass = document.getElementById("compassArrow");
     if (compass) {
@@ -6291,7 +6433,7 @@
       if (event.beta == null) return;
       const heading = event.webkitCompassHeading || event.alpha;
       if (Date.now() - state.lastMotionAt < 800) {
-        if (heading != null && Number.isFinite(Number(heading))) state.compass = Number(heading);
+        if (heading != null && Number.isFinite(Number(heading))) noteCompass(Number(heading));
         return;
       }
       const beta = event.beta * Math.PI / 180;
