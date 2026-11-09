@@ -3,6 +3,8 @@ import Foundation
 
 enum USATrailAtlas {
     static let corridorDisclaimer = "Independent public-road overland corridor compiled from public USFS, BLM, and state highway data. Not affiliated with, endorsed by, or sponsored by Backcountry Discovery Routes®."
+    /// Kept so the old hand tables still type-check. Live camps no longer use these guessed slopes.
+    static let retiredHandCampCount = handCamps.count + bdrCamps.count
 
     static let all: [OverlandTrail] = specs.map(make)
 
@@ -18,7 +20,7 @@ enum USATrailAtlas {
             seed: seed,
             kilometers: spec.km
         )
-        let camps = handCamps[spec.id] ?? bdrCamps[spec.id] ?? TrailGeometry.pads(lat: spec.lat, lon: spec.lon, seed: seed)
+        let camps: [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] = []
         return OverlandTrail(
             id: spec.id,
             name: spec.name,

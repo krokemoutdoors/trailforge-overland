@@ -728,7 +728,7 @@ struct MainCockpitView: View {
                         .onTapGesture {
                             voiceGuide.speak(cue.text, enabled: true)
                         }
-                    Text(route.destination.kind == .trailhead ? route.destination.name : String(format: "%@ • %.1f° • %d%% Starlink", route.destination.name, route.destination.slopeDeg, route.destination.starlinkPct))
+                    Text(route.destination.kind == .trailhead ? route.destination.name : "\(route.destination.name) • \(slopeText(route.destination))")
                         .font(.caption)
                         .foregroundColor(.cyan)
                         .lineLimit(1)
@@ -1049,7 +1049,7 @@ struct MainCockpitView: View {
                                         Text(spot.name)
                                             .font(.subheadline.bold())
                                             .foregroundColor(.white)
-                                        Text(String(format: "%.1f° Slope • %d%% Starlink • %@", spot.slopeDeg, spot.starlinkPct, trailName(for: spot)))
+                                        Text("\(slopeText(spot)) • \(trailName(for: spot))")
                                             .font(.caption2)
                                             .foregroundColor(.green)
                                             .lineLimit(1)
@@ -1213,7 +1213,13 @@ struct MainCockpitView: View {
 
     private func destinationTitle(_ spot: CampSpot) -> String {
         if spot.kind == .trailhead { return spot.name }
-        return String(format: "%@ • %.1f° Slope • %d%% Starlink", spot.name, spot.slopeDeg, spot.starlinkPct)
+        return "\(spot.name) • \(slopeText(spot))"
+    }
+
+    private func slopeText(_ spot: CampSpot) -> String {
+        if spot.kind != .pad { return spot.name }
+        if spot.slopeDeg < 0 { return "slope unknown" }
+        return String(format: "%.1f° slope", spot.slopeDeg)
     }
 
     private func trailName(for spot: CampSpot) -> String {
@@ -1768,7 +1774,7 @@ struct MainCockpitView: View {
                 announcedArrival = true
                 let arrival: String
                 if route.destination.kind == .pad {
-                    arrival = String(format: "You have arrived at %@. Slope is %.1f degrees.", route.destination.name, route.destination.slopeDeg)
+                    arrival = "You have arrived at \(route.destination.name). \(slopeText(route.destination))."
                 } else {
                     arrival = "You have arrived at \(route.destination.name)."
                 }
@@ -2895,7 +2901,7 @@ struct MainCockpitView: View {
                          : "3D terrain stays on. Thermal Saver flattens elevation and pauses live hazard refreshes.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    Text("NIFC perimeters and USGS quakes load when a signal is available. Fords and ledges stay on the cached route. Starlink shading uses each pad's sky view, not a live carrier map.")
+                    Text("NIFC perimeters and USGS quakes load when a signal is available. Fords and ledges stay on the cached route. Flat camps use measured terrain slope, not a guessed number.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     Text(" Maps • © OpenStreetMap contributors • USGS, USFS, BLM, and county GIS layers are public data. TrailForge is not affiliated with those agencies.")
@@ -4707,11 +4713,6 @@ private struct StableRouteMap: View, Equatable {
         return Array(camps.prefix(12)).map { KeyedSpot(id: "slope-\($0.id)-\(bucket)", spot: $0) }
     }
 
-    private var cellSpots: [KeyedSpot] {
-        let bucket = Int((starlinkOpacity * 100).rounded())
-        return Array(camps.prefix(12)).map { KeyedSpot(id: "cell-\($0.id)-\(bucket)", spot: $0) }
-    }
-
     private var keyedHazards: [KeyedHazard] {
         let bucket = Int((hazardOpacity * 100).rounded())
         return hazards.map { KeyedHazard(id: "hazard-\($0.id)-\(bucket)", hazard: $0) }
@@ -4810,12 +4811,6 @@ private struct StableRouteMap: View, Equatable {
                 ForEach(slopeSpots) { item in
                     MapCircle(center: item.spot.coordinate, radius: 120 + campSlopeOpacity * 80)
                         .foregroundStyle(LandMask.slopeFlat.opacity(0.12 + campSlopeOpacity * 0.62))
-                }
-            }
-            if starlinkOpacity > 0.02 {
-                ForEach(cellSpots) { item in
-                    MapCircle(center: item.spot.coordinate, radius: 160 + starlinkOpacity * 140)
-                        .foregroundStyle(LandMask.cell.opacity(0.1 + starlinkOpacity * 0.55))
                 }
             }
             if hazardOpacity > 0.02 {
@@ -5061,11 +5056,11 @@ private struct StableRouteMap: View, Equatable {
         Button {
             onSpot(spot)
         } label: {
-            Text(String(format: "⛺ %.1f°", spot.slopeDeg))
+            Text(spot.slopeDeg < 0 ? "⛺ ?" : String(format: "⛺ %.1f°", spot.slopeDeg))
                 .font(.caption2.bold())
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(spot.slopeDeg < 2 ? Color.green : Color.yellow)
+                .background(spot.slopeDeg < 0 ? Color.gray : (spot.slopeDeg < 2 ? Color.green : Color.yellow))
                 .foregroundColor(.black)
                 .clipShape(Capsule())
                 .overlay(

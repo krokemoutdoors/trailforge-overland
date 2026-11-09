@@ -239,7 +239,7 @@ final class GPXTrackManager: NSObject, ObservableObject, XMLParserDelegate {
               <wpt lat="\(String(format: "%.6f", wpt.latitude))" lon="\(String(format: "%.6f", wpt.longitude))">
                 <ele>\(String(format: "%.1f", wpt.elevationMeters))</ele>
                 <name>\(wpt.name)</name>
-                <desc>Slope: \(wpt.slopeDegrees) deg | Starlink Sky: \(wpt.starlinkSkyPct)%</desc>
+                <desc>Slope: \(wpt.slopeDegrees) deg</desc>
                 <sym>\(wpt.sym)</sym>
               </wpt>
             """

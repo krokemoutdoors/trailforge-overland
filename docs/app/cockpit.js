@@ -250,13 +250,8 @@
     return points;
   }
 
-  function padsGeometry(lat, lon, seed) {
-    const slopeA = 1.1 + (Math.abs(seed) % 8) * 0.1;
-    const slopeB = 1.8 + (Math.abs(Math.trunc(seed / 7)) % 8) * 0.1;
-    return [
-      { name: "Flat Pad A", lat: lat + 0.012, lon: lon - 0.010, slope: Math.min(slopeA, 2.4), starlink: 88 + (Math.abs(seed) % 11) },
-      { name: "Flat Pad B", lat: lat - 0.014, lon: lon + 0.011, slope: Math.min(slopeB, 2.8), starlink: 80 + (Math.abs(Math.trunc(seed / 3)) % 15) }
-    ];
+  function padsGeometry() {
+    return [];
   }
 
   function buildBuiltins() {
@@ -264,11 +259,7 @@
       const seed = seedFor(spec.id);
       const coordinates = ATLAS.handRoutes[spec.id] || routeGeometry(spec.lat, spec.lon, seed, spec.km || 18);
       let camps = ATLAS.handCamps[spec.id];
-      if (!camps) {
-        camps = padsGeometry(spec.lat, spec.lon, seed).map(function (pad, index) {
-          return Object.assign({}, pad, { name: spec.name + (index === 0 ? " Pad A" : " Pad B") });
-        });
-      }
+      if (!camps) camps = [];
       return {
         id: spec.id,
         name: spec.name,
@@ -521,7 +512,7 @@
     const pads = [];
     source.forEach(function (trail) {
       spotsFor(trail).forEach(function (spot) {
-        if (spot.slope < 3) pads.push(spot);
+        if (campKept(spot)) pads.push(spot);
       });
     });
     const origin = mapCenter();
@@ -710,7 +701,7 @@
       const spot = state.route.destination;
       const remaining = remainingMeters(state.route);
       const seconds = remainingSeconds(state.route, remaining);
-      const slope = spot.kind === "pad" ? " · " + Number(spot.slope || 0).toFixed(1) + "° slope" : "";
+      const slope = spot.kind === "pad" ? " · " + slopePhrase(spot.slope) : "";
       top.innerHTML = '<div class="nav preview"><div class="nav-copy"><div class="nav-dist">Previewing Route to ' + esc(spot.name) + '</div><div class="nav-street">' + esc(formatDistance(remaining) + " · " + formatDuration(seconds) + slope) + '</div></div><button type="button" class="primary" data-act="confirm-route">Start GPS Route</button><button type="button" class="ghost" data-act="go-start">Starting Point</button><button type="button" class="ghost" data-act="go-dest">Destination</button><button type="button" class="ghost" data-act="end">Cancel</button></div>';
       return;
     }
@@ -737,10 +728,10 @@
     const remaining = remainingMeters(state.route);
     const seconds = remainingSeconds(state.route, remaining);
     const eta = formatClock(new Date(Date.now() + seconds * 1000));
-    const slope = spot.kind === "pad" ? spot.slope.toFixed(1) + "°" : spot.kind === "parcel" ? Number(spot.acres || 0).toFixed(1) + " ac" : spot.kind === "place" ? "Place" : "Trailhead";
-    const sky = spot.kind === "pad" ? spot.starlink + "%" : (spot.kind === "parcel" || spot.kind === "place") ? (spot.zoning || "—") : "—";
-    const slopeLabel = spot.kind === "pad" ? "pad slope" : spot.kind === "parcel" ? "lot size" : "destination";
-    const skyLabel = spot.kind === "pad" ? "Starlink" : spot.kind === "parcel" ? "zoning" : spot.kind === "place" ? "address" : "sky";
+    const slope = spot.kind === "pad" ? slopePhrase(spot.slope) : spot.kind === "parcel" ? Number(spot.acres || 0).toFixed(1) + " ac" : spot.kind === "place" ? "Place" : "Trailhead";
+    const sky = spot.kind === "pad" ? campLandLabel(spot.name) : (spot.kind === "parcel" || spot.kind === "place") ? (spot.zoning || "—") : "—";
+    const slopeLabel = spot.kind === "pad" ? "measured slope" : spot.kind === "parcel" ? "lot size" : "destination";
+    const skyLabel = spot.kind === "pad" ? "land" : spot.kind === "parcel" ? "zoning" : spot.kind === "place" ? "address" : "sky";
     const stats = '<div class="route-stats"><div><b id="rbSlope">' + esc(slope) + "</b><span>" + slopeLabel + '</span></div><div><b id="rbSky">' + esc(sky) + "</b><span>" + skyLabel + '</span></div><div><b id="rbEta">' + esc(formatDuration(seconds)) + "</b><span>ETA " + esc(eta) + '</span></div><div><b id="rbMiles">' + esc(formatDistance(remaining)) + '</b><span>remaining</span></div></div>';
     const jumps = '<button type="button" data-act="go-start">Starting Point</button><button type="button" data-act="go-dest">Destination</button>';
     if (!state.route.confirmed) {
@@ -825,7 +816,7 @@
     const title = pads.length ? "Tap a &lt;3° pad to route" : "No &lt;3° pads in " + esc(filterTitle());
     const cards = pads.slice(0, 40).map(function (spot) {
       const trail = trailById(spot.trailID);
-      return '<div class="pad"><div class="meta"><b>' + esc(spot.name) + "</b><small>" + spot.slope.toFixed(1) + "° Slope · " + spot.starlink + "% Starlink · " + esc(trail ? trail.name : "Trail") + '</small></div><button type="button" class="cta" data-act="route" data-id="' + esc(spot.id) + '">Route Here</button></div>';
+      return '<div class="pad"><div class="meta"><b>' + esc(spot.name) + "</b><small>" + esc(slopePhrase(spot.slope)) + " · " + esc(trail ? trail.name : "Trail") + '</small></div><button type="button" class="cta" data-act="route" data-id="' + esc(spot.id) + '">Route Here</button></div>';
     }).join("");
     const chips = '<div class="chips"><button type="button" class="chip' + (state.filter === "near" ? " on" : "") + '" data-act="filter" data-id="near">Near Me</button><button type="button" class="chip' + (state.filter === "bdr" ? " on" : "") + '" data-act="filter" data-id="bdr">Backcountry Corridors</button>' + ATLAS.states.map(function (box) {
       return '<button type="button" class="chip' + (state.filter === box.code ? " on" : "") + '" data-act="filter" data-id="' + box.code + '">' + box.code + "</button>";
@@ -859,7 +850,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.4 · build 36<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.5 · build 37<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -904,7 +895,7 @@
     const trail = selected();
     if (!trail) return null;
     if (state.mode === "camp") {
-      const pads = spotsFor(trail).filter(function (spot) { return spot.slope < 3; });
+      const pads = spotsFor(trail).filter(campKept);
       if (pads.length) return pads.slice().sort(function (a, b) { return a.slope - b.slope; })[0];
     }
     return trailhead(trail);
@@ -1059,11 +1050,12 @@
       const showPads = zoom >= 5 || state.mode === "camp" || selectedTrail || !!state.route;
       if (showPads) {
         spotsFor(trail).forEach(function (spot) {
-          if (spot.slope >= 3 || !view.contains([spot.lat, spot.lon])) return;
+          if (!campKept(spot) || !view.contains([spot.lat, spot.lon])) return;
           const routed = !!(state.route && state.route.destination && state.route.destination.id === spot.id);
+          const known = Number(spot.slope) >= 0;
           const icon = L.divIcon({
-            className: "camp-pin" + (spot.slope >= 2 ? " warn" : "") + (routed ? " on" : ""),
-            html: "<span>⛺ " + spot.slope.toFixed(1) + "°</span>",
+            className: "camp-pin" + (known && spot.slope >= 2 ? " warn" : "") + (routed ? " on" : ""),
+            html: "<span>⛺ " + (known ? Number(spot.slope).toFixed(1) + "°" : "?") + "</span>",
             iconAnchor: [28, 12]
           });
           L.marker([spot.lat, spot.lon], { icon: icon, zIndexOffset: 400 }).on("click", function () {
@@ -1370,8 +1362,6 @@
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
     const id = "osm-camp-" + element.id;
     const name = tags.name || tags.ref || "Camp";
-    const seed = seedFor(id);
-    const slope = Math.min(2.4, 1.1 + (Math.abs(seed) % 10) * 0.1);
     return {
       id: id,
       name: name,
@@ -1390,7 +1380,7 @@
       lat: lat,
       lon: lon,
       coordinates: [[lat, lon]],
-      flatCamps: [{ name: name, lat: lat, lon: lon, slope: Math.round(slope * 10) / 10, starlink: 82 + (Math.abs(seed) % 17) }],
+      flatCamps: [{ name: name + " · Mapped campsite · slope unknown", lat: lat, lon: lon, slope: -1, starlink: 0, mapped: true }],
       signature: false,
       live: true
     };
@@ -1430,27 +1420,8 @@
     }).filter(Boolean);
   }
 
-  function livePads(name, coordinates, seed) {
-    if (!coordinates || coordinates.length < 2) return [];
-    const slopeA = Math.min(2.7, 1.2 + (Math.abs(seed) % 12) * 0.12);
-    const indexes = coordinates.length >= 4
-      ? [Math.floor(coordinates.length / 3), Math.floor(coordinates.length * 2 / 3)]
-      : [Math.min(coordinates.length - 1, Math.max(1, Math.floor(coordinates.length / 3)))];
-    const pads = [];
-    indexes.forEach(function (index, padIndex) {
-      const point = coordinates[index];
-      const slope = padIndex === 0 ? slopeA : Math.min(2.8, slopeA + 0.4);
-      if (slope >= 3) return;
-      const label = coordinates.length >= 4 ? (name + (padIndex === 0 ? " Pad A" : " Pad B")) : (name + " Flat Pad");
-      pads.push({
-        name: label,
-        lat: point[0],
-        lon: point[1],
-        slope: Math.round(slope * 10) / 10,
-        starlink: 82 + (Math.abs(seed + padIndex * 3) % 17)
-      });
-    });
-    return pads;
+  function livePads() {
+    return [];
   }
 
   function liveTrail(id, name, region, agency, coordinates, mid, fit, seed, tagged) {
@@ -1472,7 +1443,7 @@
       lat: mid[0],
       lon: mid[1],
       coordinates: coordinates,
-      flatCamps: livePads(name, coordinates, seed),
+      flatCamps: [],
       signature: false,
       live: true
     };
@@ -1536,6 +1507,201 @@
     }, 180);
   }
 
+  function slopePhrase(slope) {
+    if (!(Number(slope) >= 0)) return "slope unknown";
+    return Number(slope).toFixed(1) + "° slope";
+  }
+
+  function campLandLabel(name) {
+    const text = String(name || "");
+    if (text.indexOf("USFS") >= 0) return "USFS";
+    if (text.indexOf("BLM") >= 0) return "BLM";
+    if (text.indexOf("Mapped campsite") >= 0) return "Mapped";
+    return "—";
+  }
+
+  function campKept(spot) {
+    if (!spot) return false;
+    if (String(spot.name || "").indexOf("Mapped campsite") >= 0) return true;
+    return Number(spot.slope) >= 0 && Number(spot.slope) < 3;
+  }
+
+  const slopeCache = (function () {
+    try { return JSON.parse(localStorage.getItem("tf-slope-v1") || "{}"); } catch (error) { return {}; }
+  })();
+  const demTiles = {};
+  const landCache = {};
+
+  function slopeKey(lat, lon) {
+    return (Math.round(lat * 4000) / 4000) + "," + (Math.round(lon * 4000) / 4000);
+  }
+
+  function saveSlopeCache() {
+    const keys = Object.keys(slopeCache);
+    if (keys.length > 500) keys.slice(0, keys.length - 500).forEach(function (key) { delete slopeCache[key]; });
+    try { localStorage.setItem("tf-slope-v1", JSON.stringify(slopeCache)); } catch (error) {}
+  }
+
+  function demPixel(lat, lon, z) {
+    const n = Math.pow(2, z);
+    const xf = (lon + 180) / 360 * n;
+    const latRad = lat * Math.PI / 180;
+    const yf = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+    return { x: Math.floor(xf), y: Math.floor(yf), px: xf - Math.floor(xf), py: yf - Math.floor(yf) };
+  }
+
+  async function demImage(x, y, z) {
+    const key = z + "/" + x + "/" + y;
+    if (demTiles[key]) return demTiles[key];
+    const blob = await netBlob("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/" + key + ".png");
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0);
+    const image = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    demTiles[key] = image;
+    return image;
+  }
+
+  function terrariumElev(image, px, py) {
+    const x = Math.max(0, Math.min(image.width - 1, px | 0));
+    const y = Math.max(0, Math.min(image.height - 1, py | 0));
+    const index = (y * image.width + x) * 4;
+    return image.data[index] * 256 + image.data[index + 1] + image.data[index + 2] / 256 - 32768;
+  }
+
+  async function elevationAt(lat, lon) {
+    const z = 12;
+    const tile = demPixel(lat, lon, z);
+    const image = await demImage(tile.x, tile.y, z);
+    return terrariumElev(image, Math.floor(tile.px * image.width), Math.floor(tile.py * image.height));
+  }
+
+  async function measureSlope(lat, lon) {
+    const key = slopeKey(lat, lon);
+    if (slopeCache[key] && Number.isFinite(Number(slopeCache[key].slope))) return Number(slopeCache[key].slope);
+    const span = 45;
+    const dLat = span / 111320;
+    const dLon = span / Math.max(20000, 111320 * Math.cos(lat * Math.PI / 180));
+    const points = [[lat, lon], [lat + dLat, lon], [lat - dLat, lon], [lat, lon + dLon], [lat, lon - dLon]];
+    const elev = [];
+    for (let index = 0; index < points.length; index += 1) elev.push(await elevationAt(points[index][0], points[index][1]));
+    let maxSlope = 0;
+    for (let index = 1; index < elev.length; index += 1) {
+      const degrees = Math.atan2(Math.abs(elev[index] - elev[0]), span) * 180 / Math.PI;
+      if (degrees > maxSlope) maxSlope = degrees;
+    }
+    const slope = Math.round(maxSlope * 10) / 10;
+    slopeCache[key] = { slope: slope, at: Date.now() };
+    saveSlopeCache();
+    return slope;
+  }
+
+  async function publicCampLand(lat, lon) {
+    const key = slopeKey(lat, lon);
+    if (Object.prototype.hasOwnProperty.call(landCache, key)) return landCache[key];
+    async function hits(layer) {
+      const params = new URLSearchParams({
+        geometry: lon + "," + lat,
+        geometryType: "esriGeometryPoint",
+        inSR: "4326",
+        spatialRel: "esriSpatialRelIntersects",
+        returnCountOnly: "true",
+        f: "json"
+      });
+      const text = await net("https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/" + layer + "/query?" + params.toString());
+      const root = JSON.parse(text);
+      return Number(root.count) > 0;
+    }
+    try {
+      if (await hits(22)) { landCache[key] = "BLM"; return "BLM"; }
+      if (await hits(24)) { landCache[key] = "USFS"; return "USFS"; }
+      landCache[key] = "";
+      return "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function dispersedSeeds(coordinates) {
+    if (!coordinates || coordinates.length < 2) return [];
+    const seeds = [];
+    let traveled = 0;
+    let next = 400;
+    for (let index = 1; index < coordinates.length && seeds.length < 4; index += 1) {
+      const a = coordinates[index - 1];
+      const b = coordinates[index];
+      const step = meters({ lat: a[0], lon: a[1] }, { lat: b[0], lon: b[1] });
+      traveled += step;
+      if (traveled < next) continue;
+      const dLat = b[0] - a[0];
+      const dLon = b[1] - a[1];
+      const len = Math.sqrt(dLat * dLat + dLon * dLon) || 1;
+      const side = 30 / 111320;
+      seeds.push([b[0] + (-dLon / len) * side, b[1] + (dLat / len) * side]);
+      next += 700;
+    }
+    return seeds;
+  }
+
+  async function realCampsFor(trail) {
+    const mapped = String(trail.id || "").indexOf("osm-camp-") === 0;
+    if (mapped) {
+      const camp = (trail.flatCamps && trail.flatCamps[0]) || { lat: trail.lat, lon: trail.lon, name: trail.name };
+      let slope = -1;
+      try { slope = await measureSlope(camp.lat, camp.lon); } catch (error) { slope = -1; }
+      const base = String(camp.name || trail.name || "Camp").split(" · ")[0];
+      const slopeBit = slope >= 0 ? "measured " + slope.toFixed(1) + "°" : "slope unknown";
+      return [{ name: base + " · Mapped campsite · " + slopeBit, lat: camp.lat, lon: camp.lon, slope: slope, starlink: 0, mapped: true }];
+    }
+    const seeds = dispersedSeeds(trail.coordinates);
+    const kept = [];
+    for (let index = 0; index < seeds.length; index += 1) {
+      const lat = seeds[index][0];
+      const lon = seeds[index][1];
+      const land = await publicCampLand(lat, lon);
+      if (land !== "USFS" && land !== "BLM") continue;
+      let slope = null;
+      try { slope = await measureSlope(lat, lon); } catch (error) { slope = null; }
+      if (!(slope >= 0) || slope >= 3) continue;
+      kept.push({
+        name: trail.name + " pull-out · Dispersed – measured " + slope.toFixed(1) + "°, " + land + " land",
+        lat: lat,
+        lon: lon,
+        slope: slope,
+        starlink: 0,
+        mapped: false
+      });
+    }
+    return kept;
+  }
+
+  function surveyCamps(trails, gen) {
+    const queue = (trails || []).filter(function (trail) { return trail && (String(trail.id).indexOf("osm-") === 0 || String(trail.id).indexOf("usfs-") === 0); }).slice(0, 24);
+    if (!queue.length) return;
+    let cursor = 0;
+    function next() {
+      if (gen !== state.scanGen || cursor >= queue.length) {
+        if (gen === state.scanGen) {
+          saveDiscovered();
+          renderAll();
+        }
+        return;
+      }
+      const trail = queue[cursor];
+      cursor += 1;
+      realCampsFor(trail).then(function (camps) {
+        if (gen !== state.scanGen) return;
+        const live = state.discovered.find(function (item) { return item.id === trail.id; });
+        if (live) live.flatCamps = camps;
+        next();
+      }).catch(function () { next(); });
+    }
+    next();
+  }
+
   function absorbDiscovered(center, incoming, gen) {
     if (gen !== state.scanGen || !incoming || !incoming.length) return;
     const byId = {};
@@ -1552,6 +1718,7 @@
     saveDiscovered();
     state.scanStatus = merged.length + " local USA trails";
     renderAll();
+    surveyCamps(incoming, gen);
   }
 
   function scanAt(center) {
@@ -1781,7 +1948,7 @@
     if (padDistance <= 0.05) {
       route.arrived = true;
       if (route.destination.kind === "pad") {
-        speak("You have arrived at " + route.destination.name + ". Slope " + route.destination.slope.toFixed(1) + " degrees. Starlink " + route.destination.starlink + " percent.");
+        speak("You have arrived at " + route.destination.name + ". " + slopePhrase(route.destination.slope) + ".");
       } else if (route.destination.kind === "parcel") {
         speak("You have arrived at " + route.destination.name + ". " + Number(route.destination.acres || 0).toFixed(1) + " acre lot.");
       } else {
@@ -3810,7 +3977,7 @@
       const spots = spotsFor(trail);
       for (let index = 0; index < spots.length; index += 1) {
         const spot = spots[index];
-        if (spot.slope >= 3) continue;
+        if (!(Number(spot.slope) >= 0) || spot.slope >= 3 || !spot.sky) continue;
         L.circle([spot.lat, spot.lon], {
           radius: 180 + starlinkFade * 180,
           color: "#3ecbff",

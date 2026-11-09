@@ -76,7 +76,9 @@ struct OverlandTrail: Identifiable {
 
     var campSpots: [CampSpot] {
         flatCamps.enumerated().compactMap { index, camp in
-            guard camp.slopeDeg < 3 else { return nil }
+            let mapped = camp.name.contains("Mapped campsite")
+            let flat = camp.slopeDeg >= 0 && camp.slopeDeg < 3
+            guard mapped || flat else { return nil }
             return CampSpot(
                 id: "\(id)#\(index)",
                 trailID: id,
@@ -142,12 +144,8 @@ enum TrailGeometry {
     }
 
     static func pads(lat: Double, lon: Double, seed: Int) -> [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] {
-        let slopeA = 1.1 + Double(abs(seed) % 8) * 0.1
-        let slopeB = 1.8 + Double(abs(seed / 7) % 8) * 0.1
-        return [
-            (name: "Flat Pad A", lat: lat + 0.012, lon: lon - 0.010, slopeDeg: min(slopeA, 2.4), starlinkPct: 88 + abs(seed) % 11),
-            (name: "Flat Pad B", lat: lat - 0.014, lon: lon + 0.011, slopeDeg: min(slopeB, 2.8), starlinkPct: 80 + abs(seed / 3) % 15)
-        ]
+        _ = (lat, lon, seed)
+        return []
     }
 }
 

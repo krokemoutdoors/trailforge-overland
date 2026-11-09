@@ -107,11 +107,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return CPPointOfInterest(
                 location: item,
                 title: spot.name,
-                subtitle: String(format: "%.1f° slope", spot.slopeDeg),
-                summary: "Flat dispersed camp",
+                subtitle: spot.slopeDeg < 0 ? "slope unknown" : String(format: "%.1f° slope", spot.slopeDeg),
+                summary: spot.name,
                 detailTitle: spot.name,
                 detailSubtitle: "Tap to start GPS route",
-                detailSummary: String(format: "%d%% sky", spot.starlinkPct),
+                detailSummary: spot.slopeDeg < 0 ? "Slope was not measured" : "Measured from terrain elevation",
                 pinImage: pin
             )
         }

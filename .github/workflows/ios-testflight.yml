@@ -226,6 +226,84 @@ jobs:
             --apiKey "$ASC_KEY_ID" \
             --apiIssuer "$ASC_ISSUER_ID"
 
+      - name: Add build 37 to Friends & Family Beta
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, time, urllib.request, urllib.parse, urllib.error, subprocess
+          from pathlib import Path
+          key_id = Path("/tmp/asc_key_id").read_text().strip()
+          issuer = Path("/tmp/asc_issuer_id").read_text().strip()
+          key_path = Path.home() / ".appstoreconnect" / "private_keys" / f"AuthKey_{key_id}.p8"
+          group = "cb87a190-d353-41ff-8552-a214be5fc58a"
+          header = {"alg": "ES256", "kid": key_id, "typ": "JWT"}
+          now = int(time.time())
+          payload = {"iss": issuer, "iat": now, "exp": now + 900, "aud": "appstoreconnect-v1"}
+          def b64(raw):
+              import base64
+              return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+          def der_to_raw(der):
+              if len(der) == 64:
+                  return der
+              idx = 2
+              if der[1] & 0x80:
+                  idx = 2 + (der[1] & 0x7F)
+              def read_int(i):
+                  length = der[i + 1]
+                  value = der[i + 2:i + 2 + length]
+                  if len(value) > 32:
+                      value = value[-32:]
+                  return value.rjust(32, b"\x00"), i + 2 + length
+              r, i = read_int(idx)
+              s, _ = read_int(i)
+              return r + s
+          signing = b64(json.dumps(header, separators=(",", ":")).encode()) + "." + b64(json.dumps(payload, separators=(",", ":")).encode())
+          der = subprocess.check_output(["openssl", "dgst", "-sha256", "-sign", str(key_path), "-binary"], input=signing.encode())
+          token = signing + "." + b64(der_to_raw(der))
+          def api(method, path, body=None):
+              req = urllib.request.Request(
+                  "https://api.appstoreconnect.apple.com" + path,
+                  data=None if body is None else json.dumps(body).encode(),
+                  method=method,
+                  headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  raw = response.read()
+                  return json.loads(raw) if raw else {}
+          apps = api("GET", "/v1/apps?" + urllib.parse.urlencode({"filter[bundleId]": "com.edwardshin.trailforge", "limit": "1"}))
+          app_id = (apps.get("data") or [{}])[0].get("id", "")
+          build_id = ""
+          for _ in range(24):
+              query = {
+                  "filter[version]": "37",
+                  "limit": "5",
+                  "sort": "-uploadedDate",
+              }
+              if app_id:
+                  query["filter[app]"] = app_id
+              data = api("GET", "/v1/builds?" + urllib.parse.urlencode(query))
+              items = data.get("data") or []
+              if items:
+                  build_id = items[0]["id"]
+                  break
+              time.sleep(20)
+          if not build_id:
+              print("Build 37 is not visible in App Store Connect yet. Upload finished; group assignment can be retried after processing.")
+              raise SystemExit(0)
+          try:
+              api("POST", f"/v1/betaGroups/{group}/relationships/builds", {
+                  "data": [{"type": "builds", "id": build_id}]
+              })
+          except urllib.error.HTTPError as error:
+              detail = error.read().decode("utf-8", "replace")
+              if error.code in (409, 422):
+                  print("Build is already on the group or not ready:", detail[:400])
+              else:
+                  print(detail[:800])
+                  raise
+          print("Added build", build_id, "to Friends & Family Beta")
+          PY
+
       - name: Clean up signing material
         if: always()
         run: |

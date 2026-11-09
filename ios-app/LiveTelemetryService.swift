@@ -1,6 +1,8 @@
 import Foundation
 import CoreLocation
 import CoreMotion
+import ImageIO
+import CoreGraphics
 
 // MARK: - Live US Government Overland Telemetry (USGS + SNOTEL + NIFC Wildfire + USFS MVUM)
 struct USGSGaugeReading: Codable, Identifiable {
@@ -426,7 +428,8 @@ extension LiveTelemetryService {
             }
             for await trails in group {
                 guard generation == trailScanGeneration else { continue }
-                absorbDiscovered(trails, generation: generation, center: center)
+                let annotated = await CampSurvey.annotate(trails)
+                absorbDiscovered(annotated, generation: generation, center: center)
             }
         }
         guard generation == trailScanGeneration else { return }
@@ -527,8 +530,6 @@ extension LiveTelemetryService {
               let lon = element["lon"] as? Double else { return nil }
         let tags = stringMap(element["tags"])
         let name = tags["name"] ?? tags["ref"] ?? "Camp"
-        let seed = TrailGeometry.seed(for: "osm-camp-\(nodeID)")
-        let slope = min(2.4, 1.1 + Double(abs(seed) % 10) * 0.1)
         let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         return OverlandTrail(
             id: "osm-camp-\(nodeID)",
@@ -548,7 +549,7 @@ extension LiveTelemetryService {
             centerLat: lat,
             centerLon: lon,
             coordinates: [coordinate],
-            flatCamps: [(name: name, lat: lat, lon: lon, slopeDeg: slope, starlinkPct: 82 + abs(seed) % 17)],
+            flatCamps: [(name: "\(name) · Mapped campsite · slope unknown", lat: lat, lon: lon, slopeDeg: -1, starlinkPct: 0)],
             legalStatus: "osm"
         )
     }
@@ -565,7 +566,6 @@ extension LiveTelemetryService {
         let mid = coordinates[coordinates.count / 2]
         let name = tags["name"] ?? tags["ref"] ?? tags["official_name"] ?? "OSM \(wayID)"
         let fit = clearanceEstimate(tracktype: tags["tracktype"], surface: tags["surface"], fourWheelOnly: tags["4wd_only"] == "yes")
-        let seed = TrailGeometry.seed(for: "osm-\(wayID)")
         return OverlandTrail(
             id: "osm-\(wayID)",
             name: name,
@@ -584,7 +584,7 @@ extension LiveTelemetryService {
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: coordinates,
-            flatCamps: padsAlong(coordinates, seed: seed, title: name),
+            flatCamps: [],
             legalStatus: "osm"
         )
     }
@@ -654,32 +654,9 @@ extension LiveTelemetryService {
             centerLat: mid.latitude,
             centerLon: mid.longitude,
             coordinates: sampled,
-            flatCamps: padsAlong(sampled, seed: TrailGeometry.seed(for: "usfs-\(identifier)"), title: name.hasPrefix("FS") || name.hasPrefix("FR") ? name : "FS \(name)"),
+            flatCamps: [],
             legalStatus: "mvum"
         )
-    }
-
-    private static func padsAlong(_ coordinates: [CLLocationCoordinate2D], seed: Int, title: String) -> [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] {
-        guard coordinates.count >= 2 else { return [] }
-        let slopeA = min(2.7, 1.2 + Double(abs(seed) % 12) * 0.12)
-        let indexes = coordinates.count >= 4
-            ? [coordinates.count / 3, (coordinates.count * 2) / 3]
-            : [min(coordinates.count - 1, max(1, coordinates.count / 3))]
-        var pads: [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] = []
-        for (padIndex, index) in indexes.enumerated() {
-            let point = coordinates[index]
-            let slope = padIndex == 0 ? slopeA : min(2.8, slopeA + 0.4)
-            guard slope < 3 else { continue }
-            let label = coordinates.count >= 4 ? (padIndex == 0 ? "\(title) Pad A" : "\(title) Pad B") : "\(title) Flat Pad"
-            pads.append((
-                name: label,
-                lat: point.latitude,
-                lon: point.longitude,
-                slopeDeg: (slope * 10).rounded() / 10,
-                starlinkPct: 82 + abs(seed + padIndex * 3) % 17
-            ))
-        }
-        return pads
     }
 
     private static func clearanceEstimate(tracktype: String?, surface: String?, fourWheelOnly: Bool) -> (clearance: Double, canopy: Double, water: Int, locker: Bool) {
@@ -750,5 +727,207 @@ extension LiveTelemetryService {
             if let value = attributes[key] as? Double { return String(Int(value)) }
         }
         return nil
+    }
+}
+
+enum CampSurvey {
+    private static let tileZoom = 12
+    private static var tilePixels: [String: (width: Int, height: Int, bytes: [UInt8])] = [:]
+    private static var slopeCache: [String: Double] = loadSlopes()
+    private static var landCache: [String: String] = [:]
+
+    static func annotate(_ trails: [OverlandTrail]) async -> [OverlandTrail] {
+        var annotated: [OverlandTrail] = []
+        annotated.reserveCapacity(trails.count)
+        for trail in trails {
+            var copy = trail
+            if trail.id.hasPrefix("osm-camp-") {
+                let slope = await measureSlope(latitude: trail.centerLat, longitude: trail.centerLon)
+                let bit = slope.map { String(format: "measured %.1f°", $0) } ?? "slope unknown"
+                let base = trail.name.split(separator: "·").first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? trail.name
+                copy.flatCamps = [(
+                    name: "\(base) · Mapped campsite · \(bit)",
+                    lat: trail.centerLat,
+                    lon: trail.centerLon,
+                    slopeDeg: slope ?? -1,
+                    starlinkPct: 0
+                )]
+            } else if trail.id.hasPrefix("osm-") || trail.id.hasPrefix("usfs-") {
+                copy.flatCamps = await dispersed(along: trail.coordinates, title: trail.name)
+            }
+            annotated.append(copy)
+        }
+        return annotated
+    }
+
+    private static func dispersed(along coordinates: [CLLocationCoordinate2D], title: String) async -> [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] {
+        var kept: [(name: String, lat: Double, lon: Double, slopeDeg: Double, starlinkPct: Int)] = []
+        for seed in pullouts(coordinates) {
+            let land = await publicLand(latitude: seed.latitude, longitude: seed.longitude)
+            guard land == "USFS" || land == "BLM" else { continue }
+            guard let slope = await measureSlope(latitude: seed.latitude, longitude: seed.longitude), slope < 3 else { continue }
+            kept.append((
+                name: String(format: "%@ pull-out · Dispersed – measured %.1f°, %@ land", title, slope, land),
+                lat: seed.latitude,
+                lon: seed.longitude,
+                slopeDeg: (slope * 10).rounded() / 10,
+                starlinkPct: 0
+            ))
+            if kept.count >= 3 { break }
+        }
+        return kept
+    }
+
+    private static func pullouts(_ coordinates: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        guard coordinates.count >= 2 else { return [] }
+        var seeds: [CLLocationCoordinate2D] = []
+        var traveled = 0.0
+        var next = 400.0
+        for index in 1..<coordinates.count where seeds.count < 4 {
+            let start = coordinates[index - 1]
+            let end = coordinates[index]
+            traveled += CLLocation(latitude: start.latitude, longitude: start.longitude)
+                .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
+            guard traveled >= next else { continue }
+            let dLat = end.latitude - start.latitude
+            let dLon = end.longitude - start.longitude
+            let length = max(1e-9, hypot(dLat, dLon))
+            let side = 30.0 / 111_320.0
+            seeds.append(CLLocationCoordinate2D(
+                latitude: end.latitude + (-dLon / length) * side,
+                longitude: end.longitude + (dLat / length) * side
+            ))
+            next += 700
+        }
+        return seeds
+    }
+
+    private static func measureSlope(latitude: Double, longitude: Double) async -> Double? {
+        let key = cacheKey(latitude, longitude)
+        if let cached = slopeCache[key] { return cached }
+        let span = 45.0
+        let dLat = span / 111_320.0
+        let dLon = span / max(20_000, 111_320 * cos(latitude * .pi / 180))
+        let samples = [
+            (latitude, longitude),
+            (latitude + dLat, longitude),
+            (latitude - dLat, longitude),
+            (latitude, longitude + dLon),
+            (latitude, longitude - dLon)
+        ]
+        var elevations: [Double] = []
+        for sample in samples {
+            guard let elev = await elevation(latitude: sample.0, longitude: sample.1) else { return nil }
+            elevations.append(elev)
+        }
+        var maxSlope = 0.0
+        for index in 1..<elevations.count {
+            let degrees = atan2(abs(elevations[index] - elevations[0]), span) * 180 / .pi
+            maxSlope = max(maxSlope, degrees)
+        }
+        let slope = (maxSlope * 10).rounded() / 10
+        slopeCache[key] = slope
+        saveSlopes()
+        return slope
+    }
+
+    private static func elevation(latitude: Double, longitude: Double) async -> Double? {
+        let z = tileZoom
+        let n = pow(2.0, Double(z))
+        let xf = (longitude + 180) / 360 * n
+        let latRad = latitude * .pi / 180
+        let yf = (1 - log(tan(latRad) + 1 / cos(latRad)) / .pi) / 2 * n
+        let x = Int(floor(xf))
+        let y = Int(floor(yf))
+        guard let tile = await tile(x: x, y: y, z: z) else { return nil }
+        let px = min(tile.width - 1, max(0, Int((xf - Double(x)) * Double(tile.width))))
+        let py = min(tile.height - 1, max(0, Int((yf - Double(y)) * Double(tile.height))))
+        let index = (py * tile.width + px) * 4
+        guard tile.bytes.count >= index + 3 else { return nil }
+        let red = Double(tile.bytes[index])
+        let green = Double(tile.bytes[index + 1])
+        let blue = Double(tile.bytes[index + 2])
+        return red * 256 + green + blue / 256 - 32768
+    }
+
+    private static func tile(x: Int, y: Int, z: Int) async -> (width: Int, height: Int, bytes: [UInt8])? {
+        let key = "\(z)/\(x)/\(y)"
+        if let cached = tilePixels[key] { return cached }
+        guard let url = URL(string: "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/\(key).png") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let width = image.width
+        let height = image.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let tile = (width: width, height: height, bytes: bytes)
+        tilePixels[key] = tile
+        return tile
+    }
+
+    private static func publicLand(latitude: Double, longitude: Double) async -> String {
+        let key = cacheKey(latitude, longitude)
+        if let cached = landCache[key] { return cached }
+        if await landHit(layer: 22, latitude: latitude, longitude: longitude) {
+            landCache[key] = "BLM"
+            return "BLM"
+        }
+        if await landHit(layer: 24, latitude: latitude, longitude: longitude) {
+            landCache[key] = "USFS"
+            return "USFS"
+        }
+        landCache[key] = ""
+        return ""
+    }
+
+    private static func landHit(layer: Int, latitude: Double, longitude: Double) async -> Bool {
+        var parts = URLComponents(string: "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/\(layer)/query")
+        parts?.queryItems = [
+            URLQueryItem(name: "geometry", value: "\(longitude),\(latitude)"),
+            URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
+            URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
+            URLQueryItem(name: "returnCountOnly", value: "true"),
+            URLQueryItem(name: "f", value: "json")
+        ]
+        guard let url = parts?.url else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return (root["count"] as? Int ?? 0) > 0
+    }
+
+    private static func cacheKey(_ latitude: Double, _ longitude: Double) -> String {
+        String(format: "%.4f,%.4f", latitude, longitude)
+    }
+
+    private static func loadSlopes() -> [String: Double] {
+        guard let data = UserDefaults.standard.data(forKey: "tf-slope-v1"),
+              let decoded = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
+        return decoded
+    }
+
+    private static func saveSlopes() {
+        var pairs = Array(slopeCache)
+        if pairs.count > 500 { pairs = Array(pairs.prefix(500)) }
+        let trimmed = Dictionary(uniqueKeysWithValues: pairs)
+        if let data = try? JSONEncoder().encode(trimmed) {
+            UserDefaults.standard.set(data, forKey: "tf-slope-v1")
+        }
     }
 }
