@@ -1088,9 +1088,9 @@ enum CampCatalog {
         let b = norm(right)
         guard a.count >= 4, b.count >= 4 else { return false }
         if a.contains(b) || b.contains(a) { return true }
-        let tokens = a.split(separator: " ").filter { $0.count >= 4 }
-        let other = Set(b.split(separator: " "))
-        return tokens.contains { other.contains($0) }
+        let tokens = a.split(separator: " ").map(String.init).filter { $0.count >= 4 }
+        let other = Set(b.split(separator: " ").map(String.init))
+        return tokens.contains(where: { other.contains($0) })
     }
 
     private static func norm(_ name: String) -> String {
