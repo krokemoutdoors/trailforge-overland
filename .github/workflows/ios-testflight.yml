@@ -67,7 +67,7 @@ jobs:
           echo "Handshake issue #${ISSUE_NUMBER} is waiting for HANDSHAKE_ENVELOPE."
 
           ENVELOPE=""
-          for _ in $(seq 1 72); do
+          for _ in $(seq 1 360); do
             curl -fsS "${AUTH[@]}" "${API}/issues/${ISSUE_NUMBER}" -o /tmp/issue_poll.json
             ENVELOPE=$(python3 -c 'import json; body=json.load(open("/tmp/issue_poll.json")).get("body") or ""; prefix="HANDSHAKE_ENVELOPE:"; print(body[len(prefix):] if body.startswith(prefix) else "", end="")')
             if [ -n "${ENVELOPE}" ]; then
@@ -78,7 +78,7 @@ jobs:
           rm -f /tmp/issue_poll.json
 
           if [ -z "${ENVELOPE}" ]; then
-            echo "Timed out after 360 seconds waiting for HANDSHAKE_ENVELOPE."
+            echo "Timed out after 1800 seconds waiting for HANDSHAKE_ENVELOPE."
             exit 1
           fi
 
@@ -231,7 +231,7 @@ jobs:
             --apiKey "$ASC_KEY_ID" \
             --apiIssuer "$ASC_ISSUER_ID"
 
-      - name: Add build 37 to Friends & Family Beta
+      - name: Add build 38 to Friends & Family Beta
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -280,7 +280,7 @@ jobs:
           build_id = ""
           for _ in range(24):
               query = {
-                  "filter[version]": "37",
+                  "filter[version]": "38",
                   "limit": "5",
                   "sort": "-uploadedDate",
               }
@@ -293,7 +293,7 @@ jobs:
                   break
               time.sleep(20)
           if not build_id:
-              print("Build 37 is not visible in App Store Connect yet. Upload finished; group assignment can be retried after processing.")
+              print("Build 38 is not visible in App Store Connect yet. Upload finished; group assignment can be retried after processing.")
               raise SystemExit(0)
           try:
               api("POST", f"/v1/betaGroups/{group}/relationships/builds", {
