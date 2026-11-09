@@ -93,7 +93,7 @@ class CampRefreshWorker(
             connectTimeout = 15000
             readTimeout = 20000
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "TrailForgeOverland/1.7.6")
+            setRequestProperty("User-Agent", "TrailForgeOverland/1.7.7")
             if (!apiKey.isNullOrBlank()) setRequestProperty("apikey", apiKey)
         }
         return try {

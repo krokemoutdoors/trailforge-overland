@@ -1,5 +1,5 @@
 name: Android Release Build
-# Release v1.7.6 after a GitHub Actions startup error.
+# Release v1.7.7 after a GitHub Actions startup error.
 
 on:
   push:
@@ -90,32 +90,33 @@ jobs:
           RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
         run: |
           set -euo pipefail
+          echo "RIDB_API_KEY length: ${#RIDB_API_KEY}"
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleRelease bundleRelease
           mkdir -p "${GITHUB_WORKSPACE}/dist"
-          cp app/build/outputs/apk/release/*-release.apk "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.7.6-release.apk"
-          cp app/build/outputs/bundle/release/*.aab "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.7.6-release.aab"
+          cp app/build/outputs/apk/release/*-release.apk "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.7.7-release.apk"
+          cp app/build/outputs/bundle/release/*.aab "${GITHUB_WORKSPACE}/dist/TrailForge-Overland-v1.7.7-release.aab"
 
       - name: Upload APK and AAB artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TrailForge-Overland-v1.7.6
+          name: TrailForge-Overland-v1.7.7
           path: |
-            dist/TrailForge-Overland-v1.7.6-release.apk
-            dist/TrailForge-Overland-v1.7.6-release.aab
+            dist/TrailForge-Overland-v1.7.7-release.apk
+            dist/TrailForge-Overland-v1.7.7-release.aab
           if-no-files-found: error
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.7.6-android
-          name: TrailForge Overland v1.7.6 (Android)
+          tag_name: v1.7.7-android
+          name: TrailForge Overland v1.7.7 (Android)
           target_commitish: ${{ github.sha }}
           overwrite_files: true
           make_latest: false
           generate_release_notes: false
           body: |
-            TrailForge Overland 1.7.6 (versionCode 38) for Android and Google Play.
+            TrailForge Overland 1.7.7 (versionCode 39) for Android and Google Play.
 
             Official campgrounds come from USFS recreation sites and BLM recreation facilities, plus Recreation.gov when the RIDB_API_KEY secret is set. The same site is kept once, preferring the agency record. Camps refresh when the cache is older than 24 hours, including offline-map areas, and the sheet shows when they were updated.
 
@@ -123,11 +124,11 @@ jobs:
 
             The location arrow eases toward a filtered heading instead of snapping to every compass sample. GPS course is used while moving and the compass while slow, with the short way around 0°/360°. Finger-tracking drag, two-finger rotate, pinch-zoom, the 75° tilt cap, and the layers rail icon stay in place.
 
-            - `TrailForge-Overland-v1.7.6-release.apk` installs directly on an Android phone.
-            - `TrailForge-Overland-v1.7.6-release.aab` uploads to Google Play Console.
+            - `TrailForge-Overland-v1.7.7-release.apk` installs directly on an Android phone.
+            - `TrailForge-Overland-v1.7.7-release.aab` uploads to Google Play Console.
 
             Package: `com.edwardshin.trailforge`. The release is signed with `trailforge-release.jks`. Set `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`, and `ANDROID_KEY_ALIAS` to reuse one upload key. Without those secrets, CI generates a fresh keystore for that run.
           files: |
-            dist/TrailForge-Overland-v1.7.6-release.apk
-            dist/TrailForge-Overland-v1.7.6-release.aab
+            dist/TrailForge-Overland-v1.7.7-release.apk
+            dist/TrailForge-Overland-v1.7.7-release.aab
           fail_on_unmatched_files: true

@@ -187,7 +187,7 @@ jobs:
           RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
         run: |
           set -euo pipefail
-          python3 -c 'import os,plistlib,pathlib; path=pathlib.Path("ios-app/Info.plist"); key=os.environ.get("RIDB_API_KEY","").strip();
+          python3 -c 'import os,plistlib,pathlib; path=pathlib.Path("ios-app/Info.plist"); key=os.environ.get("RIDB_API_KEY","").strip(); print("RIDB_API_KEY length:", len(key));
           info=plistlib.loads(path.read_bytes()) if key else None
           print("RIDB_API_KEY is not set. Recreation.gov campsites will be skipped.") if not key else path.write_bytes(plistlib.dumps({**info, "RIDBAPIKey": key})) or print("RIDB API key written into the iOS build.")'
           cd ios-app
@@ -231,7 +231,7 @@ jobs:
             --apiKey "$ASC_KEY_ID" \
             --apiIssuer "$ASC_ISSUER_ID"
 
-      - name: Add build 38 to Friends & Family Beta
+      - name: Add build 39 to Friends & Family Beta
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -280,7 +280,7 @@ jobs:
           build_id = ""
           for _ in range(24):
               query = {
-                  "filter[version]": "38",
+                  "filter[version]": "39",
                   "limit": "5",
                   "sort": "-uploadedDate",
               }
@@ -293,7 +293,7 @@ jobs:
                   break
               time.sleep(20)
           if not build_id:
-              print("Build 38 is not visible in App Store Connect yet. Upload finished; group assignment can be retried after processing.")
+              print("Build 39 is not visible in App Store Connect yet. Upload finished; group assignment can be retried after processing.")
               raise SystemExit(0)
           try:
               api("POST", f"/v1/betaGroups/{group}/relationships/builds", {
