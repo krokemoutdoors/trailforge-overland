@@ -7,6 +7,10 @@ android {
     namespace = "com.edwardshin.trailforge"
     compileSdk = 35
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.edwardshin.trailforge"
         minSdk = 26
@@ -54,9 +58,6 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
-    }
-    buildFeatures {
-        buildConfig = true
     }
     packaging {
         resources {
