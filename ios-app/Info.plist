@@ -19,7 +19,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>37</string>
+	<string>38</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>TrailForge records a 5-second voice note when you drop a hazard pin.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -28,6 +28,12 @@
 	<array>
 		<string>fetch</string>
 	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.edwardshin.trailforge.camps</string>
+	</array>
+	<key>RIDBAPIKey</key>
+	<string></string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>comgooglemaps</string>

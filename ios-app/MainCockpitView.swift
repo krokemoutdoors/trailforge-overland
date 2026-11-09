@@ -1031,9 +1031,15 @@ struct MainCockpitView: View {
         }
     }
 
+    private var campListTitle: String {
+        let base = listedCamps.isEmpty ? "No <3° pads in \(filterTitle)" : "Tap a pad to route"
+        guard let updated = telemetry.campUpdatedAt else { return base }
+        return base + " · Updated " + updated.formatted(date: .abbreviated, time: .shortened)
+    }
+
     private var campList: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(listedCamps.isEmpty ? "No <3° pads in \(filterTitle)" : "Tap a pad to route")
+            Text(campListTitle)
                 .font(.caption.bold())
                 .foregroundColor(.green)
             ScrollView {
@@ -4185,6 +4191,7 @@ struct MainCockpitView: View {
             offlinePacks = Array(packs.prefix(12))
             downloadProgress = 1
             downloadRunning = false
+            Task { await telemetry.refreshOfficialCamps(force: true) }
         }
     }
 

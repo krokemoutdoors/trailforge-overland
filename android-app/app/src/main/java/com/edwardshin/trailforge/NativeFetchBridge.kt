@@ -28,7 +28,9 @@ class NativeFetchBridge(
         "basemaps.cartocdn.com",
         "gis.clark.wa.gov",
         "krokemoutdoors.github.io",
-        "ntfy.sh"
+        "ntfy.sh",
+        "ridb.recreation.gov",
+        "s3.amazonaws.com"
     )
 
     @JavascriptInterface
@@ -48,7 +50,7 @@ class NativeFetchBridge(
                     readTimeout = 40000
                     instanceFollowRedirects = true
                     setRequestProperty("Accept", "application/json,text/plain,*/*")
-                    setRequestProperty("User-Agent", "TrailForgeOverland/1.7.5")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.7.6")
                     if (requestMethod == "POST") {
                         doOutput = true
                         setRequestProperty("Content-Type", "text/plain; charset=utf-8")
@@ -56,6 +58,37 @@ class NativeFetchBridge(
                             stream.write((body ?: "").toByteArray(Charsets.UTF_8))
                         }
                     }
+                }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                connection.disconnect()
+                deliver(requestId, text, code in 200..299)
+            } catch (error: Exception) {
+                deliver(requestId, error.message ?: "network error", false)
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun fetchAuthed(id: String?, url: String?, apiKey: String?) {
+        val requestId = id ?: return
+        val target = url ?: return
+        executor.execute {
+            try {
+                val parsed = URI(target)
+                if (!parsed.scheme.equals("https", true) || parsed.host !in allowed) {
+                    deliver(requestId, "blocked host", false)
+                    return@execute
+                }
+                val connection = (URL(target).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 20000
+                    readTimeout = 40000
+                    instanceFollowRedirects = true
+                    setRequestProperty("Accept", "application/json,text/plain,*/*")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.7.6")
+                    if (!apiKey.isNullOrBlank()) setRequestProperty("apikey", apiKey)
                 }
                 val code = connection.responseCode
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream
@@ -85,7 +118,7 @@ class NativeFetchBridge(
                     readTimeout = 20000
                     instanceFollowRedirects = true
                     setRequestProperty("Accept", "image/png,image/jpeg,*/*")
-                    setRequestProperty("User-Agent", "TrailForgeOverland/1.7.5")
+                    setRequestProperty("User-Agent", "TrailForgeOverland/1.7.6")
                 }
                 val code = connection.responseCode
                 val stream = if (code in 200..299) connection.inputStream else connection.errorStream

@@ -29,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fetchBridge: NativeFetchBridge
     private lateinit var hostBridge: HostBridge
     private lateinit var networkBridge: NetworkBridge
+    private lateinit var campBridge: CampBridge
     private var pageReady = false
     private var networkStarted = false
     private var pendingGeo: Pair<String, GeolocationPermissions.Callback>? = null
@@ -73,6 +74,8 @@ class MainActivity : AppCompatActivity() {
             evaluate("window.TrailForge&&TrailForge.onNativeFetch(${org.json.JSONObject.quote(id)}, $ok, $payload)")
         }
         hostBridge = HostBridge(this)
+        campBridge = CampBridge(this)
+        campBridge.schedule()
         networkBridge = NetworkBridge(this) { online ->
             evaluate("window.TrailForge&&TrailForge.onNetwork($online)")
         }
@@ -89,13 +92,14 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             loadsImagesAutomatically = true
-            userAgentString = "$userAgentString TrailForgeOverland/1.7.5"
+            userAgentString = "$userAgentString TrailForgeOverland/1.7.6"
         }
 
         webView.addJavascriptInterface(speechBridge, "TrailForgeSpeech")
         webView.addJavascriptInterface(billingBridge, "TrailForgeBilling")
         webView.addJavascriptInterface(fetchBridge, "TrailForgeNet")
         webView.addJavascriptInterface(hostBridge, "TrailForgeHost")
+        webView.addJavascriptInterface(campBridge, "TrailForgeCamps")
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onGeolocationPermissionsShowPrompt(
@@ -122,6 +126,8 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 pageReady = true
+                val key = org.json.JSONObject.quote(BuildConfig.RIDB_API_KEY)
+                view?.evaluateJavascript("window.TRAILFORGE_RIDB_KEY=$key;", null)
                 sensorBridge.start()
                 speechBridge.warmUp()
                 billingBridge.start()

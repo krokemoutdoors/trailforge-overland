@@ -183,8 +183,13 @@ jobs:
           xcodebuild -showsdks
 
       - name: Archive and export IPA
+        env:
+          RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
         run: |
           set -euo pipefail
+          python3 -c 'import os,plistlib,pathlib; path=pathlib.Path("ios-app/Info.plist"); key=os.environ.get("RIDB_API_KEY","").strip();
+          info=plistlib.loads(path.read_bytes()) if key else None
+          print("RIDB_API_KEY is not set. Recreation.gov campsites will be skipped.") if not key else path.write_bytes(plistlib.dumps({**info, "RIDBAPIKey": key})) or print("RIDB API key written into the iOS build.")'
           cd ios-app
           xcodebuild archive \
             -project TrailForgeOverland.xcodeproj \

@@ -3,6 +3,7 @@ import CoreLocation
 import CoreMotion
 import ImageIO
 import CoreGraphics
+import UIKit
 
 // MARK: - Live US Government Overland Telemetry (USGS + SNOTEL + NIFC Wildfire + USFS MVUM)
 struct USGSGaugeReading: Codable, Identifiable {
@@ -30,13 +31,21 @@ final class LiveTelemetryService: ObservableObject {
     @Published var discoveredTrails: [OverlandTrail] = []
     @Published var isScanningTrails: Bool = false
     @Published var scanStatus: String = ""
+    @Published var campUpdatedAt: Date?
     private var trailScanGeneration = 0
     private var trailScanAnchor: CLLocationCoordinate2D?
     private var trailScanDebounce: Task<Void, Never>?
     private var scanAnchors: [CLLocationCoordinate2D] = []
+    private var activeObserver: NSObjectProtocol?
 
     init() {
         discoveredTrails = CockpitStore.loadDiscoveredTrails()
+        campUpdatedAt = CampCatalog.latestStamp()
+        activeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshOfficialCamps(force: false)
+            }
+        }
     }
 
     func scheduleTrailRefresh(around center: CLLocationCoordinate2D) {
@@ -426,6 +435,9 @@ extension LiveTelemetryService {
             group.addTask {
                 await Self.fetchUSFSRoads(center: center, radiusMeters: radiusMeters)
             }
+            group.addTask {
+                await CampCatalog.trails(around: center, force: false)
+            }
             for await trails in group {
                 guard generation == trailScanGeneration else { continue }
                 let annotated = await CampSurvey.annotate(trails)
@@ -438,11 +450,53 @@ extension LiveTelemetryService {
             scanAnchors.append(center)
             if scanAnchors.count > 40 { scanAnchors.removeFirst(scanAnchors.count - 40) }
         }
+        let stamp = campUpdatedAt.map { " · Updated \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""
         if discoveredTrails.isEmpty {
-            scanStatus = "No public 4x4 tracks returned for this area."
+            scanStatus = "No public 4x4 tracks returned for this area.\(stamp)"
         } else {
-            scanStatus = "\(discoveredTrails.count) local USA trails"
+            scanStatus = "\(discoveredTrails.count) local USA trails\(stamp)"
         }
+    }
+
+    func refreshOfficialCamps(force: Bool) async {
+        var centers: [CLLocationCoordinate2D] = []
+        if let here = LocationTracker.shared.userCoordinate {
+            centers.append(here)
+        }
+        for pack in CockpitStore.loadPacks() {
+            if let lat = pack.minLat, let lon = pack.minLon, let maxLat = pack.maxLat, let maxLon = pack.maxLon {
+                centers.append(CLLocationCoordinate2D(latitude: (lat + maxLat) / 2, longitude: (lon + maxLon) / 2))
+            }
+        }
+        if centers.isEmpty, let anchor = trailScanAnchor {
+            centers.append(anchor)
+        }
+        guard !centers.isEmpty else { return }
+        UserDefaults.standard.set(centers[0].latitude, forKey: "tf-camp-lat")
+        UserDefaults.standard.set(centers[0].longitude, forKey: "tf-camp-lon")
+        for center in centers {
+            let trails = await CampCatalog.trails(around: center, force: force)
+            guard !trails.isEmpty else { continue }
+            let annotated = await CampSurvey.annotate(trails)
+            mergeCamps(annotated)
+        }
+        campUpdatedAt = CampCatalog.latestStamp()
+        let stamp = campUpdatedAt.map { " · Updated \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""
+        if !discoveredTrails.isEmpty {
+            scanStatus = "\(discoveredTrails.count) local USA trails\(stamp)"
+        }
+    }
+
+    private func mergeCamps(_ loaded: [OverlandTrail]) {
+        var byID: [String: OverlandTrail] = [:]
+        for trail in discoveredTrails { byID[trail.id] = trail }
+        for trail in loaded { byID[trail.id] = trail }
+        var merged = CampCatalog.dedupe(Array(byID.values))
+        if merged.count > 200 {
+            merged = Array(merged.prefix(200))
+        }
+        discoveredTrails = merged
+        CockpitStore.saveDiscoveredTrails(merged)
     }
 
     private func absorbDiscovered(_ loaded: [OverlandTrail], generation: Int, center: CLLocationCoordinate2D) {
@@ -454,7 +508,7 @@ extension LiveTelemetryService {
         for trail in loaded {
             byID[trail.id] = trail
         }
-        var merged = Array(byID.values)
+        var merged = CampCatalog.dedupe(Array(byID.values))
         if merged.count > 200 {
             let origin = CLLocation(latitude: center.latitude, longitude: center.longitude)
             merged.sort { lhs, rhs in
@@ -465,7 +519,9 @@ extension LiveTelemetryService {
             merged = Array(merged.prefix(200))
         }
         discoveredTrails = merged
-        scanStatus = "\(merged.count) local USA trails"
+        campUpdatedAt = CampCatalog.latestStamp() ?? campUpdatedAt
+        let stamp = campUpdatedAt.map { " · Updated \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""
+        scanStatus = "\(merged.count) local USA trails\(stamp)"
         CockpitStore.saveDiscoveredTrails(merged)
     }
 
@@ -741,12 +797,13 @@ enum CampSurvey {
         annotated.reserveCapacity(trails.count)
         for trail in trails {
             var copy = trail
-            if trail.id.hasPrefix("osm-camp-") {
+            if CampCatalog.isMapped(trail.id) {
                 let slope = await measureSlope(latitude: trail.centerLat, longitude: trail.centerLon)
                 let bit = slope.map { String(format: "measured %.1f°", $0) } ?? "slope unknown"
                 let base = trail.name.split(separator: "·").first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? trail.name
+                let source = CampCatalog.sourceName(trail.id)
                 copy.flatCamps = [(
-                    name: "\(base) · Mapped campsite · \(bit)",
+                    name: "\(base) · Mapped campsite · \(source) · \(bit)",
                     lat: trail.centerLat,
                     lon: trail.centerLon,
                     slopeDeg: slope ?? -1,
@@ -929,5 +986,325 @@ enum CampSurvey {
         if let data = try? JSONEncoder().encode(trimmed) {
             UserDefaults.standard.set(data, forKey: "tf-slope-v1")
         }
+    }
+}
+
+private struct CampCellCache: Codable {
+    var fetchedAt: Date
+    var camps: [DiscoveredTrailSnapshot]
+}
+
+enum CampCatalog {
+    private static let ttl: TimeInterval = 24 * 60 * 60
+    private static let storeKey = "tf-camp-cells-v1"
+
+    static func isMapped(_ id: String) -> Bool {
+        id.hasPrefix("osm-camp-") || id.hasPrefix("ridb-") || id.hasPrefix("usfs-rec-") || id.hasPrefix("blm-camp-")
+    }
+
+    static func sourceName(_ id: String) -> String {
+        if id.hasPrefix("ridb-") { return "Recreation.gov" }
+        if id.hasPrefix("usfs-rec-") { return "USFS" }
+        if id.hasPrefix("blm-camp-") { return "BLM" }
+        if id.hasPrefix("osm-camp-") { return "OpenStreetMap" }
+        return "Mapped campsite"
+    }
+
+    static func latestStamp() -> Date? {
+        loadCells().values.map(\.fetchedAt).max()
+    }
+
+    static func trails(around center: CLLocationCoordinate2D, force: Bool) async -> [OverlandTrail] {
+        let key = cellKey(center)
+        var cells = loadCells()
+        if !force, let cached = cells[key], Date().timeIntervalSince(cached.fetchedAt) < ttl {
+            return cached.camps.map(\.trail)
+        }
+        async let usfs = usfsCampgrounds(center)
+        async let blm = blmCampgrounds(center)
+        async let ridb = ridbCampgrounds(center)
+        let loaded = await usfs + blm + ridb
+        let unique = dedupe(loaded)
+        cells[key] = CampCellCache(fetchedAt: Date(), camps: unique.map(DiscoveredTrailSnapshot.init))
+        if cells.count > 24 {
+            let extras = cells.sorted { $0.value.fetchedAt < $1.value.fetchedAt }.prefix(cells.count - 24).map(\.key)
+            extras.forEach { cells.removeValue(forKey: $0) }
+        }
+        saveCells(cells)
+        UserDefaults.standard.set(center.latitude, forKey: "tf-camp-lat")
+        UserDefaults.standard.set(center.longitude, forKey: "tf-camp-lon")
+        return unique
+    }
+
+    static func refreshSavedCenters() async {
+        var centers: [CLLocationCoordinate2D] = []
+        let lat = UserDefaults.standard.double(forKey: "tf-camp-lat")
+        let lon = UserDefaults.standard.double(forKey: "tf-camp-lon")
+        if abs(lat) > 0.01 || abs(lon) > 0.01 {
+            centers.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
+        }
+        for pack in CockpitStore.loadPacks() {
+            if let minLat = pack.minLat, let minLon = pack.minLon, let maxLat = pack.maxLat, let maxLon = pack.maxLon {
+                centers.append(CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2))
+            }
+        }
+        var merged = CockpitStore.loadDiscoveredTrails()
+        for center in centers {
+            let fresh = await trails(around: center, force: false)
+            guard !fresh.isEmpty else { continue }
+            var byID: [String: OverlandTrail] = [:]
+            merged.forEach { byID[$0.id] = $0 }
+            fresh.forEach { byID[$0.id] = $0 }
+            merged = dedupe(Array(byID.values))
+        }
+        if !merged.isEmpty {
+            CockpitStore.saveDiscoveredTrails(Array(merged.prefix(200)))
+        }
+    }
+
+    static func dedupe(_ trails: [OverlandTrail]) -> [OverlandTrail] {
+        let camps = trails.filter { rank($0) < 9 }.sorted { rank($0) < rank($1) }
+        let roads = trails.filter { rank($0) >= 9 }
+        var kept: [OverlandTrail] = []
+        for camp in camps {
+            let duplicate = kept.contains { prior in
+                distance(prior, camp) < 400 && namesSimilar(prior.name, camp.name)
+            }
+            if !duplicate { kept.append(camp) }
+        }
+        return roads + kept
+    }
+
+    private static func rank(_ trail: OverlandTrail) -> Int {
+        if trail.id.hasPrefix("ridb-") { return 1 }
+        if trail.id.hasPrefix("usfs-rec-") { return 2 }
+        if trail.id.hasPrefix("blm-camp-") { return 3 }
+        if trail.id.hasPrefix("osm-camp-") { return 4 }
+        return 9
+    }
+
+    private static func namesSimilar(_ left: String, _ right: String) -> Bool {
+        let a = norm(left)
+        let b = norm(right)
+        guard a.count >= 4, b.count >= 4 else { return false }
+        if a.contains(b) || b.contains(a) { return true }
+        let tokens = a.split(separator: " ").filter { $0.count >= 4 }
+        let other = Set(b.split(separator: " "))
+        return tokens.contains { other.contains($0) }
+    }
+
+    private static func norm(_ name: String) -> String {
+        let head = name.split(separator: "·").first.map(String.init) ?? name
+        let lowered = head.lowercased()
+        let cleaned = lowered.replacingOccurrences(of: "campground", with: " ")
+            .replacingOccurrences(of: "campsite", with: " ")
+            .replacingOccurrences(of: "camping", with: " ")
+        return cleaned.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) || $0 == " " }.map(String.init).joined()
+            .split(separator: " ").joined(separator: " ")
+    }
+
+    private static func distance(_ left: OverlandTrail, _ right: OverlandTrail) -> CLLocationDistance {
+        CLLocation(latitude: left.centerLat, longitude: left.centerLon)
+            .distance(from: CLLocation(latitude: right.centerLat, longitude: right.centerLon))
+    }
+
+    private static func cellKey(_ center: CLLocationCoordinate2D) -> String {
+        let lat = (center.latitude * 5).rounded() / 5
+        let lon = (center.longitude * 5).rounded() / 5
+        return String(format: "%.1f,%.1f", lat, lon)
+    }
+
+    private static func loadCells() -> [String: CampCellCache] {
+        guard let data = UserDefaults.standard.data(forKey: storeKey),
+              let cells = try? JSONDecoder().decode([String: CampCellCache].self, from: data) else { return [:] }
+        return cells
+    }
+
+    private static func saveCells(_ cells: [String: CampCellCache]) {
+        if let data = try? JSONEncoder().encode(cells) {
+            UserDefaults.standard.set(data, forKey: storeKey)
+        }
+    }
+
+    private static func usfsCampgrounds(_ center: CLLocationCoordinate2D) async -> [OverlandTrail] {
+        await arcgis(
+            "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RecreationOpportunities_01/MapServer/0/query",
+            center: center,
+            where: "markeractivity='Campground Camping'"
+        ) { attributes in
+            campTrail(
+                id: "usfs-rec-\(text(attributes["recareaid"]) ?? text(attributes["objectid"]) ?? UUID().uuidString)",
+                name: text(attributes["recareaname"]) ?? "",
+                agency: "USFS",
+                lat: number(attributes["latitude"]),
+                lon: number(attributes["longitude"]),
+                source: "USFS"
+            )
+        }
+    }
+
+    private static func blmCampgrounds(_ center: CLLocationCoordinate2D) async -> [OverlandTrail] {
+        let facilities = await arcgis(
+            "https://gis.blm.gov/arcgis/rest/services/recreation/BLM_Natl_Recreation_Sites_Facilities/MapServer/8/query",
+            center: center,
+            where: "1=1"
+        ) { attributes in
+            campTrail(
+                id: "blm-camp-\(text(attributes["FacilityID"]) ?? text(attributes["OBJECTID"]) ?? UUID().uuidString)",
+                name: text(attributes["FacilityName"]) ?? "",
+                agency: "BLM",
+                lat: number(attributes["FacilityLatitude"]),
+                lon: number(attributes["FacilityLongitude"]),
+                source: "BLM"
+            )
+        }
+        let points = await arcgis(
+            "https://gis.blm.gov/arcgis/rest/services/recreation/BLM_Natl_Recs_pts/MapServer/2/query",
+            center: center,
+            where: "1=1"
+        ) { attributes in
+            campTrail(
+                id: "blm-camp-pt-\(text(attributes["OBJECTID"]) ?? UUID().uuidString)",
+                name: text(attributes["FET_NAME"]) ?? "",
+                agency: "BLM",
+                lat: number(attributes["LAT"]),
+                lon: number(attributes["LONG"]),
+                source: "BLM"
+            )
+        }
+        return facilities + points
+    }
+
+    private static func ridbCampgrounds(_ center: CLLocationCoordinate2D) async -> [OverlandTrail] {
+        let key = (Bundle.main.object(forInfoDictionaryKey: "RIDBAPIKey") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return [] }
+        var parts = URLComponents(string: "https://ridb.recreation.gov/api/v1/facilities")
+        parts?.queryItems = [
+            URLQueryItem(name: "latitude", value: String(center.latitude)),
+            URLQueryItem(name: "longitude", value: String(center.longitude)),
+            URLQueryItem(name: "radius", value: "15"),
+            URLQueryItem(name: "limit", value: "40"),
+            URLQueryItem(name: "offset", value: "0")
+        ]
+        guard let url = parts?.url else { return [] }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 14
+        request.setValue(key, forHTTPHeaderField: "apikey")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = root["RECDATA"] as? [[String: Any]] else { return [] }
+        let facilities = rows.filter {
+            let kind = (text($0["FacilityTypeDescription"]) ?? "") + " " + (text($0["FacilityName"]) ?? "")
+            return kind.range(of: "camp", options: .caseInsensitive) != nil
+        }.prefix(20)
+        var trails: [OverlandTrail] = facilities.compactMap { row in
+            campTrail(
+                id: "ridb-\(text(row["FacilityID"]) ?? UUID().uuidString)",
+                name: text(row["FacilityName"]) ?? "",
+                agency: "Recreation.gov",
+                lat: number(row["FacilityLatitude"]),
+                lon: number(row["FacilityLongitude"]),
+                source: "Recreation.gov"
+            )
+        }
+        for row in facilities.prefix(3) where (text(row["FacilityTypeDescription"]) ?? "").localizedCaseInsensitiveContains("campground") {
+            guard let id = text(row["FacilityID"]),
+                  let siteURL = URL(string: "https://ridb.recreation.gov/api/v1/facilities/\(id)/campsites?limit=8&offset=0") else { continue }
+            var siteRequest = URLRequest(url: siteURL)
+            siteRequest.timeoutInterval = 12
+            siteRequest.setValue(key, forHTTPHeaderField: "apikey")
+            guard let (siteData, siteResponse) = try? await URLSession.shared.data(for: siteRequest),
+                  let siteHTTP = siteResponse as? HTTPURLResponse, siteHTTP.statusCode == 200,
+                  let siteRoot = try? JSONSerialization.jsonObject(with: siteData) as? [String: Any],
+                  let sites = siteRoot["RECDATA"] as? [[String: Any]] else { continue }
+            let facility = text(row["FacilityName"]) ?? "Camp"
+            for site in sites {
+                if let trail = campTrail(
+                    id: "ridb-site-\(text(site["CampsiteID"]) ?? UUID().uuidString)",
+                    name: "\(facility) \(text(site["CampsiteName"]) ?? "site")",
+                    agency: "Recreation.gov",
+                    lat: number(site["CampsiteLatitude"]),
+                    lon: number(site["CampsiteLongitude"]),
+                    source: "Recreation.gov"
+                ) {
+                    trails.append(trail)
+                }
+            }
+        }
+        return trails
+    }
+
+    private static func arcgis(
+        _ raw: String,
+        center: CLLocationCoordinate2D,
+        where clause: String,
+        read: ([String: Any]) -> OverlandTrail?
+    ) async -> [OverlandTrail] {
+        var parts = URLComponents(string: raw)
+        parts?.queryItems = [
+            URLQueryItem(name: "where", value: clause),
+            URLQueryItem(name: "geometry", value: "\(center.longitude),\(center.latitude)"),
+            URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
+            URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
+            URLQueryItem(name: "distance", value: "18000"),
+            URLQueryItem(name: "units", value: "esriSRUnit_Meter"),
+            URLQueryItem(name: "outFields", value: "*"),
+            URLQueryItem(name: "returnGeometry", value: "false"),
+            URLQueryItem(name: "resultRecordCount", value: "40"),
+            URLQueryItem(name: "f", value: "json")
+        ]
+        guard let url = parts?.url else { return [] }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 14
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let features = root["features"] as? [[String: Any]] else { return [] }
+        return features.compactMap { feature in
+            let attributes = feature["attributes"] as? [String: Any] ?? [:]
+            return read(attributes)
+        }
+    }
+
+    private static func campTrail(id: String, name: String, agency: String, lat: Double?, lon: Double?, source: String) -> OverlandTrail? {
+        guard let lat, let lon, abs(lat) <= 90, abs(lon) <= 180, !name.isEmpty else { return nil }
+        if abs(lat) < 0.01 && abs(lon) < 0.01 { return nil }
+        let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        return OverlandTrail(
+            id: id,
+            name: name,
+            region: "Camp",
+            agency: agency,
+            distanceMi: 0.1,
+            peakElevFt: 0,
+            reqClearanceIn: 8.6,
+            minCanopyFt: 12.5,
+            waterCrossingIn: 0,
+            reqLocker: false,
+            gateStatus: "CHECK",
+            snotelSnowIn: 0,
+            usgsFlowCfs: 0,
+            state: USStateLocator.code(latitude: lat, longitude: lon, tagged: nil),
+            centerLat: lat,
+            centerLon: lon,
+            coordinates: [coordinate],
+            flatCamps: [(name: "\(name) · Mapped campsite · \(source) · slope unknown", lat: lat, lon: lon, slopeDeg: -1, starlinkPct: 0)],
+            legalStatus: "agency"
+        )
+    }
+
+    private static func text(_ value: Any?) -> String? {
+        if let text = value as? String, !text.isEmpty { return text }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        if let number = value as? Double { return number }
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let text = value as? String { return Double(text) }
+        return nil
     }
 }

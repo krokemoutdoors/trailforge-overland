@@ -58,6 +58,7 @@
     showSteps: false,
     menuOpen: false,
     scanStatus: "",
+    campUpdatedAt: 0,
     scanning: false,
     offlineSaved: localStorage.getItem("tf-offline") !== "0",
     online: navigator.onLine !== false,
@@ -626,6 +627,7 @@
   function net(url, options) {
     const method = (options && options.method) || "GET";
     const body = (options && options.body) || "";
+    const apiKey = options && options.apiKey ? String(options.apiKey) : "";
     let timer = null;
     const timeout = new Promise(function (_, reject) {
       timer = setTimeout(function () { reject(new Error("timeout")); }, 12000);
@@ -635,12 +637,13 @@
       ? new Promise(function (resolve, reject) {
         const id = "n" + (++netSeq);
         pendingNet.set(id, { resolve: resolve, reject: reject });
-        TrailForgeNet.fetch(id, url, method, body);
+        if (apiKey && TrailForgeNet.fetchAuthed) TrailForgeNet.fetchAuthed(id, url, apiKey);
+        else TrailForgeNet.fetch(id, url, method, body);
       })
       : fetch(url, {
         method: method,
         body: method === "POST" ? body : undefined,
-        headers: method === "POST" ? { "Content-Type": "text/plain; charset=UTF-8" } : undefined
+        headers: apiKey ? { apikey: apiKey } : (method === "POST" ? { "Content-Type": "text/plain; charset=UTF-8" } : undefined)
       }).then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.text();
@@ -813,7 +816,7 @@
 
   function campHtml() {
     const pads = listedCamps();
-    const title = pads.length ? "Tap a &lt;3° pad to route" : "No &lt;3° pads in " + esc(filterTitle());
+    const title = (pads.length ? "Tap a &lt;3° pad to route" : "No &lt;3° pads in " + esc(filterTitle())) + (updatedLabel() ? " · " + esc(updatedLabel()) : "");
     const cards = pads.slice(0, 40).map(function (spot) {
       const trail = trailById(spot.trailID);
       return '<div class="pad"><div class="meta"><b>' + esc(spot.name) + "</b><small>" + esc(slopePhrase(spot.slope)) + " · " + esc(trail ? trail.name : "Trail") + '</small></div><button type="button" class="cta" data-act="route" data-id="' + esc(spot.id) + '">Route Here</button></div>';
@@ -850,7 +853,7 @@
       const badge = item.popular ? '<em class="pop">MOST POPULAR</em>' : "";
       return '<div class="pass' + (item.popular ? " popular" : "") + (item.founders ? " founders" : "") + '"><div class="meta">' + badge + "<b>" + esc(item.title) + "</b><small>" + esc(item.note) + " · " + esc(price) + '</small></div><button type="button" data-act="buy" data-id="' + item.id + '">' + owned + "</button></div>";
     }).join("");
-    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.5 · build 37<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
+    return '<input class="name" data-field="name" value="' + esc(profile.name) + '" aria-label="Rig name" />' + products + '<div class="actions"><button type="button" data-act="restore">Restore purchases</button></div><div class="seg">' + locker("none", "Open diffs") + locker("rear", "Rear locker") + '<button type="button" data-act="snorkel" class="' + (profile.hasSnorkel ? "on" : "") + '">Snorkel</button><button type="button" data-act="bead" class="' + (state.beadlocks ? "on" : "") + '">Beadlocks</button></div><div class="seg" style="margin-top:8px">' + surface + '</div><div class="grid" style="margin-top:8px">' + fields + '</div><div class="foot">TrailForge Overland 1.7.6 · build 38<br>' + MAP_ATTRIB + '<br>' + CORRIDOR_NOTE + '<br><a href="https://krokemoutdoors.github.io/trailforge-overland/#privacy" data-act="privacy">Privacy policy</a></div>';
   }
 
   function renderSheet() {
@@ -1380,7 +1383,7 @@
       lat: lat,
       lon: lon,
       coordinates: [[lat, lon]],
-      flatCamps: [{ name: name + " · Mapped campsite · slope unknown", lat: lat, lon: lon, slope: -1, starlink: 0, mapped: true }],
+      flatCamps: [{ name: name + " · Mapped campsite · OpenStreetMap · slope unknown", lat: lat, lon: lon, slope: -1, starlink: 0, mapped: true, source: "OpenStreetMap" }],
       signature: false,
       live: true
     };
@@ -1447,6 +1450,376 @@
       signature: false,
       live: true
     };
+  }
+
+  function isMappedCamp(id) {
+    id = String(id || "");
+    return id.indexOf("osm-camp-") === 0 || id.indexOf("ridb-") === 0 || id.indexOf("usfs-rec-") === 0 || id.indexOf("blm-camp-") === 0;
+  }
+
+  function sourceOf(id) {
+    id = String(id || "");
+    if (id.indexOf("ridb-") === 0) return "Recreation.gov";
+    if (id.indexOf("usfs-rec-") === 0) return "USFS";
+    if (id.indexOf("blm-camp-") === 0) return "BLM";
+    if (id.indexOf("osm-camp-") === 0) return "OpenStreetMap";
+    return "Mapped campsite";
+  }
+
+  function campRank(trail) {
+    const id = String(trail && trail.id || "");
+    if (id.indexOf("ridb-") === 0) return 1;
+    if (id.indexOf("usfs-rec-") === 0) return 2;
+    if (id.indexOf("blm-camp-") === 0) return 3;
+    if (id.indexOf("osm-camp-") === 0) return 4;
+    return 9;
+  }
+
+  function updatedLabel() {
+    if (!state.campUpdatedAt) return "";
+    const when = new Date(state.campUpdatedAt);
+    if (Number.isNaN(when.getTime())) return "";
+    return "Updated " + when.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  }
+
+  function normCampName(name) {
+    return String(name || "").toLowerCase().split(" · ")[0]
+      .replace(/campground|campsite|camping|recreation site|recreation area|\bcg\b/g, " ")
+      .replace(/[^a-z0-9 ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function namesSimilar(left, right) {
+    const a = normCampName(left);
+    const b = normCampName(right);
+    if (a.length < 4 || b.length < 4) return false;
+    if (a.indexOf(b) >= 0 || b.indexOf(a) >= 0) return true;
+    const tokens = a.split(" ").filter(function (token) { return token.length >= 4; });
+    const other = b.split(" ");
+    return tokens.some(function (token) { return other.indexOf(token) >= 0; });
+  }
+
+  function dedupeCampTrails(trails) {
+    const camps = (trails || []).filter(function (trail) { return campRank(trail) < 9; })
+      .sort(function (a, b) { return campRank(a) - campRank(b); });
+    const roads = (trails || []).filter(function (trail) { return campRank(trail) >= 9; });
+    const kept = [];
+    camps.forEach(function (camp) {
+      const duplicate = kept.some(function (prior) {
+        return meters(prior, camp) < 400 && namesSimilar(prior.name, camp.name);
+      });
+      if (!duplicate) kept.push(camp);
+    });
+    return roads.concat(kept);
+  }
+
+  const CAMP_TTL = 24 * 60 * 60 * 1000;
+
+  function loadCampCells() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("tf-camp-cells-v1") || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  function saveCampCells(cells) {
+    const keys = Object.keys(cells);
+    if (keys.length > 24) {
+      keys.sort(function (a, b) { return (cells[a].fetchedAt || 0) - (cells[b].fetchedAt || 0); });
+      keys.slice(0, keys.length - 24).forEach(function (key) { delete cells[key]; });
+    }
+    try { localStorage.setItem("tf-camp-cells-v1", JSON.stringify(cells)); } catch (error) {}
+  }
+
+  function cellKey(lat, lon) {
+    return (Math.round(lat * 5) / 5).toFixed(1) + "," + (Math.round(lon * 5) / 5).toFixed(1);
+  }
+
+  function ridbKey() {
+    const injected = window.TRAILFORGE_RIDB_KEY;
+    if (injected && String(injected).trim() && String(injected).indexOf("$") < 0) return String(injected).trim();
+    try { return String(localStorage.getItem("tf-ridb-key") || "").trim(); } catch (error) { return ""; }
+  }
+
+  function finitePair(lat, lon) {
+    const y = Number(lat);
+    const x = Number(lon);
+    if (!Number.isFinite(y) || !Number.isFinite(x) || Math.abs(y) > 90 || Math.abs(x) > 180) return null;
+    if (Math.abs(y) < 0.01 && Math.abs(x) < 0.01) return null;
+    return [y, x];
+  }
+
+  function officialTrail(id, name, agency, lat, lon, source) {
+    const point = finitePair(lat, lon);
+    if (!point || !name) return null;
+    return {
+      id: id,
+      name: name,
+      region: "Camp",
+      agency: agency,
+      state: stateCode(point[0], point[1], ""),
+      miles: 0.1,
+      elev: 0,
+      clearance: 8.6,
+      canopy: 12.5,
+      water: 0,
+      locker: false,
+      gate: "CHECK",
+      snow: 0,
+      flow: 0,
+      lat: point[0],
+      lon: point[1],
+      coordinates: [[point[0], point[1]]],
+      flatCamps: [{
+        name: name + " · Mapped campsite · " + source + " · slope unknown",
+        lat: point[0],
+        lon: point[1],
+        slope: -1,
+        starlink: 0,
+        mapped: true,
+        source: source
+      }],
+      signature: false,
+      live: true,
+      fetchedAt: Date.now()
+    };
+  }
+
+  async function arcgisCamps(url, center, distance, where, read) {
+    const params = new URLSearchParams({
+      where: where || "1=1",
+      geometry: center.lon + "," + center.lat,
+      geometryType: "esriGeometryPoint",
+      inSR: "4326",
+      spatialRel: "esriSpatialRelIntersects",
+      distance: String(distance),
+      units: "esriSRUnit_Meter",
+      outFields: "*",
+      returnGeometry: "true",
+      outSR: "4326",
+      resultRecordCount: "40",
+      f: "json"
+    });
+    const text = await net(url + "?" + params.toString());
+    const root = JSON.parse(text);
+    return (root.features || []).map(read).filter(Boolean);
+  }
+
+  async function fetchUsfsCampgrounds(center) {
+    const camps = await arcgisCamps(
+      "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RecreationOpportunities_01/MapServer/0/query",
+      center,
+      18000,
+      "markeractivity='Campground Camping'",
+      function (feature) {
+        const attributes = feature.attributes || {};
+        return officialTrail(
+          "usfs-rec-" + (attributes.recareaid || attributes.objectid),
+          attributes.recareaname,
+          "USFS",
+          attributes.latitude,
+          attributes.longitude,
+          "USFS"
+        );
+      }
+    );
+    return camps;
+  }
+
+  async function fetchBlmCampgrounds(center) {
+    const facilities = await arcgisCamps(
+      "https://gis.blm.gov/arcgis/rest/services/recreation/BLM_Natl_Recreation_Sites_Facilities/MapServer/8/query",
+      center,
+      18000,
+      "1=1",
+      function (feature) {
+        const attributes = feature.attributes || {};
+        return officialTrail(
+          "blm-camp-" + (attributes.FacilityID || attributes.OBJECTID),
+          attributes.FacilityName,
+          "BLM",
+          attributes.FacilityLatitude,
+          attributes.FacilityLongitude,
+          "BLM"
+        );
+      }
+    );
+    const points = await arcgisCamps(
+      "https://gis.blm.gov/arcgis/rest/services/recreation/BLM_Natl_Recs_pts/MapServer/2/query",
+      center,
+      18000,
+      "1=1",
+      function (feature) {
+        const attributes = feature.attributes || {};
+        return officialTrail(
+          "blm-camp-pt-" + (attributes.OBJECTID || attributes.GlobalID),
+          attributes.FET_NAME,
+          "BLM",
+          attributes.LAT,
+          attributes.LONG,
+          "BLM"
+        );
+      }
+    );
+    return facilities.concat(points);
+  }
+
+  async function fetchRidb(center) {
+    const key = ridbKey();
+    if (!key) return [];
+    const params = new URLSearchParams({
+      latitude: String(center.lat),
+      longitude: String(center.lon),
+      radius: "15",
+      limit: "40",
+      offset: "0"
+    });
+    const text = await net("https://ridb.recreation.gov/api/v1/facilities?" + params.toString(), { apiKey: key });
+    const root = JSON.parse(text);
+    const facilities = (root.RECDATA || []).filter(function (row) {
+      return /camp/i.test(String(row.FacilityTypeDescription || row.FacilityName || ""));
+    }).slice(0, 20);
+    const trails = facilities.map(function (row) {
+      return officialTrail(
+        "ridb-" + row.FacilityID,
+        row.FacilityName,
+        "Recreation.gov",
+        row.FacilityLatitude,
+        row.FacilityLongitude,
+        "Recreation.gov"
+      );
+    }).filter(Boolean);
+    const detailed = facilities.filter(function (row) { return /campground/i.test(String(row.FacilityTypeDescription || "")); }).slice(0, 3);
+    for (let index = 0; index < detailed.length; index += 1) {
+      try {
+        const siteText = await net("https://ridb.recreation.gov/api/v1/facilities/" + detailed[index].FacilityID + "/campsites?limit=8&offset=0", { apiKey: key });
+        const sites = JSON.parse(siteText).RECDATA || [];
+        sites.forEach(function (site) {
+          const trail = officialTrail(
+            "ridb-site-" + site.CampsiteID,
+            (detailed[index].FacilityName || "Camp") + " " + (site.CampsiteName || "site"),
+            "Recreation.gov",
+            site.CampsiteLatitude,
+            site.CampsiteLongitude,
+            "Recreation.gov"
+          );
+          if (trail) trails.push(trail);
+        });
+      } catch (error) { /* The campground pin still stands in. */ }
+    }
+    return trails;
+  }
+
+  async function fetchOfficialCamps(center, force) {
+    if (!center) return [];
+    const key = cellKey(center.lat, center.lon);
+    const cells = loadCampCells();
+    const cached = cells[key];
+    if (!force && cached && cached.fetchedAt && Date.now() - cached.fetchedAt < CAMP_TTL && Array.isArray(cached.camps)) {
+      state.campUpdatedAt = cached.fetchedAt;
+      return cached.camps;
+    }
+    const batches = await Promise.all([
+      fetchUsfsCampgrounds(center).catch(function () { return []; }),
+      fetchBlmCampgrounds(center).catch(function () { return []; }),
+      fetchRidb(center).catch(function () { return []; })
+    ]);
+    const camps = dedupeCampTrails(batches[0].concat(batches[1], batches[2]));
+    const fetchedAt = Date.now();
+    camps.forEach(function (camp) { camp.fetchedAt = fetchedAt; });
+    cells[key] = { fetchedAt: fetchedAt, camps: camps };
+    saveCampCells(cells);
+    state.campUpdatedAt = fetchedAt;
+    if (window.TrailForgeCamps && TrailForgeCamps.noteCenter) {
+      try { TrailForgeCamps.noteCenter(String(center.lat), String(center.lon)); } catch (error) {}
+    }
+    return camps;
+  }
+
+  function packCenters() {
+    return (state.packs || []).map(function (pack) {
+      if (Number.isFinite(pack.minLat) && Number.isFinite(pack.maxLat) && Number.isFinite(pack.minLon) && Number.isFinite(pack.maxLon)) {
+        return { lat: (pack.minLat + pack.maxLat) / 2, lon: (pack.minLon + pack.maxLon) / 2, pack: pack };
+      }
+      return null;
+    }).filter(Boolean);
+  }
+
+  function rememberPackCamps(pack, camps) {
+    if (!pack) return;
+    pack.camps = (camps || []).slice(0, 40).map(function (trail) {
+      return { id: trail.id, name: trail.name, lat: trail.lat, lon: trail.lon, agency: trail.agency, fetchedAt: trail.fetchedAt || Date.now() };
+    });
+    pack.campsUpdated = Date.now();
+    savePacks();
+  }
+
+  function campsFromPacks() {
+    const trails = [];
+    (state.packs || []).forEach(function (pack) {
+      (pack.camps || []).forEach(function (camp) {
+        const trail = officialTrail(camp.id, camp.name, camp.agency || "Mapped campsite", camp.lat, camp.lon, sourceOf(camp.id));
+        if (trail) {
+          trail.fetchedAt = camp.fetchedAt || pack.campsUpdated || 0;
+          trails.push(trail);
+        }
+      });
+    });
+    return trails;
+  }
+
+  function consumeNativeCampRefresh() {
+    if (!window.TrailForgeCamps || !TrailForgeCamps.pending) return;
+    let raw = "";
+    try { raw = TrailForgeCamps.pending() || ""; } catch (error) { return; }
+    if (!raw) return;
+    let payload = null;
+    try { payload = JSON.parse(raw); } catch (error) { return; }
+    const fetchedAt = Number(payload.fetchedAt) || Date.now();
+    const camps = (payload.camps || []).map(function (camp) {
+      const trail = officialTrail(camp.id, camp.name, camp.agency, camp.lat, camp.lon, camp.source || sourceOf(camp.id));
+      if (trail) trail.fetchedAt = fetchedAt;
+      return trail;
+    }).filter(Boolean);
+    if (!camps.length || !Number.isFinite(Number(payload.lat))) return;
+    const cells = loadCampCells();
+    cells[cellKey(Number(payload.lat), Number(payload.lon))] = { fetchedAt: fetchedAt, camps: camps };
+    saveCampCells(cells);
+    state.campUpdatedAt = fetchedAt;
+    absorbDiscovered({ lat: Number(payload.lat), lon: Number(payload.lon) }, camps, state.scanGen);
+  }
+
+  async function refreshCampCaches(force) {
+    if (SHOT) return;
+    consumeNativeCampRefresh();
+    const centers = [{ lat: mapCenter().lat, lon: mapCenter().lon, pack: null }].concat(packCenters());
+    const seen = {};
+    for (let index = 0; index < centers.length; index += 1) {
+      const center = centers[index];
+      const key = cellKey(center.lat, center.lon);
+      if (seen[key]) continue;
+      seen[key] = true;
+      const cells = loadCampCells();
+      const cached = cells[key];
+      const stale = !cached || !cached.fetchedAt || Date.now() - cached.fetchedAt >= CAMP_TTL;
+      if (!state.online && cached && cached.camps) {
+        if (!state.campUpdatedAt) state.campUpdatedAt = cached.fetchedAt;
+        absorbDiscovered(center, cached.camps, state.scanGen);
+        continue;
+      }
+      if (!state.online) continue;
+      try {
+        const camps = await fetchOfficialCamps(center, force || stale);
+        absorbDiscovered(center, camps, state.scanGen);
+        if (center.pack) rememberPackCamps(center.pack, camps);
+      } catch (error) { /* Keep the last cached camps. */ }
+    }
+    const packed = campsFromPacks();
+    if (packed.length) absorbDiscovered(mapCenter(), packed, state.scanGen);
+    renderAll();
   }
 
   async function fetchOverpass(center) {
@@ -1647,14 +2020,13 @@
   }
 
   async function realCampsFor(trail) {
-    const mapped = String(trail.id || "").indexOf("osm-camp-") === 0;
-    if (mapped) {
+    if (isMappedCamp(trail.id)) {
       const camp = (trail.flatCamps && trail.flatCamps[0]) || { lat: trail.lat, lon: trail.lon, name: trail.name };
       let slope = -1;
       try { slope = await measureSlope(camp.lat, camp.lon); } catch (error) { slope = -1; }
       const base = String(camp.name || trail.name || "Camp").split(" · ")[0];
       const slopeBit = slope >= 0 ? "measured " + slope.toFixed(1) + "°" : "slope unknown";
-      return [{ name: base + " · Mapped campsite · " + slopeBit, lat: camp.lat, lon: camp.lon, slope: slope, starlink: 0, mapped: true }];
+      return [{ name: base + " · Mapped campsite · " + sourceOf(trail.id) + " · " + slopeBit, lat: camp.lat, lon: camp.lon, slope: slope, starlink: 0, mapped: true, source: sourceOf(trail.id) }];
     }
     const seeds = dispersedSeeds(trail.coordinates);
     const kept = [];
@@ -1679,7 +2051,10 @@
   }
 
   function surveyCamps(trails, gen) {
-    const queue = (trails || []).filter(function (trail) { return trail && (String(trail.id).indexOf("osm-") === 0 || String(trail.id).indexOf("usfs-") === 0); }).slice(0, 24);
+    const queue = (trails || []).filter(function (trail) {
+      const id = String(trail && trail.id || "");
+      return id.indexOf("osm-") === 0 || id.indexOf("usfs-") === 0 || id.indexOf("ridb-") === 0 || id.indexOf("blm-camp-") === 0;
+    }).slice(0, 24);
     if (!queue.length) return;
     let cursor = 0;
     function next() {
@@ -1709,14 +2084,14 @@
     incoming.forEach(function (trail) {
       if (trail && trail.id) byId[trail.id] = trail;
     });
-    let merged = Object.keys(byId).map(function (id) { return byId[id]; });
+    let merged = dedupeCampTrails(Object.keys(byId).map(function (id) { return byId[id]; }));
     if (merged.length > 200) {
       merged.sort(function (a, b) { return meters(center, a) - meters(center, b); });
       merged = merged.slice(0, 200);
     }
     state.discovered = merged;
     saveDiscovered();
-    state.scanStatus = merged.length + " local USA trails";
+    state.scanStatus = merged.length + " local USA trails" + (updatedLabel() ? " · " + updatedLabel() : "");
     renderAll();
     surveyCamps(incoming, gen);
   }
@@ -1731,20 +2106,23 @@
     renderTop();
     const status = document.getElementById("scanStatus");
     if (status) status.textContent = state.scanStatus;
-    let pending = 2;
+    let pending = 3;
     function finish() {
       pending -= 1;
       if (gen !== state.scanGen || pending > 0) return;
       state.scanning = false;
       state.scanAnchors.push({ lat: center.lat, lon: center.lon });
       if (state.scanAnchors.length > 40) state.scanAnchors = state.scanAnchors.slice(-40);
-      state.scanStatus = state.discovered.length ? (state.discovered.length + " local USA trails") : "No public 4x4 tracks returned for this area.";
+      state.scanStatus = (state.discovered.length ? (state.discovered.length + " local USA trails") : "No public 4x4 tracks returned for this area.") + (updatedLabel() ? " · " + updatedLabel() : "");
       renderTop();
     }
     fetchOverpass(center).then(function (trails) {
       absorbDiscovered(center, trails, gen);
     }).catch(function () {}).finally(finish);
     fetchUsfs(center).then(function (trails) {
+      absorbDiscovered(center, trails, gen);
+    }).catch(function () {}).finally(finish);
+    fetchOfficialCamps(center).then(function (trails) {
       absorbDiscovered(center, trails, gen);
     }).catch(function () {}).finally(finish);
   }
@@ -5313,6 +5691,7 @@
       });
       state.packs = state.packs.slice(0, 12);
       savePacks();
+      refreshCampCaches(true);
     }
     if (offlineLayer) offlineLayer.redraw();
     syncAreaPreview();
@@ -6663,6 +7042,20 @@
     loadTelemetry();
     bootShot();
     scheduleTrailScan();
+    consumeNativeCampRefresh();
+    const packedCamps = campsFromPacks();
+    if (packedCamps.length) absorbDiscovered(mapCenter(), packedCamps, state.scanGen);
+    setTimeout(function () { refreshCampCaches(false); }, 900);
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener("message", function (event) {
+        if (event.data && event.data.type === "camp-refresh") refreshCampCaches(false);
+      });
+      navigator.serviceWorker.ready.then(function (registration) {
+        if (registration.periodicSync && registration.periodicSync.register) {
+          registration.periodicSync.register("camp-refresh", { minInterval: 24 * 60 * 60 * 1000 }).catch(function () {});
+        }
+      }).catch(function () {});
+    }
     refreshMvum(selected());
     refreshCommunity(false);
     window.addEventListener("resize", function () {

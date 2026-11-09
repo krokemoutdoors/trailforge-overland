@@ -1,4 +1,4 @@
-const CACHE = "trailforge-overland-1.7.5-37";
+const CACHE = "trailforge-overland-1.7.6-38";
 const SHELL = [
   "./",
   "./index.html",
@@ -23,6 +23,20 @@ self.addEventListener("activate", function (event) {
   event.waitUntil(caches.keys().then(function (keys) {
     return Promise.all(keys.filter(function (key) { return key !== CACHE; }).map(function (key) { return caches.delete(key); }));
   }).then(function () { return self.clients.claim(); }));
+});
+
+self.addEventListener("periodicsync", function (event) {
+  if (event.tag !== "camp-refresh") return;
+  event.waitUntil(self.clients.matchAll({ type: "window" }).then(function (clients) {
+    clients.forEach(function (client) { client.postMessage({ type: "camp-refresh" }); });
+  }));
+});
+
+self.addEventListener("message", function (event) {
+  if (!event.data || event.data.type !== "camp-refresh") return;
+  event.waitUntil(self.clients.matchAll({ type: "window" }).then(function (clients) {
+    clients.forEach(function (client) { client.postMessage({ type: "camp-refresh" }); });
+  }));
 });
 
 self.addEventListener("fetch", function (event) {

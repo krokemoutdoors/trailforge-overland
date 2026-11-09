@@ -11,8 +11,10 @@ android {
         applicationId = "com.edwardshin.trailforge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
-        versionName = "1.7.5"
+        versionCode = 38
+        versionName = "1.7.6"
+        val ridb = (System.getenv("RIDB_API_KEY") ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "RIDB_API_KEY", "\"$ridb\"")
     }
 
     val releaseStore = file(
@@ -54,7 +56,7 @@ android {
         jvmTarget = "17"
     }
     buildFeatures {
-        buildConfig = false
+        buildConfig = true
     }
     packaging {
         resources {
@@ -76,4 +78,5 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("com.android.billingclient:billing-ktx:7.1.1")
     implementation("androidx.car.app:app:1.4.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
 }
